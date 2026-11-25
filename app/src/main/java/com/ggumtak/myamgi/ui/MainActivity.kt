@@ -1,10 +1,13 @@
 package com.ggumtak.myamgi.ui
 
 import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.text.SpannableStringBuilder
 import android.text.Spanned
@@ -43,6 +46,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
@@ -64,6 +70,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusBanner: TextView
     private lateinit var recyclerView: RecyclerView
     private lateinit var emptyView: TextView
+    private lateinit var errorPanel: LinearLayout
+    private lateinit var errorMessageView: TextView
+    private var lastOpenError: Throwable? = null
     private lateinit var syncButton: Button
     private val adapter = DeckListAdapter()
 
@@ -185,6 +194,7 @@ class MainActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         }
         contentFrame.addView(emptyView)
+        contentFrame.addView(buildErrorPanel(p))
         rootLayout.addView(contentFrame)
 
         rootLayout.addView(UiThemeHelper.makeDivider(this))
@@ -233,6 +243,102 @@ class MainActivity : AppCompatActivity() {
         setContentView(rootLayout)
     }
 
+    private fun buildErrorPanel(p: UiThemeHelper.Palette): View {
+        errorPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            val pad = UiThemeHelper.dp(this@MainActivity, 16)
+            setPadding(pad, pad, pad, pad)
+            background = UiThemeHelper.makeCardBackground(
+                this@MainActivity,
+                fillColor = p.surface,
+                strokeColor = if (p.isEink) Color.BLACK else p.againColor,
+                cornerDp = 10,
+                strokeDp = if (p.isEink) 2f else 1.5f
+            )
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                val m = UiThemeHelper.dp(this@MainActivity, 12)
+                setMargins(m, m, m, m)
+            }
+        }
+        errorPanel.addView(UiThemeHelper.makeSectionHeader(this, "학습 데이터를 열지 못했습니다"))
+        errorPanel.addView(
+            UiThemeHelper.makeLabel(
+                this,
+                "앱이 Anki 엔진 또는 컬렉션을 여는 중 오류가 발생했습니다. " +
+                    "아래 '오류 로그 복사'를 눌러 전체 로그를 개발자에게 보내 주세요."
+            )
+        )
+        errorMessageView = UiThemeHelper.makeLabel(this, "", secondary = true, sizeSp = 12f).apply {
+            setPadding(0, UiThemeHelper.dp(this@MainActivity, 8), 0, UiThemeHelper.dp(this@MainActivity, 4))
+            setTextIsSelectable(true)
+        }
+        errorPanel.addView(errorMessageView)
+
+        val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val btnCopy = UiThemeHelper.createStyledButton(this, "오류 로그 복사", filled = true, verticalPadDp = 10).apply {
+            setOnClickListener { copyErrorLog() }
+        }
+        val btnRetry = UiThemeHelper.createStyledButton(this, "다시 시도", filled = false, verticalPadDp = 10).apply {
+            setOnClickListener { loadDecks() }
+        }
+        buttons.addView(btnCopy, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        buttons.addView(
+            btnRetry,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = UiThemeHelper.dp(this@MainActivity, 8)
+            }
+        )
+        errorPanel.addView(
+            buttons,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = UiThemeHelper.dp(this@MainActivity, 10)
+            }
+        )
+        return errorPanel
+    }
+
+    private fun showOpenError(err: Throwable) {
+        lastOpenError = err
+        val reason = err.message?.takeIf { it.isNotBlank() } ?: err.javaClass.simpleName
+        errorMessageView.text = "원인: $reason"
+        recyclerView.visibility = View.GONE
+        emptyView.visibility = View.GONE
+        errorPanel.visibility = View.VISIBLE
+        showStatus("컬렉션 열기 실패")
+    }
+
+    private fun copyErrorLog() {
+        val err = lastOpenError ?: return
+        val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", Locale.US).format(Date())
+        val report = buildString {
+            append("myAmgi 오류 로그 (컬렉션 열기 실패)\n")
+            append("시각: ").append(time).append('\n')
+            append("앱: ").append(BuildConfig.APPLICATION_ID)
+                .append(" v").append(BuildConfig.VERSION_NAME)
+                .append(" (빌드 ").append(BuildConfig.VERSION_CODE).append(")\n")
+            append("플레이버: ").append(BuildConfig.FLAVOR_NAME)
+                .append(" / ").append(BuildConfig.BUILD_TYPE).append('\n')
+            append("기기: ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL)
+                .append(" (").append(Build.DEVICE).append(")\n")
+            append("Android: ").append(Build.VERSION.RELEASE)
+                .append(" (API ").append(Build.VERSION.SDK_INT).append(")\n")
+            append("ABI: ").append(Build.SUPPORTED_ABIS.joinToString(", ")).append('\n')
+            append('\n')
+            append(err.stackTraceToString())
+        }
+        val clipboard = getSystemService(ClipboardManager::class.java)
+        if (clipboard == null) {
+            Toast.makeText(this, "클립보드를 사용할 수 없습니다.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        clipboard.setPrimaryClip(ClipData.newPlainText("myAmgi 오류 로그", report))
+        Toast.makeText(this, "오류 로그를 복사했습니다.", Toast.LENGTH_SHORT).show()
+    }
+
     private fun showStatus(msg: String?) {
         if (msg.isNullOrBlank()) {
             statusBanner.visibility = View.GONE
@@ -255,6 +361,11 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             rowsResult.onSuccess { rows ->
+                if (errorPanel.visibility == View.VISIBLE) {
+                    errorPanel.visibility = View.GONE
+                    lastOpenError = null
+                    showStatus(null)
+                }
                 adapter.submitList(rows)
                 if (rows.isEmpty()) {
                     recyclerView.visibility = View.GONE
@@ -264,7 +375,7 @@ class MainActivity : AppCompatActivity() {
                     emptyView.visibility = View.GONE
                 }
             }.onFailure { err ->
-                showStatus("컬렉션 열기 실패: ${err.message}")
+                showOpenError(err)
             }
         }
     }
