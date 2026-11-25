@@ -184,6 +184,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          retry() {
+            local max="$1"; shift
+            local attempt=1
+            while true; do
+              if "$@"; then return 0; fi
+              if [ "$attempt" -ge "$max" ]; then return 1; fi
+              echo "::warning::Command failed (attempt $attempt/$max), retrying in $((attempt * 4))s..."
+              sleep $((attempt * 4))
+              attempt=$((attempt + 1))
+            done
+          }
+
           title="myAmgi (build ${GITHUB_RUN_NUMBER})"
           notes="최신 빌드 (build ${GITHUB_RUN_NUMBER}, commit ${GITHUB_SHA})입니다.
           - myAmgi-Pro-${GITHUB_RUN_NUMBER}.apk: 일반 스마트폰/태블릿용 (arm64-v8a)
@@ -193,9 +205,10 @@ jobs:
           if gh release view latest >/dev/null 2>&1; then
             git tag -f latest "${GITHUB_SHA}"
             git push origin refs/tags/latest --force
-            gh release edit latest --draft=false --prerelease --title "$title" --notes "$notes"
+            retry 4 gh release edit latest --draft=false --prerelease --title "$title" --notes "$notes" \
+              || echo "::warning::Release metadata edit returned transient error; continuing asset upload"
           else
-            gh release create latest \
+            retry 5 gh release create latest \
               --target "${GITHUB_SHA}" \
               --prerelease \
               --title "$title" \
@@ -204,7 +217,7 @@ jobs:
 
           for f in dist/*; do
             [ -f "$f" ] || continue
-            gh release upload latest "$f" --clobber
+            retry 5 gh release upload latest "$f" --clobber
           done
 
           # Remove stale APK/patch assets from previous builds while keeping current dist/*
@@ -220,11 +233,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view apk-history > /dev/null 2>&1 || gh release create apk-history --prerelease \
+          retry() {
+            local max="$1"; shift
+            local attempt=1
+            while true; do
+              if "$@"; then return 0; fi
+              if [ "$attempt" -ge "$max" ]; then return 1; fi
+              sleep $((attempt * 4))
+              attempt=$((attempt + 1))
+            done
+          }
+
+          gh release view apk-history > /dev/null 2>&1 || retry 4 gh release create apk-history --prerelease \
             --title "이전 빌드 보관 (앱 내 델타 패치 생성용)" \
             --notes "설치용이 아닙니다. 최신 빌드는 latest 릴리스에서 다운로드하세요."
 
-          gh release upload apk-history \
+          retry 5 gh release upload apk-history \
             "dist/myAmgi-Pro-${GITHUB_RUN_NUMBER}.apk" \
             "dist/myAmgi-Comet-${GITHUB_RUN_NUMBER}.apk" \
             --clobber
