@@ -5,7 +5,6 @@ import android.util.LruCache
 import com.ggumtak.myamgi.device.DeviceProfile
 import com.ggumtak.myamgi.engine.AnkiEngine
 import java.io.File
-import java.net.URLDecoder
 import java.util.Locale
 
 /**
@@ -106,11 +105,9 @@ object MediaCache {
         val withoutQuery = raw.substringBefore('?').substringBefore('#').trim()
         if (withoutQuery.isEmpty()) return null
 
-        val decoded = runCatching {
-            URLDecoder.decode(withoutQuery, Charsets.UTF_8.name())
-        }.getOrDefault(withoutQuery)
-
-        val cleaned = decoded
+        // Callers pass Uri.getPath(), which is already percent-decoded. Decoding again would turn
+        // '+' into a space and break names containing '%' (e.g. "a+b.mp3", "100%.png").
+        val cleaned = withoutQuery
             .replace('\\', '/')
             .trimStart('/')
             .removePrefix("./")
