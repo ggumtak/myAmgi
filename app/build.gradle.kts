@@ -122,6 +122,9 @@ kotlin {
 }
 
 dependencies {
+    // Shared engine + host server (pure JVM)
+    implementation(project(":core"))
+
     // Official Anki 26.09.4 Rust Backend
     implementation("io.github.david-allison:anki-backend-android:0.1.77-anki26.09.4")
     implementation("io.github.david-allison:anki-backend-core:0.1.77-anki26.09.4")

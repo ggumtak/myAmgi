@@ -23,7 +23,7 @@ class AnkiEngineTest {
 
     @Before
     fun setUp() {
-        RustBackendLoader.ensureSetup()
+        AnkiEngine.nativeLoader = { RustBackendLoader.ensureSetup() }
         AnkiEngine.closeAll()
         AnkiEngine.setCollectionDir(tempFolder.newFolder("col"))
     }
