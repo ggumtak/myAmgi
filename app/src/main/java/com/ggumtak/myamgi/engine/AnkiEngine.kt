@@ -58,6 +58,36 @@ object AnkiEngine {
 
     private val rawMethodCache = ConcurrentHashMap<String, Method>()
 
+    private val nativeLock = Any()
+
+    @Volatile
+    private var nativeLoaded: Boolean = false
+
+    /**
+     * Loads `librsdroid.so` before any [Backend] is created.
+     *
+     * anki-backend-android 0.1.77 ships no Android loader class and `NativeMethods` has no static
+     * initializer, so without this every `NativeMethods.openBackend` call fails with
+     * UnsatisfiedLinkError. Safe to call repeatedly and from any thread (Application, provider,
+     * activities). On a plain JVM (unit tests) the library is loaded by
+     * `net.ankiweb.rsdroid.testing.RustBackendLoader` and `System.loadLibrary` would fail, so it is
+     * skipped there.
+     */
+    fun ensureNativeLoaded() {
+        if (nativeLoaded) return
+        synchronized(nativeLock) {
+            if (nativeLoaded) return
+            if (isAndroidRuntime()) {
+                System.loadLibrary("rsdroid")
+            }
+            nativeLoaded = true
+        }
+    }
+
+    private fun isAndroidRuntime(): Boolean =
+        System.getProperty("java.vm.name").orEmpty().contains("Dalvik", ignoreCase = true) ||
+            System.getProperty("java.vendor").orEmpty().contains("Android", ignoreCase = true)
+
     fun initDirectory(context: Context) {
         synchronized(lock) {
             val dir = File(context.applicationContext.filesDir, "anki_collection")
@@ -92,6 +122,7 @@ object AnkiEngine {
     private fun getOrCreateBackendLocked(): Backend {
         val current = backend
         if (current != null && current.isOpen()) return current
+        ensureNativeLoaded()
         val created = BackendFactory.getBackend(listOf("ko", "en"))
         backend = created
         collectionOpened = false
@@ -134,7 +165,8 @@ object AnkiEngine {
 
     // --- Decks ---
 
-    fun deckTree(): DeckTreeNode = withBackend { it.deckTree(0L) }
+    // A zero timestamp makes the backend skip due-count calculation (all counts 0), so pass "now" in seconds.
+    fun deckTree(): DeckTreeNode = withBackend { it.deckTree(System.currentTimeMillis() / 1000L) }
 
     fun getDeckNames(): List<DeckNameId> = withBackend { it.getDeckNames(false, true) }
 
@@ -365,7 +397,8 @@ object AnkiEngine {
         closeCollectionOnlyLocked()
         val colFile = getCollectionFile()
         val mediaFolder = getMediaDir()
-        val mediaDb = File(getCollectionDir(), "collection.media.db2")
+        // Must match the media DB name Backend.openCollection() derives (collection.anki2 -> collection.media.db)
+        val mediaDb = File(getCollectionDir(), "collection.media.db")
         b.importCollectionPackage(
             colFile.absolutePath,
             colpkgPath,

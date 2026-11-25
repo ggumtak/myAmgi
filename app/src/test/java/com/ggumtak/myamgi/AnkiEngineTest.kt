@@ -86,6 +86,17 @@ class AnkiEngineTest {
     }
 
     @Test
+    fun deckTreeReportsDueCounts() {
+        val deckId = AnkiEngine.createDeck("카운트 테스트")
+        val basicId = AnkiEngine.getNotetypeNames().first().id
+        AnkiEngine.addNote(basicId, deckId, listOf("앞", "뒤"), emptyList())
+
+        // deckTree(0) skips count calculation; the deck list must see the real new count
+        val node = AnkiEngine.deckTree().childrenList.first { it.deckId == deckId }
+        assertEquals(1, node.newCount)
+    }
+
+    @Test
     fun supportsMillionCharTemplateWithoutBinderOrTruncation() {
         val nt = AnkiEngine.getNotetype(AnkiEngine.getNotetypeNames().first().id)
         val hugeCss = buildString {

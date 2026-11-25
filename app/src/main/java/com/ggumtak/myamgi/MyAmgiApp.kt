@@ -15,6 +15,8 @@ class MyAmgiApp : Application() {
         super.onCreate()
         val profile = DeviceProfile.current(this)
         AnkiEngine.initDirectory(this)
+        // Load librsdroid.so up front; on failure the error resurfaces (and is shown) on first engine use.
+        runCatching { AnkiEngine.ensureNativeLoaded() }
         // On Pro build (phones/tablets), warm up the Anki 26.09.4 Rust engine immediately in background
         if (profile.warmBackendOnLaunch) {
             appScope.launch {
