@@ -29,7 +29,7 @@ import java.util.concurrent.Executors
 /**
  * Hosts the official Anki 26.09.4 SvelteKit pages bundled in anki-backend-android
  * (`assets/backend/sveltekit`: `/deck-options/<id>`, `/graphs`, `/card-info/<id>`, `/congrats`,
- * `/change-notetype/..`, `/image-occlusion/..`, `/import-*/..`, `/editor`, `/preferences`) over an
+ * `/change-notetype/..`, `/image-occlusion/..`, `/import-anki-package`, `/import-csv`, `/import-page`, `/editor`, `/preferences`) over an
  * embedded loopback HTTP server dispatching `/_anki/<method>` directly to [AnkiEngine.rawCall].
  */
 class AnkiPageActivity : AppCompatActivity() {
