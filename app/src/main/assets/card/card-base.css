@@ -1,0 +1,178 @@
+/* myAmgi zero-specificity base card styles (:where(...) keeps specificity at 0,0,0 so deck CSS always wins) */
+
+:where(html, body) {
+  margin: 0;
+  padding: 0;
+  background-color: #ffffff;
+  color: #1c1b1f;
+  font-family: -apple-system, BlinkMacSystemFont, "Noto Sans KR", "Apple SD Gothic Neo", Roboto, sans-serif;
+  font-size: 18px;
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+}
+
+:where(body) {
+  padding: 16px;
+  box-sizing: border-box;
+  min-height: 100vh;
+}
+
+:where(.card) {
+  font-size: 20px;
+  text-align: center;
+  color: inherit;
+  background-color: transparent;
+}
+
+:where(img, svg, video, canvas) {
+  max-width: 100%;
+  height: auto;
+}
+
+:where(.cloze) {
+  font-weight: 700;
+  color: #0b57d0;
+}
+
+:where(.cloze-inactive) {
+  opacity: 0.65;
+}
+
+:where(hr#answer) {
+  border: 0;
+  border-top: 1px solid rgba(0, 0, 0, 0.16);
+  margin: 16px 0;
+}
+
+:where(input#typeans) {
+  width: 100%;
+  max-width: 480px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  font-size: 16px;
+  line-height: 1.4;
+  color: #1c1b1f;
+  background-color: #f7f7f9;
+  border: 1px solid #c4c7c5;
+  border-radius: 8px;
+  outline: none;
+}
+
+:where(input#typeans:focus) {
+  border-color: #0b57d0;
+}
+
+:where(.typeGood) {
+  background-color: #d4edda;
+  color: #0f5132;
+}
+
+:where(.typeBad) {
+  background-color: #f8d7da;
+  color: #842029;
+}
+
+:where(.typeMissed) {
+  background-color: #e2e3e5;
+  color: #41464b;
+}
+
+:where(.replay-button) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 6px 10px;
+  margin: 4px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  background-color: rgba(0, 0, 0, 0.04);
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  vertical-align: middle;
+  -webkit-tap-highlight-color: transparent;
+}
+
+:where(.replay-button svg) {
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+}
+
+/* Dark mode (zero-specificity so deck's own .night_mode/.nightMode rules override cleanly) */
+:where(html.night_mode, html.night_mode body, body.nightMode, .night_mode .card, .nightMode .card) {
+  background-color: #121212;
+  color: #ececec;
+}
+
+:where(html.night_mode .cloze, body.nightMode .cloze) {
+  color: #8ab4f8;
+}
+
+:where(html.night_mode hr#answer, body.nightMode hr#answer) {
+  border-top-color: rgba(255, 255, 255, 0.2);
+}
+
+:where(html.night_mode input#typeans, body.nightMode input#typeans) {
+  color: #ececec;
+  background-color: #1e1e1e;
+  border-color: #444746;
+}
+
+:where(html.night_mode input#typeans:focus, body.nightMode input#typeans:focus) {
+  border-color: #8ab4f8;
+}
+
+:where(html.night_mode .replay-button, body.nightMode .replay-button) {
+  border-color: rgba(255, 255, 255, 0.22);
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Comet E-Ink high-contrast mode: crisp black-on-white, zero animation/shadow/blur */
+html.eink_mode,
+html.eink_mode body,
+html.eink_mode .card {
+  background-color: #ffffff !important;
+  color: #000000 !important;
+}
+
+html.eink_mode *,
+html.eink_mode *::before,
+html.eink_mode *::after {
+  animation: none !important;
+  transition: none !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+
+html.eink_mode .cloze {
+  color: #000000;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+html.eink_mode hr#answer {
+  border-top: 2px solid #000000;
+}
+
+html.eink_mode input#typeans {
+  background-color: #ffffff;
+  color: #000000;
+  border: 2px solid #000000;
+  border-radius: 4px;
+}
+
+html.eink_mode .replay-button {
+  background-color: #ffffff;
+  color: #000000;
+  border: 2px solid #000000;
+}
+
+html.eink_mode a {
+  color: #000000;
+  text-decoration: underline;
+}

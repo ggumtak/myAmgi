@@ -1,0 +1,230 @@
+name: Build myAmgi APKs
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  # Keep the cached signing key alive: GitHub evicts cache entries unused for 7 days,
+  # and regenerating a key would prevent in-place APK upgrades over existing installs.
+  schedule:
+    - cron: '41 5 */3 * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}-${{ github.event_name == 'schedule' && 'keepalive' || 'build' }}
+  # Never cancel between deleting and recreating the rolling 'latest' release.
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Restore signing key
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.myamgi-signing
+          key: myamgi-signing-v1
+
+      - name: Prepare signing key
+        id: key
+        env:
+          KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          SECRET_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SECRET_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SECRET_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            {
+              echo "SIGNING_KEYSTORE_FILE=$RUNNER_TEMP/release.keystore"
+              echo "SIGNING_STORE_PASSWORD=$SECRET_STORE_PASSWORD"
+              echo "SIGNING_KEY_ALIAS=$SECRET_KEY_ALIAS"
+              echo "SIGNING_KEY_PASSWORD=$SECRET_KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
+            echo "Using release key from repository secrets"
+            exit 0
+          fi
+
+          dir="$HOME/.myamgi-signing"
+          if [ ! -f "$dir/release.keystore" ] || [ ! -f "$dir/pass" ]; then
+            echo "::warning::No cached signing key found; generating a NEW one. Existing installs signed with an older key must be reinstalled once."
+            rm -rf "$dir" && mkdir -p "$dir"
+            pass="$(openssl rand -hex 24)"
+            printf '%s' "$pass" > "$dir/pass"
+            keytool -genkeypair \
+              -keystore "$dir/release.keystore" \
+              -storetype PKCS12 \
+              -alias myamgi \
+              -keyalg RSA \
+              -keysize 3072 \
+              -validity 36500 \
+              -storepass "$pass" \
+              -keypass "$pass" \
+              -dname "CN=myAmgi" > /dev/null
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          pass="$(cat "$dir/pass")"
+          echo "::add-mask::$pass"
+          {
+            echo "SIGNING_KEYSTORE_FILE=$dir/release.keystore"
+            echo "SIGNING_STORE_PASSWORD=$pass"
+            echo "SIGNING_KEY_ALIAS=myamgi"
+            echo "SIGNING_KEY_PASSWORD=$pass"
+          } >> "$GITHUB_ENV"
+          echo "Using cached signing key"
+
+      - name: Save new signing key
+        if: steps.key.outputs.new == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.myamgi-signing
+          key: myamgi-signing-v1
+
+      - name: Run unit tests (Pro & Comet)
+        run: ./gradlew --stacktrace testProDebugUnitTest testCometDebugUnitTest
+
+      - name: Build release APKs (Pro & Comet)
+        run: ./gradlew --stacktrace assembleProRelease assembleCometRelease
+
+      - name: Collect and rename APKs
+        run: |
+          mkdir -p dist
+          pro_apk="$(find app/build/outputs/apk/pro/release -maxdepth 1 -name '*.apk' ! -name '*-unsigned.apk' | head -n 1)"
+          comet_apk="$(find app/build/outputs/apk/comet/release -maxdepth 1 -name '*.apk' ! -name '*-unsigned.apk' | head -n 1)"
+          if [ -z "$pro_apk" ] || [ ! -f "$pro_apk" ]; then
+            echo "::error::Pro release APK not found"
+            exit 1
+          fi
+          if [ -z "$comet_apk" ] || [ ! -f "$comet_apk" ]; then
+            echo "::error::Comet release APK not found"
+            exit 1
+          fi
+          cp "$pro_apk" "dist/myAmgi-Pro-${GITHUB_RUN_NUMBER}.apk"
+          cp "$comet_apk" "dist/myAmgi-Comet-${GITHUB_RUN_NUMBER}.apk"
+          ls -lh dist
+
+      - name: Verify arm64-v8a only native libraries
+        run: |
+          python3 - "dist/myAmgi-Pro-${GITHUB_RUN_NUMBER}.apk" "dist/myAmgi-Comet-${GITHUB_RUN_NUMBER}.apk" <<'PY'
+          import sys
+          import zipfile
+
+          forbidden_abis = ("armeabi-v7a", "armeabi", "x86", "x86_64", "mips", "mips64")
+          for apk_path in sys.argv[1:]:
+              with zipfile.ZipFile(apk_path, "r") as zf:
+                  lib_entries = [n for n in zf.namelist() if n.startswith("lib/")]
+                  bad = [
+                      n for n in lib_entries
+                      if not n.startswith("lib/arm64-v8a/")
+                      or any(f"lib/{abi}/" in n for abi in forbidden_abis)
+                  ]
+                  if bad:
+                      raise SystemExit(f"{apk_path} contains non-arm64-v8a native libs: {bad}")
+                  print(f"{apk_path}: verified ({len(lib_entries)} lib/arm64-v8a entries, no forbidden ABIs)")
+          PY
+
+      - name: Generate OTA hot-patch manifest and assets
+        run: |
+          python3 tools/make_ota_manifest.py \
+            --assets-dir app/src/main/assets \
+            --out-dir dist \
+            --version "${GITHUB_RUN_NUMBER}" \
+            --repo "${GITHUB_REPOSITORY}"
+          ls -lh dist
+
+      - name: Make flavor-specific binary delta patches
+        if: (github.ref_name == 'main' || github.ref_name == github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p old
+          gh release download latest -p 'myAmgi-Pro-*.apk' -p 'myAmgi-Comet-*.apk' -D old --clobber || true
+          gh release download apk-history -p 'myAmgi-Pro-*.apk' -p 'myAmgi-Comet-*.apk' -D old --clobber || true
+
+          for flavor in Pro Comet; do
+            new_apk="dist/myAmgi-${flavor}-${GITHUB_RUN_NUMBER}.apk"
+            for f in old/myAmgi-${flavor}-*.apk; do
+              [ -f "$f" ] || continue
+              n="$(basename "$f" .apk)"
+              n="${n#myAmgi-${flavor}-}"
+              case "$n" in ''|*[!0-9]*) continue ;; esac
+              [ "$n" -lt "$GITHUB_RUN_NUMBER" ] || continue
+              python3 tools/apk_patch.py make "$f" "$new_apk" \
+                "dist/myAmgi-${flavor}-${GITHUB_RUN_NUMBER}.from-${n}.patch" \
+                || echo "::warning::Failed or skipped patch for ${flavor} from build ${n}"
+            done
+          done
+          ls -lh dist
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: myAmgi-apks
+          path: dist/*
+
+      - name: Publish rolling latest release
+        if: (github.ref_name == 'main' || github.ref_name == github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest dist/* \
+            --target "${GITHUB_SHA}" \
+            --prerelease \
+            --title "myAmgi (build ${GITHUB_RUN_NUMBER})" \
+            --notes "최신 빌드 (build ${GITHUB_RUN_NUMBER}, commit ${GITHUB_SHA})입니다.
+          - myAmgi-Pro-${GITHUB_RUN_NUMBER}.apk: 일반 스마트폰/태블릿용
+          - myAmgi-Comet-${GITHUB_RUN_NUMBER}.apk: 이노스페이스원 코멧(E-Ink) 전용
+          - *.patch / ota-manifest.json / ota__*: 앱 내 2단계 증분·OTA 업데이트용 파일"
+
+      - name: Archive APK history (newest 10 per flavor)
+        if: (github.ref_name == 'main' || github.ref_name == github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view apk-history > /dev/null 2>&1 || gh release create apk-history --prerelease \
+            --title "이전 빌드 보관 (앱 내 델타 패치 생성용)" \
+            --notes "설치용이 아닙니다. 최신 빌드는 latest 릴리스에서 다운로드하세요."
+
+          gh release upload apk-history \
+            "dist/myAmgi-Pro-${GITHUB_RUN_NUMBER}.apk" \
+            "dist/myAmgi-Comet-${GITHUB_RUN_NUMBER}.apk" \
+            --clobber
+
+          for flavor in Pro Comet; do
+            gh release view apk-history --json assets --jq '.assets[].name' \
+              | sed -n "s/^myAmgi-${flavor}-\([0-9]*\)\.apk$/\1/p" \
+              | sort -n \
+              | head -n -10 \
+              | while read -r n; do
+                  gh release delete-asset apk-history "myAmgi-${flavor}-${n}.apk" --yes || true
+                done
+          done
+
+  keep-signing-key:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/.myamgi-signing
+          key: myamgi-signing-v1
+      - run: ls -la ~/.myamgi-signing 2>/dev/null | sed -n '1,5p' || echo "no cached signing key"
