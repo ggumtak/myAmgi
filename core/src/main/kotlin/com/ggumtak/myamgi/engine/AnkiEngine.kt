@@ -159,6 +159,16 @@ object AnkiEngine {
         closeCollectionOnlyLocked()
     }
 
+    /**
+     * Closes the collection, deletes it with its media, and opens a new empty one in the same directory.
+     * For tests and the development host only.
+     */
+    fun deleteCollectionAndReopen() = synchronized(lock) {
+        closeCollectionOnlyLocked()
+        getCollectionDir().listFiles()?.forEach { it.deleteRecursively() }
+        ensureOpen()
+    }
+
     fun closeAll() = synchronized(lock) {
         closeCollectionOnlyLocked()
         runCatching { backend?.close() }

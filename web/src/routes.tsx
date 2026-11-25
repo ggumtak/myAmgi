@@ -9,11 +9,12 @@ import { BrowseScreen } from './screens/browse/BrowseScreen';
 import { NoteEditorScreen } from './screens/note-editor/NoteEditorScreen';
 import { NotetypeScreen, NotetypesScreen } from './screens/notetypes/NotetypesScreen';
 import { StatsScreen } from './screens/stats/StatsScreen';
-import { ImportScreen, OfficialScreen, officialSrc } from './screens/official/OfficialScreen';
+import { DeckOptionsScreen, ImportScreen, OfficialScreen, officialSrc } from './screens/official/OfficialScreen';
 import { SettingsScreen } from './screens/settings/SettingsScreen';
 import { AboutScreen } from './screens/settings/AboutScreen';
 import { SyncSettingsScreen } from './screens/settings/SyncSettingsScreen';
 import { BackupScreen } from './screens/settings/BackupScreen';
+import { ToolsScreen } from './screens/settings/ToolsScreen';
 import { CustomStudyScreen } from './screens/custom-study/CustomStudyScreen';
 import { FilteredDeckScreen } from './screens/filtered-deck/FilteredDeckScreen';
 import { ExportScreen } from './screens/export/ExportScreen';
@@ -48,14 +49,14 @@ export const routes: RouteDef[] = [
   { pattern: '/notetypes', name: 'notetypes', tab: 'settings', render: () => <NotetypesScreen /> },
   { pattern: '/notetype/:id', name: 'notetype', tab: 'settings', render: ({ params }) => <NotetypeScreen notetypeId={num(params.id)} /> },
   { pattern: '/stats', name: 'stats', tab: 'stats', render: () => <StatsScreen /> },
-  { pattern: '/deck-options/:id', name: 'deck-options', tab: 'decks', render: ({ params }) => <OfficialScreen title="덱 옵션" src={officialSrc('deck-options', params.id)} /> },
+  { pattern: '/deck-options/:id', name: 'deck-options', tab: 'decks', render: ({ params }) => <DeckOptionsScreen deckId={params.id} /> },
   { pattern: '/card-info/:id', name: 'card-info', tab: 'browse', render: ({ params }) => <OfficialScreen title="카드 정보" src={officialSrc('card-info', params.id)} /> },
   { pattern: '/congrats', name: 'congrats', tab: 'decks', render: () => <OfficialScreen title="축하합니다" src={officialSrc('congrats')} /> },
   {
     pattern: '/import/:kind',
     name: 'import',
     tab: 'decks',
-    render: ({ params, query }) => <ImportScreen kind={params.kind} path={query.get('path') ?? ''} />,
+    render: ({ params, query }) => <ImportScreen kind={params.kind} route={query.get('route') ?? ''} />,
   },
   { pattern: '/change-notetype/*', name: 'change-notetype', tab: 'browse', render: ({ params }) => <OfficialScreen title="노트 유형 변경" src={officialSrc('change-notetype', params['*'])} /> },
   { pattern: '/image-occlusion/*', name: 'image-occlusion', tab: 'browse', render: ({ params }) => <OfficialScreen title="이미지 가림" src={officialSrc('image-occlusion', params['*'])} /> },
@@ -66,6 +67,7 @@ export const routes: RouteDef[] = [
   { pattern: '/settings/sync', name: 'settings-sync', tab: 'settings', render: () => <SyncSettingsScreen /> },
   { pattern: '/settings/backup', name: 'settings-backup', tab: 'settings', render: () => <BackupScreen /> },
   { pattern: '/settings/about', name: 'settings-about', tab: 'settings', render: () => <AboutScreen /> },
+  { pattern: '/settings/tools', name: 'settings-tools', tab: 'settings', render: () => <ToolsScreen /> },
 ];
 
 const compiled = compile(routes);

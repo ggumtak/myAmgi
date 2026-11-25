@@ -1,0 +1,44 @@
+.full-sync__intro {
+  margin: 0 0 12px;
+  color: var(--text-2);
+}
+.full-sync__choices {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.full-sync__choice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  min-height: var(--target);
+  padding: 14px 16px;
+  border: var(--bw) solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion);
+}
+.full-sync__choice:active {
+  background: var(--surface-2);
+}
+@media (hover: hover) {
+  .full-sync__choice:hover {
+    border-color: var(--primary);
+  }
+}
+.full-sync__choice-title {
+  font-size: var(--fs-16);
+  font-weight: 600;
+}
+.full-sync__choice-text {
+  font-size: var(--fs-14);
+  color: var(--text-2);
+}
+:root[data-theme='eink'] .full-sync__choice {
+  background: #fff;
+  border-color: #000;
+}

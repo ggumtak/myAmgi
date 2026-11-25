@@ -4,7 +4,11 @@ import com.ggumtak.myamgi.engine.AnkiEngine
 import com.ggumtak.myamgi.host.ClasspathAssetSource
 import com.ggumtak.myamgi.host.DirAssetSource
 import com.ggumtak.myamgi.host.HostServer
+import com.ggumtak.myamgi.host.HostError
 import com.ggumtak.myamgi.host.HostLog
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import net.ankiweb.rsdroid.testing.RustBackendLoader
 import java.awt.Desktop
 import java.awt.GraphicsEnvironment
@@ -18,7 +22,8 @@ import kotlin.system.exitProcess
  * PC launcher and development/test host.
  *
  * `--port N` (default random) `--dir D` (data dir, default ~/.myamgi) `--ui-dir U` (UI bundle directory)
- * `--ota-dir O` `--token T` (default random) `--seed` (sample collection when empty) `--no-open`.
+ * `--ota-dir O` `--token T` (default random) `--seed` (sample collection when empty) `--no-open`
+ * `--test-hooks` (extra host functions for UI tests, see [installTestHooks]).
  */
 fun main(args: Array<String>) {
     val opts = try {
@@ -55,6 +60,8 @@ fun main(args: Array<String>) {
         log = log
     )
 
+    if (opts.testHooks) installTestHooks(server, dataDir)
+
     if (opts.seed) {
         val seeded = SampleCollection.seedIfEmpty()
         log.info(if (seeded) "seeded sample collection" else "collection not empty; seed skipped")
@@ -83,6 +90,31 @@ fun main(args: Array<String>) {
 }
 
 /**
+ * Host functions for UI tests (`web/e2e`), only with `--test-hooks`:
+ * - `test.reset` → deletes the collection, media, backups, prefs and AnkiWeb login, then seeds
+ *   [SampleCollection] again: `{ok: true}`.
+ * - `test.emit {event, data}` → publishes a server-sent event as if the shell had (e.g. `back`).
+ */
+private fun installTestHooks(server: HostServer, dataDir: File) {
+    val ok = JsonObject(mapOf("ok" to JsonPrimitive(true)))
+    server.api.register("test.reset") { _ ->
+        AnkiEngine.deleteCollectionAndReopen()
+        SampleCollection.seed()
+        val prefs = server.api.prefs
+        prefs.set(JsonObject(prefs.all().keys.associateWith { JsonNull }))
+        File(dataDir, "backups").deleteRecursively()
+        File(dataDir, "host/sync.json").delete()
+        server.log.info("test.reset: collection reseeded")
+        ok
+    }
+    server.api.register("test.emit") { a ->
+        val event = (a["event"] as? JsonPrimitive)?.content ?: throw HostError.badRequest("필수 값이 없습니다: event")
+        server.publish(event, a["data"] ?: JsonObject(emptyMap()))
+        ok
+    }
+}
+
+/**
  * The desktop native library (from anki-android-backend-testing) redirects file descriptors 1 and 2 to
  * temporary files when it loads. Reopen the original console first so our output stays visible.
  */
@@ -105,11 +137,12 @@ internal data class Options(
     val token: String? = null,
     val seed: Boolean = false,
     val noOpen: Boolean = false,
-    val verbose: Boolean = false
+    val verbose: Boolean = false,
+    val testHooks: Boolean = false
 ) {
     companion object {
         const val USAGE =
-            "usage: desktop [--port N] [--dir DATA_DIR] [--ui-dir UI_DIR] [--ota-dir OTA_DIR] [--token T] [--seed] [--no-open] [--verbose]"
+            "usage: desktop [--port N] [--dir DATA_DIR] [--ui-dir UI_DIR] [--ota-dir OTA_DIR] [--token T] [--seed] [--no-open] [--verbose] [--test-hooks]"
 
         fun parse(args: Array<String>): Options {
             var o = Options()
@@ -132,6 +165,7 @@ internal data class Options(
                     "--seed" -> o = o.copy(seed = true)
                     "--no-open" -> o = o.copy(noOpen = true)
                     "--verbose" -> o = o.copy(verbose = true)
+                    "--test-hooks" -> o = o.copy(testHooks = true)
                     "--help", "-h" -> {
                         println(USAGE)
                         exitProcess(0)

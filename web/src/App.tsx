@@ -3,6 +3,9 @@
 import { useEffect, useState } from 'react';
 import { hostInfoStore, onHostEvent, prefsStore, usePrefs, type HostInfo } from './host';
 import { goBack } from './lib/back';
+import { ImportFlow, importHostFile } from './lib/importFlow';
+import { startSync } from './lib/sync';
+import { FullSyncDialog } from './ui/FullSyncDialog';
 import { useMediaQuery } from './lib/hooks';
 import { useLocation } from './lib/router';
 import { applyTheme, resolveTheme } from './lib/theme';
@@ -35,6 +38,17 @@ export function App() {
   }, [prefs.theme, info, systemDark]);
 
   useEffect(() => onHostEvent('back', () => goBack()), []);
+  // A file opened with the app (Android share/open-with): import it.
+  useEffect(
+    () =>
+      onHostEvent('open-file', (f) => {
+        if (typeof f.path === 'string') void importHostFile(f.path, typeof f.name === 'string' ? f.name : f.path.split('/').pop() ?? f.path);
+      }),
+    [],
+  );
+  useEffect(() => {
+    if (boot.state === 'ready') startSync();
+  }, [boot.state]);
 
   if (boot.state === 'loading') return <LoadingState label="시작하는 중" />;
   if (boot.state === 'error')
@@ -47,6 +61,8 @@ export function App() {
   return (
     <>
       <Routed />
+      <FullSyncDialog />
+      <ImportFlow />
       <Toaster />
     </>
   );

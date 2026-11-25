@@ -32,6 +32,13 @@ class SyncServiceTest {
         var block: CountDownLatch? = null
         val aborted = CountDownLatch(1)
         var mediaPolls = 2
+        var required = SyncRequired.NORMAL_SYNC
+
+        override fun syncStatus(creds: SyncCredentials): SyncRequired {
+            calls += "status:${creds.hkey}"
+            if (failAuth) throw SyncAuthFailed("expired")
+            return required
+        }
 
         override fun login(user: String, password: String, endpoint: String?): SyncCredentials {
             calls += "login:$user"
@@ -113,6 +120,21 @@ class SyncServiceTest {
         service.logout()
         assertFalse(service.status().b("loggedIn"))
         assertFalse(stateFile.readText().contains("HKEY"))
+    }
+
+    @Test
+    fun checkReportsWhatASyncWouldDo() {
+        assertEquals("none", service.check()["required"]!!.jsonPrimitive.content)
+        assertFalse(service.check().b("loggedIn"))
+        assertTrue(calls.none { it.startsWith("status") })
+        service.login("me", "pw", null)
+        assertEquals("normal", service.check()["required"]!!.jsonPrimitive.content)
+        transport.required = SyncRequired.FULL_SYNC
+        assertEquals("full", service.check()["required"]!!.jsonPrimitive.content)
+        transport.required = SyncRequired.NO_CHANGES
+        assertEquals("none", service.check()["required"]!!.jsonPrimitive.content)
+        transport.failAuth = true
+        expectError(401) { service.check() }
     }
 
     @Test
