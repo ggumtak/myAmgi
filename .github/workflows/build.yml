@@ -15,7 +15,7 @@ permissions:
 
 concurrency:
   group: build-${{ github.ref }}-${{ github.event_name == 'schedule' && 'keepalive' || 'build' }}
-  # Never cancel between deleting and recreating the rolling 'latest' release.
+  # Never cancel mid-publish: stale release files are deleted only after the new ones are uploaded.
   cancel-in-progress: false
 
 jobs:
@@ -152,7 +152,8 @@ jobs:
             --assets-dir app/src/main/assets \
             --out-dir dist \
             --version "${GITHUB_RUN_NUMBER}" \
-            --repo "${GITHUB_REPOSITORY}"
+            --repo "${GITHUB_REPOSITORY}" \
+            --tag update-files
           ls -lh dist
 
       - name: Make flavor-specific binary delta patches
@@ -185,7 +186,7 @@ jobs:
           name: myAmgi-apks
           path: dist/*
 
-      - name: Publish rolling latest release
+      - name: Publish releases (latest = download page, update-files = updater files)
         if: (github.ref_name == 'main' || github.ref_name == github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         env:
           GH_TOKEN: ${{ github.token }}
@@ -202,44 +203,137 @@ jobs:
             done
           }
 
-          title="myAmgi (build ${GITHUB_RUN_NUMBER})"
-          notes="최신 빌드 (build ${GITHUB_RUN_NUMBER}, commit ${GITHUB_SHA})입니다.
-          - myAmgi-Pro-${GITHUB_RUN_NUMBER}.apk: 일반 스마트폰/태블릿용 (arm64-v8a)
-          - myAmgi-Comet-${GITHUB_RUN_NUMBER}.apk: 이노스페이스원 코멧(E-Ink) 전용 (arm64-v8a)
-          - *.patch / ota-manifest.json / ota__*: 앱 내 2단계 증분·OTA 업데이트용 파일"
+          n="${GITHUB_RUN_NUMBER}"
+          pro_apk="myAmgi-Pro-${n}.apk"
+          comet_apk="myAmgi-Comet-${n}.apk"
 
+          # Allow-lists (shell glob patterns). They decide which dist/ files go to which release
+          # and which assets may stay there; every other asset is deleted at the very end.
+          # When the PC package ships, add its pattern here, e.g. "myAmgi-PC-${n}.zip".
+          LATEST_KEEP=("${pro_apk}" "${comet_apk}")
+          UPDATE_KEEP=("myAmgi-Pro-${n}.from-*.patch" "myAmgi-Comet-${n}.from-*.patch" "ota-manifest.json" "ota__*")
+
+          matches() { # name pattern...
+            local name="$1" pat; shift
+            for pat in "$@"; do
+              # Unquoted right-hand side: glob match.
+              [[ "$name" == $pat ]] && return 0
+            done
+            return 1
+          }
+
+          # On latest a name is kept by pattern alone (so a PC package uploaded by another job stays).
+          # On update-files it must also be a file this run produced (drops ota__ files no longer tracked).
+          keep() { # tag name
+            case "$1" in
+              latest) matches "$2" "${LATEST_KEEP[@]}" ;;
+              update-files) matches "$2" "${UPDATE_KEEP[@]}" && [ -f "dist/$2" ] ;;
+              *) return 0 ;;
+            esac
+          }
+
+          upload_new() { # tag file...  (skips assets whose SHA-256 digest is unchanged)
+            local tag="$1" existing f bname local_digest; shift
+            existing="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" --jq '.assets[] | "\(.name)=\(.digest)"' 2>/dev/null || true)"
+            for f in "$@"; do
+              bname="$(basename "$f")"
+              local_digest="sha256:$(sha256sum "$f" | awk '{print $1}')"
+              if printf '%s\n' "$existing" | grep -Fxq "${bname}=${local_digest}"; then
+                echo "Skipping unchanged asset on ${tag}: ${bname}"
+                continue
+              fi
+              retry 5 gh release upload "$tag" "$f" --clobber || return 1
+            done
+          }
+
+          list_assets() { # tag outfile
+            gh release view "$1" --json assets --jq '.assets[].name' > "$2"
+          }
+
+          prune() { # tag  -- runs last: deletes every asset that keep() rejects
+            local tag="$1" list="$RUNNER_TEMP/assets-$1.txt" name
+            if ! retry 3 list_assets "$tag" "$list"; then
+              echo "::warning::Could not list assets of ${tag}; stale files stay until the next run"
+              return 0
+            fi
+            while IFS= read -r name; do
+              [ -n "$name" ] || continue
+              keep "$tag" "$name" && continue
+              echo "Deleting stale asset from ${tag}: ${name}"
+              retry 3 gh release delete-asset "$tag" "$name" --yes \
+                || echo "::warning::Could not delete ${name} from ${tag}; next run retries"
+            done < "$list"
+          }
+
+          latest_files=()
+          update_files=()
+          for f in dist/*; do
+            [ -f "$f" ] || continue
+            bname="$(basename "$f")"
+            if matches "$bname" "${LATEST_KEEP[@]}"; then
+              latest_files+=("$f")
+            elif matches "$bname" "${UPDATE_KEEP[@]}"; then
+              update_files+=("$f")
+            else
+              echo "::warning::${bname} matches no release allow-list; not published"
+            fi
+          done
+          if [ ! -f "dist/${pro_apk}" ] || [ ! -f "dist/${comet_apk}" ]; then
+            echo "::error::dist/ is missing ${pro_apk} or ${comet_apk}; nothing published"
+            exit 1
+          fi
+
+          # 1) Updater files first: new builds look for patches/OTA here.
+          u_title="앱 자동 업데이트용 파일 (직접 받지 마세요)"
+          u_notes="앱이 스스로 업데이트할 때 쓰는 파일입니다. 설치 파일은 latest 릴리스(다운로드 페이지)에서 받으세요."
+          if gh release view update-files >/dev/null 2>&1; then
+            retry 4 gh release edit update-files --draft=false --prerelease --title "$u_title" --notes "$u_notes" \
+              || echo "::warning::update-files metadata edit failed; continuing asset upload"
+          else
+            retry 5 gh release create update-files \
+              --target "${GITHUB_SHA}" \
+              --prerelease \
+              --title "$u_title" \
+              --notes "$u_notes"
+          fi
+          if [ "${#update_files[@]}" -gt 0 ]; then
+            upload_new update-files "${update_files[@]}" || { echo "::error::Upload to update-files failed"; exit 1; }
+          fi
+
+          # 2) Download page: a normal release so GitHub marks it "Latest".
+          title="myAmgi 설치 파일 (빌드 ${n})"
+          notes="$(cat <<EOF
+          | 기기 | 받을 파일 |
+          | --- | --- |
+          | 휴대폰·태블릿 | ${pro_apk} |
+          | 코멧(E-Ink) | ${comet_apk} |
+
+          한 번 설치하면 그다음부터는 앱이 스스로 업데이트합니다.
+          EOF
+          )"
           if gh release view latest >/dev/null 2>&1; then
             git tag -f latest "${GITHUB_SHA}"
             git push origin refs/tags/latest --force
-            retry 4 gh release edit latest --draft=false --prerelease --title "$title" --notes "$notes" \
+            retry 4 gh release edit latest --draft=false --prerelease=false --latest --title "$title" --notes "$notes" \
               || echo "::warning::Release metadata edit returned transient error; continuing asset upload"
           else
             retry 5 gh release create latest \
               --target "${GITHUB_SHA}" \
-              --prerelease \
+              --latest \
               --title "$title" \
               --notes "$notes"
           fi
+          upload_new latest "${latest_files[@]}" || { echo "::error::Upload to latest failed"; exit 1; }
 
-          existing_digests="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/latest" --jq '.assets[] | "\(.name)=\(.digest)"' 2>/dev/null || true)"
-          for f in dist/*; do
-            [ -f "$f" ] || continue
-            bname="$(basename "$f")"
-            local_digest="sha256:$(sha256sum "$f" | awk '{print $1}')"
-            if printf '%s\n' "$existing_digests" | grep -Fxq "${bname}=${local_digest}"; then
-              echo "Skipping unchanged asset: ${bname}"
-              continue
-            fi
-            retry 5 gh release upload latest "$f" --clobber
-          done
-
-          # Remove stale APK/patch assets from previous builds while keeping current dist/*
-          gh release view latest --json assets --jq '.assets[].name' | while read -r name; do
-            [ -n "$name" ] || continue
-            if [ ! -f "dist/$name" ]; then
-              gh release delete-asset latest "$name" --yes || true
-            fi
-          done
+          # 3) Delete stale files last, and only once both current APKs are confirmed on latest.
+          if ! retry 3 list_assets latest "$RUNNER_TEMP/latest-check.txt" \
+            || ! grep -Fxq "${pro_apk}" "$RUNNER_TEMP/latest-check.txt" \
+            || ! grep -Fxq "${comet_apk}" "$RUNNER_TEMP/latest-check.txt"; then
+            echo "::error::latest does not list ${pro_apk} and ${comet_apk}; stale files were left in place"
+            exit 1
+          fi
+          prune latest
+          prune update-files
 
       - name: Archive APK history (newest 10 per flavor)
         if: (github.ref_name == 'main' || github.ref_name == github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')

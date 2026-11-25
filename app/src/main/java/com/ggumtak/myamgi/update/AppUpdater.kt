@@ -31,11 +31,22 @@ object AppUpdater {
 
     fun check(done: (UpdateInfo.Latest?) -> Unit) {
         Thread {
-            val latest = runCatching {
-                getText(UpdateInfo.LATEST_URL)?.let { UpdateInfo.parse(it, BuildConfig.APK_PREFIX) }
-            }.getOrNull()
+            val latest = runCatching { fetchLatest() }.getOrNull()
             main.post { done(latest) }
         }.start()
+    }
+
+    /**
+     * Reads the full APK from release `latest`. Only when it is newer, also reads release
+     * `update-files` for delta patches; if that fails, the full APK is used.
+     */
+    private fun fetchLatest(): UpdateInfo.Latest? {
+        val latestJson = getText(UpdateInfo.LATEST_URL) ?: return null
+        val apkOnly = UpdateInfo.parse(latestJson, BuildConfig.APK_PREFIX) ?: return null
+        if (!UpdateInfo.isNewer(apkOnly, current)) return apkOnly
+        val updateFilesJson = runCatching { getText(UpdateInfo.UPDATE_FILES_URL) }.getOrNull()
+            ?: return apkOnly
+        return UpdateInfo.parse(latestJson, BuildConfig.APK_PREFIX, updateFilesJson) ?: apkOnly
     }
 
     fun install(

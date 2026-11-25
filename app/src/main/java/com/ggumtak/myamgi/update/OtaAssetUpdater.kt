@@ -33,7 +33,7 @@ data class OtaCheckResult(
 )
 
 /**
- * Fetches `ota-manifest.json` from the rolling `latest` GitHub release, checks SHA-256 of
+ * Fetches `ota-manifest.json` from the `update-files` GitHub release, checks SHA-256 of
  * tracked web/JS/CSS assets, and atomically downloads changed files into `filesDir/ota/`.
  */
 object OtaAssetUpdater {
@@ -48,8 +48,9 @@ object OtaAssetUpdater {
             .build()
     }
 
-    fun manifestUrl(): String =
-        "https://github.com/${BuildConfig.GITHUB_REPO}/releases/download/latest/ota-manifest.json"
+    const val MANIFEST_NAME = "ota-manifest.json"
+
+    fun manifestUrl(): String = UpdateInfo.downloadUrl(UpdateInfo.UPDATE_FILES_TAG, MANIFEST_NAME)
 
     /** Pure JSON parser so JVM unit tests can verify manifest parsing without network or Context. */
     fun parseManifest(json: String): OtaManifest {
@@ -97,6 +98,15 @@ object OtaAssetUpdater {
                 .build()
 
             val manifestJson = client.newCall(manifestReq).execute().use { resp ->
+                if (resp.code == 404) {
+                    // No manifest published (yet): nothing to hot-patch, not an error.
+                    return@withContext OtaCheckResult(
+                        remoteVersion = localVersion,
+                        updatedFiles = emptyList(),
+                        upToDate = true,
+                        error = null
+                    )
+                }
                 if (!resp.isSuccessful) {
                     return@withContext OtaCheckResult(
                         remoteVersion = localVersion,
