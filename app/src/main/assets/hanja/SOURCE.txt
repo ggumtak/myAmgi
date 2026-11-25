@@ -1,0 +1,7 @@
+# anki-tap.js in this folder is a byte copy of the Hanja app's script (fallback only: myAmgi reads the live
+# copy from the installed Hanja APK's assets/anki-tap.js). To refresh: copy the Hanja repository's
+# app/src/main/assets/anki-tap.js here, then update the three lines below. HanjaTapScriptTest checks them.
+repo=ggumtak/test
+path=app/src/main/assets/anki-tap.js
+commit=6135eb093ae0ba894c28465dcde8dd6e1e530d45
+sha256=75e766ec87e7ede552218d0a8a6a2a7de5d987ea142258db65388451e734850f

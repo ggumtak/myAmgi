@@ -15,11 +15,19 @@ import java.util.zip.ZipFile
 /**
  * Integration with "한자 바로보기" (`com.ggumtak.hanja`).
  *
- * - Prefers extracting live `assets/anki-tap.js` from the installed `com.ggumtak.hanja` APK,
- *   caching by APK `lastModified` timestamp.
- * - Falls back to bundled/OTA `hanja/anki-tap.js` via [AssetLoader].
+ * - The tap script's one source of truth is the installed Hanja app: its APK's `assets/anki-tap.js` (the entry
+ *   name its build really produces, checked by HanjaTapScriptTest) is read at run time, cached by the APK's
+ *   `lastModified`, so every Hanja update reaches myAmgi's reviewer without a myAmgi release.
+ * - Without the Hanja app installed, the bundled/OTA copy `assets/hanja/anki-tap.js` (via [AssetLoader]) is used.
+ *   A tap then has nowhere to go, so that copy only has to be close, not current. It is a byte copy of the Hanja
+ *   repository's `app/src/main/assets/anki-tap.js` at the commit named in `assets/hanja/SOURCE`; to refresh it,
+ *   copy the file and update SOURCE (its SHA-256 line). HanjaTapScriptTest fails when the copy and SOURCE
+ *   disagree, and when a Hanja checkout is next to this repository (or HANJA_REPO points to one) and differs.
+ * - The script only defines `window.__hjCode[<version>]`; the Hanja app's card loader runs the highest version.
+ *   [withRunner] appends the same runner, so myAmgi keeps working when the Hanja app moves to v10, v11, ….
  * - Safely dispatches `intent://lookup?...#Intent;scheme=hanja;package=com.ggumtak.hanja;end`
- *   and `hanja://...` URLs from WebView card taps.
+ *   and `hanja://...` URLs from WebView card taps; the Hanja app's LookupActivity takes ACTION_VIEW
+ *   `hanja://lookup?q=<word>&s=<sentence>` (categories DEFAULT and BROWSABLE).
  */
 object HanjaIntegration {
     const val HANJA_PACKAGE = "com.ggumtak.hanja"
@@ -52,7 +60,7 @@ object HanjaIntegration {
                         cachedApkLastModified == mtime &&
                         cachedApkScript != null
                     ) {
-                        return "apk:$HANJA_PACKAGE" to cachedApkScript!!
+                        return "apk:$HANJA_PACKAGE" to withRunner(cachedApkScript!!)
                     }
                 }
                 val extracted = extractTapScriptFromApk(apkFile)
@@ -62,7 +70,7 @@ object HanjaIntegration {
                         cachedApkLastModified = mtime
                         cachedApkScript = extracted
                     }
-                    return "apk:$HANJA_PACKAGE" to extracted
+                    return "apk:$HANJA_PACKAGE" to withRunner(extracted)
                 }
             }
         }
@@ -70,8 +78,19 @@ object HanjaIntegration {
         val fallback = runCatching {
             AssetLoader.readText(context, LOCAL_ASSET_PATH)
         }.getOrDefault("")
-        return "asset:$LOCAL_ASSET_PATH" to fallback
+        return "asset:$LOCAL_ASSET_PATH" to (if (fallback.isBlank()) fallback else withRunner(fallback))
     }
+
+    /**
+     * Runs the highest `window.__hjCode` version the script defined, as the Hanja app's `anki-loader.html` does,
+     * unless a run already happened on this page (`__hjtapRun` set by an earlier card in the same WebView: the
+     * page's own call to `__hjtapRun()` rescans then). Without it a script that moved past v9 would only define a
+     * function nobody calls.
+     */
+    fun withRunner(script: String): String = script.trimEnd() + "\n" + RUNNER
+
+    const val RUNNER = "(function(){var w=window;if(w.__hjtapRun)return;var c=w.__hjCode||{},b=0;" +
+        "for(var k in c)if(+k>b)b=+k;if(b&&typeof c[b]==='function')c[b]();})();\n"
 
     /** Pure JVM-testable helper that extracts `assets/anki-tap.js` from an APK/ZIP archive. */
     fun extractTapScriptFromApk(apkFile: File): String? {
