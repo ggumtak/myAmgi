@@ -1,0 +1,36 @@
+.state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 48px 24px;
+  gap: 8px;
+  max-width: 480px;
+  margin: 0 auto;
+}
+.state__icon {
+  color: var(--text-2);
+  margin-bottom: 4px;
+}
+.state--error .state__icon {
+  color: var(--danger);
+}
+.state__title {
+  margin: 0;
+  font-size: var(--fs-18);
+  font-weight: 700;
+}
+.state__message {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-16);
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+.state__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+}

@@ -1,0 +1,40 @@
+.spinner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--primary);
+}
+.spinner__ring circle {
+  stroke: currentColor;
+  stroke-dasharray: 42 100;
+  stroke-linecap: round;
+}
+.spinner__ring {
+  animation: spinner-rotate 0.9s linear infinite;
+}
+.spinner__text {
+  display: none;
+}
+@keyframes spinner-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+:root[data-theme='eink'] .spinner__ring {
+  display: none;
+}
+:root[data-theme='eink'] .spinner__text {
+  display: inline;
+  color: #000;
+  font-weight: 600;
+}
+:root[data-theme='eink'] .spinner--inline .spinner__text {
+  font-size: var(--fs-14);
+}
+.loading-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 160px;
+  padding: 32px 16px;
+}

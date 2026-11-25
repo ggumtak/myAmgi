@@ -1,0 +1,72 @@
+.menu-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+}
+.menu {
+  position: fixed;
+  min-width: 200px;
+  max-width: min(320px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  padding: 6px 0;
+  background: var(--bg);
+  color: var(--text);
+  border: var(--bw) solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  animation: menu-in var(--motion);
+}
+:root[data-theme='dark'] .menu {
+  background: var(--surface);
+}
+.menu__item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: var(--target);
+  padding: 0 18px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font-size: var(--fs-16);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.menu__item:focus-visible,
+.menu__item:active {
+  background: var(--surface-2);
+  box-shadow: none;
+}
+@media (hover: hover) {
+  .menu__item:hover {
+    background: var(--surface);
+  }
+  :root[data-theme='dark'] .menu__item:hover {
+    background: var(--surface-2);
+  }
+}
+.menu__item--danger {
+  color: var(--danger);
+}
+.menu__item:disabled {
+  opacity: 0.45;
+}
+:root[data-theme='eink'] .menu__item + .menu__item {
+  border-top: 1px solid #000;
+}
+:root[data-theme='eink'] .menu__item:focus-visible,
+:root[data-theme='eink'] .menu__item:active {
+  background: #000;
+  color: #fff;
+  outline: none;
+}
+:root[data-theme='eink'] .menu__item--danger {
+  font-weight: 700;
+}
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}

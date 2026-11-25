@@ -1,0 +1,44 @@
+.app-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: calc(var(--appbar-h) + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) 4px 0;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+:root[data-theme='eink'] .app-bar {
+  border-bottom-width: var(--bw);
+}
+.app-bar__titles {
+  flex: 1;
+  min-width: 0;
+  padding: 0 4px;
+}
+.app-bar__titles--root {
+  padding-left: 12px;
+}
+.app-bar__title {
+  margin: 0;
+  font-size: var(--fs-18);
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.app-bar__subtitle {
+  font-size: var(--fs-13);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.app-bar__actions {
+  display: flex;
+  align-items: center;
+  flex: none;
+}

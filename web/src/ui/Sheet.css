@@ -1,0 +1,136 @@
+.sheet-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+}
+.sheet-layer--sheet {
+  align-items: flex-end;
+}
+.sheet-layer--dialog {
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.sheet-scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--scrim);
+  animation: sheet-fade var(--motion);
+}
+.sheet {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: 90vh;
+  overflow: auto;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+}
+.sheet-layer--sheet .sheet {
+  border-radius: calc(var(--radius) * 1.6) calc(var(--radius) * 1.6) 0 0;
+  padding: 8px 20px calc(16px + env(safe-area-inset-bottom));
+  box-shadow: var(--shadow-2);
+  animation: sheet-up var(--motion);
+}
+.sheet-layer--dialog .sheet {
+  max-width: 480px;
+  border-radius: calc(var(--radius) * 1.4);
+  padding: 24px;
+  box-shadow: var(--shadow-2);
+  animation: sheet-fade var(--motion);
+}
+:root[data-theme='eink'] .sheet {
+  border: var(--bw) solid #000;
+}
+:root[data-theme='eink'] .sheet-layer--sheet .sheet {
+  border-bottom: 0;
+}
+.sheet__grip {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  margin: 0 auto 12px;
+}
+.sheet__title {
+  margin: 4px 0 12px;
+  font-size: var(--fs-18);
+  font-weight: 700;
+  line-height: 1.35;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.sheet__body {
+  font-size: var(--fs-16);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.sheet__body p {
+  margin: 0 0 12px;
+}
+.sheet__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 20px;
+}
+.sheet-layer--dialog .sheet__actions {
+  justify-content: flex-end;
+}
+.sheet-layer--sheet .sheet__actions {
+  flex-direction: column-reverse;
+}
+.sheet-layer--sheet .sheet__actions > .btn {
+  width: 100%;
+}
+@keyframes sheet-up {
+  from {
+    transform: translateY(24px);
+    opacity: 0.6;
+  }
+}
+@keyframes sheet-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.field__label {
+  font-size: var(--fs-14);
+  color: var(--text-2);
+  font-weight: 600;
+}
+.field__input {
+  min-height: var(--target);
+  padding: 0 14px;
+  border: var(--bw) solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--fs-16);
+}
+.field__input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+:root[data-theme='eink'] .field__input:focus {
+  box-shadow: none;
+  border-width: 3px;
+}
+.field__hint {
+  font-size: var(--fs-13);
+  color: var(--text-2);
+}
+.field__error {
+  font-size: var(--fs-14);
+  color: var(--danger);
+  font-weight: 600;
+}

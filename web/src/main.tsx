@@ -1,19 +1,16 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import './styles/main.css';
-import App from './App';
+import './styles/tokens.css';
+import './styles/base.css';
+import './shell/Shell.css';
+import { App } from './App';
+import { applyTheme, systemPrefersDark } from './lib/theme';
 
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    const swUrl = `${import.meta.env.BASE_URL}sw.js`;
-    navigator.serviceWorker.register(swUrl).catch(() => {
-      // Ignore SW registration failure in dev/unsupported contexts
-    });
-  });
-}
+// Avoid a white flash before prefs arrive from the host.
+applyTheme(systemPrefersDark() ? 'dark' : 'light');
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />
-  </StrictMode>
+  </StrictMode>,
 );
