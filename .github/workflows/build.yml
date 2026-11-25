@@ -97,8 +97,8 @@ jobs:
           path: ~/.myamgi-signing
           key: myamgi-signing-v1
 
-      - name: Run unit tests (Pro & Comet)
-        run: ./gradlew --stacktrace testProDebugUnitTest testCometDebugUnitTest
+      - name: Run unit tests (engine host, Pro & Comet)
+        run: ./gradlew --stacktrace :core:test :desktop:installDist testProDebugUnitTest testCometDebugUnitTest
 
       - name: Build release APKs (Pro & Comet)
         run: ./gradlew --stacktrace assembleProRelease assembleCometRelease

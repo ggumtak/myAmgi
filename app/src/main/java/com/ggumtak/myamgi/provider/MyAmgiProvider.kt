@@ -12,6 +12,7 @@ import android.database.Cursor
 import android.net.Uri
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
+import com.ggumtak.myamgi.engine.AndroidEngine
 import com.ggumtak.myamgi.engine.AnkiEngine
 import java.io.FileNotFoundException
 import java.util.concurrent.Executors
@@ -82,8 +83,9 @@ class MyAmgiProvider : ContentProvider() {
 
     override fun onCreate(): Boolean {
         val ctx = context ?: return false
-        // Cheap: only sets the folder. The collection opens on the first call (withBackend), on that caller's thread.
-        AnkiEngine.initDirectory(ctx)
+        // Cheap: only sets the native loader and the folder. The collection opens on the first call
+        // (withBackend), on that caller's thread. Provider.onCreate runs before Application.onCreate.
+        AndroidEngine.install(ctx)
         ensureMatcher()
         return true
     }
