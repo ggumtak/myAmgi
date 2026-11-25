@@ -185,14 +185,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete latest --yes --cleanup-tag || true
-          gh release create latest dist/* \
+          # Wait briefly for tag deletion propagation if a prior release existed
+          sleep 2
+          gh release create latest \
             --target "${GITHUB_SHA}" \
             --prerelease \
             --title "myAmgi (build ${GITHUB_RUN_NUMBER})" \
             --notes "최신 빌드 (build ${GITHUB_RUN_NUMBER}, commit ${GITHUB_SHA})입니다.
-          - myAmgi-Pro-${GITHUB_RUN_NUMBER}.apk: 일반 스마트폰/태블릿용
-          - myAmgi-Comet-${GITHUB_RUN_NUMBER}.apk: 이노스페이스원 코멧(E-Ink) 전용
+          - myAmgi-Pro-${GITHUB_RUN_NUMBER}.apk: 일반 스마트폰/태블릿용 (arm64-v8a)
+          - myAmgi-Comet-${GITHUB_RUN_NUMBER}.apk: 이노스페이스원 코멧(E-Ink) 전용 (arm64-v8a)
           - *.patch / ota-manifest.json / ota__*: 앱 내 2단계 증분·OTA 업데이트용 파일"
+          for f in dist/*; do
+            [ -f "$f" ] || continue
+            gh release upload latest "$f" --clobber
+          done
 
       - name: Archive APK history (newest 10 per flavor)
         if: (github.ref_name == 'main' || github.ref_name == github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
