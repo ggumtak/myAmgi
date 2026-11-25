@@ -12,7 +12,9 @@ import android.webkit.WebViewClient
 import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import anki.generic.Json
 import com.ggumtak.myamgi.engine.AnkiEngine
+import com.google.protobuf.ByteString
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -25,8 +27,9 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 /**
- * Hosts the official Anki 26.09.4 SvelteKit pages (`/deck-options/<id>`, `/graphs`,
- * `/card-info/<id>`, `/image-occlusion/<id>`, `/preferences`, `/congrats`) over an
+ * Hosts the official Anki 26.09.4 SvelteKit pages bundled in anki-backend-android
+ * (`assets/backend/sveltekit`: `/deck-options/<id>`, `/graphs`, `/card-info/<id>`, `/congrats`,
+ * `/change-notetype/..`, `/image-occlusion/..`, `/import-anki-package`, `/import-csv`, `/import-page`, `/editor`, `/preferences`) over an
  * embedded loopback HTTP server dispatching `/_anki/<method>` directly to [AnkiEngine.rawCall].
  */
 class AnkiPageActivity : AppCompatActivity() {
@@ -34,6 +37,40 @@ class AnkiPageActivity : AppCompatActivity() {
     companion object {
         private const val EXTRA_ROUTE = "extra_route"
         private const val EXTRA_TITLE = "extra_title"
+
+        /** SvelteKit route prefixes shipped in the AAR (from its route dictionary); all served by index.html. */
+        private val SPA_ROUTES = listOf(
+            "/card-info",
+            "/change-notetype",
+            "/congrats",
+            "/deck-options",
+            "/editor",
+            "/graphs",
+            "/image-occlusion",
+            "/import-anki-package",
+            "/import-csv",
+            "/import-page",
+            "/preferences"
+        )
+
+        /**
+         * Methods of Anki's FrontendService. The pages call them like backend methods, but they are
+         * implemented by the host (Anki desktop's mediasrv); the Rust backend rejects them with
+         * InvalidServiceIndex, which the page would turn into an alert(). Answer them here instead.
+         */
+        private val FRONTEND_METHODS = setOf(
+            "askUser", "closeAddCards", "closeEditCurrent", "convertPastedImage", "deckOptionsReady",
+            "deckOptionsRequireClose", "getMetaJson", "getProfileConfigJson", "getSchedulingStatesWithContext",
+            "importDialogRequireClose", "importDone", "openCardsDialog", "openFieldsDialog", "openFilePicker",
+            "openLink", "openMedia", "playFile", "readClipboard", "recordAudio", "saveCustomColours",
+            "searchInBrowser", "setMetaJson", "setProfileConfigJson", "setSchedulingStates",
+            "showInMediaFolder", "showMessageBox", "writeClipboard"
+        )
+
+        /** Frontend calls that ask the host to close the page. */
+        private val CLOSE_METHODS = setOf(
+            "deckOptionsRequireClose", "importDialogRequireClose", "closeAddCards", "closeEditCurrent"
+        )
 
         fun start(context: Context, route: String, title: String) {
             val intent = Intent(context, AnkiPageActivity::class.java).apply {
@@ -173,9 +210,17 @@ class AnkiPageActivity : AppCompatActivity() {
 
             if (method == "POST" && rawPath.startsWith("/_anki/")) {
                 val methodName = rawPath.removePrefix("/_anki/").trimStart('/')
+                if (methodName in FRONTEND_METHODS) {
+                    writeHttpResponse(out, 200, "OK", "application/octet-stream", handleFrontendCall(methodName))
+                    return
+                }
                 try {
                     val respBytes = AnkiEngine.rawCall(methodName, bodyBytes)
                     writeHttpResponse(out, 200, "OK", "application/octet-stream", respBytes)
+                    if (methodName == "updateDeckConfigs") {
+                        // Like Anki desktop: close deck options once the save went through.
+                        finishOnUiThread()
+                    }
                 } catch (t: Throwable) {
                     val msg = (t.cause?.message ?: t.message ?: t.toString()).toByteArray(StandardCharsets.UTF_8)
                     writeHttpResponse(out, 500, "Internal Server Error", "text/plain; charset=utf-8", msg)
@@ -192,8 +237,9 @@ class AnkiPageActivity : AppCompatActivity() {
                         return
                     }
                 }
-                // Fallback to SvelteKit SPA shell for unknown frontend routes
-                val spaFallback = readAssetBytes("backend/sveltekit/index.html")
+                // Fallback to SvelteKit SPA shell for unknown extension-less routes; missing files stay 404
+                val lastSegment = rawPath.substringAfterLast('/')
+                val spaFallback = if (!lastSegment.contains('.')) readAssetBytes("backend/sveltekit/index.html") else null
                 if (spaFallback != null) {
                     writeHttpResponse(out, 200, "OK", "text/html; charset=utf-8", spaFallback)
                     return
@@ -209,14 +255,27 @@ class AnkiPageActivity : AppCompatActivity() {
         return when {
             clean.startsWith("/_app/") -> "backend/sveltekit/app/${clean.removePrefix("/_app/")}"
             clean.startsWith("/_anki/") -> "backend/${clean.removePrefix("/_anki/")}"
-            clean == "/" ||
-                clean.startsWith("/deck-options") ||
-                clean.startsWith("/graphs") ||
-                clean.startsWith("/card-info") ||
-                clean.startsWith("/image-occlusion") ||
-                clean.startsWith("/preferences") ||
-                clean.startsWith("/congrats") -> "backend/sveltekit/index.html"
+            clean == "/" || SPA_ROUTES.any { clean == it || clean.startsWith("$it/") } -> "backend/sveltekit/index.html"
             else -> "backend/sveltekit/${clean.trimStart('/')}"
+        }
+    }
+
+    /** Minimal host-side answers for FrontendService calls (empty message = protobuf defaults). */
+    private fun handleFrontendCall(methodName: String): ByteArray {
+        if (methodName in CLOSE_METHODS) {
+            finishOnUiThread()
+        }
+        return when (methodName) {
+            // Json message; an empty payload would make the page's JSON.parse() throw
+            "getProfileConfigJson", "getMetaJson" ->
+                Json.newBuilder().setJson(ByteString.copyFromUtf8("null")).build().toByteArray()
+            else -> ByteArray(0)
+        }
+    }
+
+    private fun finishOnUiThread() {
+        runOnUiThread {
+            if (!isFinishing && !isDestroyed) finish()
         }
     }
 

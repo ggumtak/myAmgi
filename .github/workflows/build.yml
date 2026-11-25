@@ -137,7 +137,13 @@ jobs:
                   ]
                   if bad:
                       raise SystemExit(f"{apk_path} contains non-arm64-v8a native libs: {bad}")
-                  print(f"{apk_path}: verified ({len(lib_entries)} lib/arm64-v8a entries, no forbidden ABIs)")
+                  # The Anki engine cannot start without its JNI library
+                  required = "lib/arm64-v8a/librsdroid.so"
+                  if required not in lib_entries:
+                      raise SystemExit(f"{apk_path} is missing {required}; lib entries: {lib_entries}")
+                  if zf.getinfo(required).file_size == 0:
+                      raise SystemExit(f"{apk_path} has an empty {required}")
+                  print(f"{apk_path}: verified ({len(lib_entries)} lib/arm64-v8a entries incl. librsdroid.so, no forbidden ABIs)")
           PY
 
       - name: Generate OTA hot-patch manifest and assets
