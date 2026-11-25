@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>card</title>
+<!--
+  myAmgi card frame. Served by the host at /media/__amgi_frame.html so that
+  relative media references in card HTML resolve to /media/<file>, and deck
+  scripts/styles stay isolated from the app UI.
+
+  Message protocol (window.postMessage, JSON objects, both directions carry
+  `type` prefixed with "amgi:"). The parent must be same-origin; messages from
+  other origins are ignored.
+
+  parent -> frame
+    {type: "amgi:render", seq: number, html: string, css: string, bodyClass: string}
+        Replace the card: <style> gets `css`, <body class> gets `bodyClass`
+        (e.g. "card card1 nightMode night_mode"), the card container gets `html`.
+        Inline <script> elements in `html` are executed in order, like Anki does.
+
+  frame -> parent
+    {type: "amgi:ready"}
+        Sent once when the frame has loaded and can accept "amgi:render".
+    {type: "amgi:rendered", seq}
+        After a render was applied (scripts run).
+    {type: "amgi:height", seq, height}
+        Document height in CSS px; sent after render and whenever it changes
+        (images loading, MathJax, ...).
+    {type: "amgi:tap", x, y}
+        A tap on the card background that is NOT on a link, button, input,
+        select, textarea, label, audio/video control, [onclick], or an element
+        (or ancestor) with class/attribute "tappable", and not while text is
+        selected. Coordinates are relative to the frame viewport.
+
+  The full reviewer (round 2) will load the official reviewer.js/reviewer.css
+  inside this frame; this minimal version only renders and reports.
+-->
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { font-family: system-ui, "Noto Sans KR", sans-serif; overflow-wrap: anywhere; }
+  #qa { padding: 16px; }
+</style>
+<style id="card-css"></style>
+</head>
+<body class="card">
+<div id="qa"></div>
+<script>
+(function () {
+  'use strict';
+  var parentOrigin = location.origin;
+  var seq = 0;
+  var lastHeight = -1;
+
+  function send(msg) {
+    if (window.parent && window.parent !== window) window.parent.postMessage(msg, parentOrigin);
+  }
+
+  function reportHeight() {
+    var h = Math.ceil(document.documentElement.scrollHeight);
+    if (h !== lastHeight) {
+      lastHeight = h;
+      send({ type: 'amgi:height', seq: seq, height: h });
+    }
+  }
+
+  function runScripts(container) {
+    var scripts = container.querySelectorAll('script');
+    for (var i = 0; i < scripts.length; i++) {
+      var old = scripts[i];
+      var s = document.createElement('script');
+      for (var j = 0; j < old.attributes.length; j++) s.setAttribute(old.attributes[j].name, old.attributes[j].value);
+      s.textContent = old.textContent;
+      old.parentNode.replaceChild(s, old);
+    }
+  }
+
+  function render(msg) {
+    seq = msg.seq || 0;
+    document.getElementById('card-css').textContent = msg.css || '';
+    document.body.className = msg.bodyClass || 'card';
+    var qa = document.getElementById('qa');
+    qa.innerHTML = msg.html || '';
+    try { runScripts(qa); } catch (e) { console.error(e); }
+    window.scrollTo(0, 0);
+    lastHeight = -1;
+    send({ type: 'amgi:rendered', seq: seq });
+    reportHeight();
+  }
+
+  window.addEventListener('message', function (ev) {
+    if (ev.origin !== parentOrigin || !ev.data || typeof ev.data !== 'object') return;
+    if (ev.data.type === 'amgi:render') render(ev.data);
+  });
+
+  var INTERACTIVE = 'a, button, input, select, textarea, label, audio, video, summary, [onclick], [contenteditable], .tappable, [tappable]';
+  document.addEventListener('click', function (ev) {
+    var t = ev.target;
+    if (t && t.closest && t.closest(INTERACTIVE)) return;
+    var sel = window.getSelection && window.getSelection();
+    if (sel && !sel.isCollapsed && String(sel).length) return;
+    send({ type: 'amgi:tap', x: ev.clientX, y: ev.clientY });
+  });
+
+  if (window.ResizeObserver) new ResizeObserver(reportHeight).observe(document.documentElement);
+  window.addEventListener('load', reportHeight);
+  send({ type: 'amgi:ready' });
+})();
+</script>
+</body>
+</html>

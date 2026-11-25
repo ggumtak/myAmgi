@@ -1,0 +1,35 @@
+.icon-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--target);
+  height: var(--target);
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: background-color var(--motion);
+}
+.icon-btn:active:not(:disabled) {
+  background: var(--surface-2);
+}
+@media (hover: hover) {
+  .icon-btn:hover:not(:disabled) {
+    background: var(--surface);
+  }
+}
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+:root[data-theme='eink'] .icon-btn {
+  border-radius: var(--radius);
+}
+:root[data-theme='eink'] .icon-btn:active:not(:disabled) {
+  background: #000;
+  color: #fff;
+}

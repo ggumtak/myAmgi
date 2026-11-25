@@ -1,0 +1,111 @@
+/* Design tokens (docs/UI_SPEC.md). Themes set on <html data-theme="light|dark|eink">. */
+:root,
+:root[data-theme='light'] {
+  --bg: #ffffff;
+  --surface: #f4f5f8;
+  --surface-2: #e8ebf2;
+  --text: #1b1c1f;
+  --text-2: #5f6470;
+  --border: #dde1e8;
+  --primary: #2f6fed;
+  --on-primary: #ffffff;
+  --count-new: #2f6fed;
+  --count-learn: #d93025;
+  --count-review: #1e8e3e;
+  --again: #d93025;
+  --hard: #b26a00;
+  --good: #1e8e3e;
+  --easy: #2f6fed;
+  --danger: #d93025;
+  --scrim: rgba(15, 17, 22, 0.42);
+  --shadow-1: 0 1px 2px rgba(15, 17, 22, 0.08), 0 2px 8px rgba(15, 17, 22, 0.08);
+  --shadow-2: 0 8px 28px rgba(15, 17, 22, 0.18);
+
+  --bw: 1px;
+  --radius: 10px;
+  --motion: 120ms ease-out;
+  --target: 48px;
+  --select-bar: 0px;
+  --focus: 0 0 0 2px var(--primary);
+
+  --font: system-ui, 'Noto Sans KR', sans-serif;
+  --fs-13: 13px;
+  --fs-14: 14px;
+  --fs-16: 16px;
+  --fs-18: 18px;
+  --fs-22: 22px;
+  --fs-28: 28px;
+
+  --appbar-h: 56px;
+  --tabbar-h: 64px;
+  --rail-w: 72px;
+
+  --flag-1: #e25252;
+  --flag-2: #ef9f45;
+  --flag-3: #5cc878;
+  --flag-4: #5b9df0;
+  --flag-5: #e88bc4;
+  --flag-6: #4cc9c0;
+  --flag-7: #a77be8;
+}
+
+:root[data-theme='dark'] {
+  --bg: #121316;
+  --surface: #1c1e23;
+  --surface-2: #272a31;
+  --text: #e6e7ea;
+  --text-2: #9aa0ac;
+  --border: #2c2f36;
+  --primary: #7aa7ff;
+  --on-primary: #0b1220;
+  --count-new: #7aa7ff;
+  --count-learn: #ff7a70;
+  --count-review: #5dd27a;
+  --again: #ff7a70;
+  --hard: #f2b24a;
+  --good: #5dd27a;
+  --easy: #7aa7ff;
+  --danger: #ff7a70;
+  --scrim: rgba(0, 0, 0, 0.6);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-2: 0 8px 28px rgba(0, 0, 0, 0.5);
+}
+
+:root[data-theme='eink'] {
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #ffffff;
+  --text: #000000;
+  --text-2: #000000;
+  --border: #000000;
+  --primary: #000000;
+  --on-primary: #ffffff;
+  --count-new: #000000;
+  --count-learn: #000000;
+  --count-review: #000000;
+  --again: #000000;
+  --hard: #000000;
+  --good: #000000;
+  --easy: #000000;
+  --danger: #000000;
+  --scrim: rgba(255, 255, 255, 0.85);
+  --shadow-1: none;
+  --shadow-2: none;
+
+  --bw: 2px;
+  --radius: 4px;
+  --motion: 0ms linear;
+  --target: 56px;
+  --select-bar: 3px;
+  --focus: 0 0 0 3px #000;
+}
+
+/* E-ink: no animation, no transitions, no shadows. */
+:root[data-theme='eink'] *,
+:root[data-theme='eink'] *::before,
+:root[data-theme='eink'] *::after {
+  transition: none !important;
+  animation: none !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+}

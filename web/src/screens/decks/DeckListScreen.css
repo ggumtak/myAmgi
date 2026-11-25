@@ -1,0 +1,42 @@
+.deck-screen {
+  position: relative;
+}
+.deck-screen__fab-space {
+  height: 88px;
+}
+.fab {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 56px;
+  padding: 0 20px 0 16px;
+  border: var(--bw) solid var(--primary);
+  border-radius: 16px;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: var(--fs-16);
+  font-weight: 700;
+  box-shadow: var(--shadow-2);
+  cursor: pointer;
+  transition: transform var(--motion);
+}
+.fab:active {
+  transform: scale(0.97);
+}
+:root[data-theme='eink'] .fab {
+  border-radius: var(--radius);
+  border-color: #000;
+}
+.ptr {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 8px;
+  overflow: hidden;
+  font-size: var(--fs-14);
+  color: var(--text-2);
+}
