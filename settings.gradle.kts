@@ -15,3 +15,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "myAmgi"
 include(":app")
+include(":core")
+include(":desktop")
