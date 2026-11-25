@@ -184,20 +184,35 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete latest --yes --cleanup-tag || true
-          # Wait briefly for tag deletion propagation if a prior release existed
-          sleep 2
-          gh release create latest \
-            --target "${GITHUB_SHA}" \
-            --prerelease \
-            --title "myAmgi (build ${GITHUB_RUN_NUMBER})" \
-            --notes "최신 빌드 (build ${GITHUB_RUN_NUMBER}, commit ${GITHUB_SHA})입니다.
+          title="myAmgi (build ${GITHUB_RUN_NUMBER})"
+          notes="최신 빌드 (build ${GITHUB_RUN_NUMBER}, commit ${GITHUB_SHA})입니다.
           - myAmgi-Pro-${GITHUB_RUN_NUMBER}.apk: 일반 스마트폰/태블릿용 (arm64-v8a)
           - myAmgi-Comet-${GITHUB_RUN_NUMBER}.apk: 이노스페이스원 코멧(E-Ink) 전용 (arm64-v8a)
           - *.patch / ota-manifest.json / ota__*: 앱 내 2단계 증분·OTA 업데이트용 파일"
+
+          if gh release view latest >/dev/null 2>&1; then
+            git tag -f latest "${GITHUB_SHA}"
+            git push origin refs/tags/latest --force
+            gh release edit latest --draft=false --prerelease --title "$title" --notes "$notes"
+          else
+            gh release create latest \
+              --target "${GITHUB_SHA}" \
+              --prerelease \
+              --title "$title" \
+              --notes "$notes"
+          fi
+
           for f in dist/*; do
             [ -f "$f" ] || continue
             gh release upload latest "$f" --clobber
+          done
+
+          # Remove stale APK/patch assets from previous builds while keeping current dist/*
+          gh release view latest --json assets --jq '.assets[].name' | while read -r name; do
+            [ -n "$name" ] || continue
+            if [ ! -f "dist/$name" ]; then
+              gh release delete-asset latest "$name" --yes || true
+            fi
           done
 
       - name: Archive APK history (newest 10 per flavor)
