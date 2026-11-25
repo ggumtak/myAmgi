@@ -215,8 +215,15 @@ jobs:
               --notes "$notes"
           fi
 
+          existing_digests="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/latest" --jq '.assets[] | "\(.name)=\(.digest)"' 2>/dev/null || true)"
           for f in dist/*; do
             [ -f "$f" ] || continue
+            bname="$(basename "$f")"
+            local_digest="sha256:$(sha256sum "$f" | awk '{print $1}')"
+            if printf '%s\n' "$existing_digests" | grep -Fxq "${bname}=${local_digest}"; then
+              echo "Skipping unchanged asset: ${bname}"
+              continue
+            fi
             retry 5 gh release upload latest "$f" --clobber
           done
 
