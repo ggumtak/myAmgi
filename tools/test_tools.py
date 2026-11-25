@@ -219,7 +219,7 @@ class TestMakeOtaManifest(unittest.TestCase):
                 self.assertEqual(entry["size"], len(content))
                 self.assertEqual(
                     entry["url"],
-                    f"https://github.com/ggumtak/myAmgi/releases/download/latest/{expected_asset}",
+                    f"https://github.com/ggumtak/myAmgi/releases/download/update-files/{expected_asset}",
                 )
                 copied = out_dir / expected_asset
                 self.assertTrue(copied.is_file())
@@ -244,6 +244,32 @@ class TestMakeOtaManifest(unittest.TestCase):
             self.assertEqual(manifest["version"], 7)
             self.assertEqual(len(manifest["files"]), 1)
             self.assertEqual(manifest["files"][0]["assetName"], "ota__card__card-base.css")
+
+    def test_default_and_explicit_tag_in_urls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            assets_dir = tmp_path / "assets"
+            css = assets_dir / "card/card-base.css"
+            css.parent.mkdir(parents=True, exist_ok=True)
+            css.write_bytes(b".card {}\n")
+
+            default = make_ota_manifest.generate_ota_manifest(
+                assets_dir=assets_dir, out_dir=tmp_path / "a", version=1, repo="o/r"
+            )
+            self.assertEqual(
+                default["files"][0]["url"],
+                "https://github.com/o/r/releases/download/update-files/ota__card__card-base.css",
+            )
+            # The download page release must never be the OTA source by default.
+            self.assertNotIn("/latest/", default["files"][0]["url"])
+
+            explicit = make_ota_manifest.generate_ota_manifest(
+                assets_dir=assets_dir, out_dir=tmp_path / "b", version=1, repo="o/r", tag="other"
+            )
+            self.assertEqual(
+                explicit["files"][0]["url"],
+                "https://github.com/o/r/releases/download/other/ota__card__card-base.css",
+            )
 
 
 if __name__ == "__main__":

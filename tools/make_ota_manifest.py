@@ -6,7 +6,11 @@ Usage:
         --assets-dir app/src/main/assets \
         --out-dir dist/ota \
         --version 1 \
-        --repo ggumtak/myAmgi
+        --repo ggumtak/myAmgi \
+        --tag update-files
+
+The manifest and the ota__* files are published on the `update-files` release
+(not on `latest`, which only holds the installable APKs).
 """
 
 from __future__ import annotations
@@ -19,6 +23,8 @@ import os
 from pathlib import Path
 import shutil
 import sys
+
+DEFAULT_TAG = "update-files"
 
 TRACKED_ASSETS: tuple[str, ...] = (
     "card/card-base.css",
@@ -48,7 +54,7 @@ def generate_ota_manifest(
     out_dir: str | Path,
     version: int,
     repo: str = "ggumtak/myAmgi",
-    tag: str = "latest",
+    tag: str = DEFAULT_TAG,
     tracked_assets: tuple[str, ...] = TRACKED_ASSETS,
 ) -> dict:
     assets_root = Path(assets_dir)
@@ -98,7 +104,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--out-dir", required=True, help="Output directory for ota-manifest.json and ota__* files")
     parser.add_argument("--version", type=int, default=1, help="Build/version number (integer)")
     parser.add_argument("--repo", default="ggumtak/myAmgi", help="GitHub owner/repo for download URLs")
-    parser.add_argument("--tag", default="latest", help="GitHub release tag for download URLs")
+    parser.add_argument("--tag", default=DEFAULT_TAG, help="GitHub release tag for download URLs")
     return parser.parse_args(argv)
 
 
