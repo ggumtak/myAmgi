@@ -5,112 +5,38 @@ import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.content.UriMatcher
+import android.content.pm.PackageManager
+import android.content.pm.ProviderInfo
+import android.database.AbstractCursor
 import android.database.Cursor
-import android.database.MatrixCursor
 import android.net.Uri
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import com.ggumtak.myamgi.engine.AnkiEngine
 import java.io.FileNotFoundException
-import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
 /**
- * Pure JVM-testable in-memory chunked transfer session store for bypassing Android's 1MB Binder IPC limit.
- */
-class ChunkSessionStore(
-    private val readTarget: (notetypeId: Long, target: String, ord: Int) -> String,
-    private val writeTarget: (notetypeId: Long, target: String, ord: Int, content: String) -> Unit
-) {
-    data class Session(
-        val id: String,
-        val notetypeId: Long,
-        val target: String,
-        val ord: Int,
-        val buffer: StringBuilder = StringBuilder()
-    )
-
-    data class ReadChunkResult(
-        val chunk: String,
-        val totalLength: Int,
-        val eof: Boolean
-    )
-
-    private val sessions = ConcurrentHashMap<String, Session>()
-
-    fun beginSession(notetypeId: Long, target: String, ord: Int): String {
-        val normalizedTarget = normalizeTarget(target)
-        val sessionId = UUID.randomUUID().toString()
-        sessions[sessionId] = Session(
-            id = sessionId,
-            notetypeId = notetypeId,
-            target = normalizedTarget,
-            ord = ord
-        )
-        return sessionId
-    }
-
-    fun appendChunk(sessionId: String, chunk: String): Int {
-        val session = sessions[sessionId]
-            ?: throw IllegalArgumentException("Unknown chunk session: $sessionId")
-        synchronized(session.buffer) {
-            session.buffer.append(chunk)
-            return session.buffer.length
-        }
-    }
-
-    fun commitSession(sessionId: String): Int {
-        val session = sessions.remove(sessionId)
-            ?: throw IllegalArgumentException("Unknown chunk session: $sessionId")
-        val fullText = synchronized(session.buffer) { session.buffer.toString() }
-        writeTarget(session.notetypeId, session.target, session.ord, fullText)
-        return fullText.length
-    }
-
-    fun readChunk(
-        notetypeId: Long,
-        target: String,
-        ord: Int,
-        offset: Int,
-        length: Int
-    ): ReadChunkResult {
-        val normalizedTarget = normalizeTarget(target)
-        val fullText = readTarget(notetypeId, normalizedTarget, ord)
-        val total = fullText.length
-        val safeOffset = offset.coerceIn(0, total)
-        val safeLength = length.coerceAtLeast(0)
-        val end = (safeOffset.toLong() + safeLength.toLong()).coerceAtMost(total.toLong()).toInt()
-        val chunk = if (safeOffset < end) fullText.substring(safeOffset, end) else ""
-        return ReadChunkResult(
-            chunk = chunk,
-            totalLength = total,
-            eof = end >= total
-        )
-    }
-
-    fun clear() {
-        sessions.clear()
-    }
-
-    private fun normalizeTarget(target: String): String {
-        val normalized = target.trim().lowercase()
-        require(normalized == "css" || normalized == "qfmt" || normalized == "afmt") {
-            "Unsupported target '$target' (expected css, qfmt, or afmt)"
-        }
-        return normalized
-    }
-}
-
-/**
- * AnkiDroid `FlashCardsContract`-compatible ContentProvider with unlimited-size Pipe (`openFile`)
- * and Chunked Session (`call`) APIs that bypass Android's 1MB Binder IPC transaction limit.
+ * AnkiDroid `FlashCardsContract`-compatible ContentProvider (see [FlashcardsContract] for every path, column and
+ * key), at `content://<applicationId>.flashcards` behind `<applicationId>.permission.READ_WRITE_DATABASE`:
+ * - pro:   `content://com.ggumtak.myamgi.flashcards`,       `com.ggumtak.myamgi.permission.READ_WRITE_DATABASE`
+ * - comet: `content://com.ggumtak.myamgi.comet.flashcards`, `com.ggumtak.myamgi.comet.permission.READ_WRITE_DATABASE`
+ *
+ * Unlike AnkiDroid, texts of any size can be read and written:
+ * - **Chunk sessions through [call]** (recommended): `begin_chunk_session` {notetype_id: Long, target: "css" |
+ *   "qfmt" | "afmt", ord: Int} → {session_id}; `append_chunk` {session_id, chunk: String ≤ 200,000 chars} →
+ *   {buffered_chars}; `commit_chunk_session` {session_id} → {chars_written} writes it in one note type update;
+ *   `abort_chunk_session` {session_id}. `read_chunk` {notetype_id, target, ord, offset, length} →
+ *   {chunk, total_length, eof}. `get_capabilities` → {unlimited_pipe, chunked_session, max_chars = -1}.
+ *   [call] is checked against the same permission as queries (Android does not check it for a provider).
+ * - **Pipes through openFile**: `models/#/css`, `models/#/templates/#/qfmt`, `.../afmt`, mode "r" or "w" (UTF-8).
+ *
+ * The provider may be called before the Application has warmed the engine and from any binder thread: every
+ * operation goes through [AnkiEngine.withBackend], which opens the collection on first use under one lock.
  */
 class MyAmgiProvider : ContentProvider() {
 
     companion object {
-        private const val FIELD_SEPARATOR = "\u001f"
-
         private const val MATCH_MODELS = 1
         private const val MATCH_MODEL_ID = 2
         private const val MATCH_MODEL_TEMPLATES = 3
@@ -123,12 +49,16 @@ class MyAmgiProvider : ContentProvider() {
         private const val MATCH_MODEL_CSS_FILE = 10
         private const val MATCH_TEMPLATE_QFMT_FILE = 11
         private const val MATCH_TEMPLATE_AFMT_FILE = 12
+        private const val MATCH_NOTE_ID = 13
 
         const val METHOD_GET_CAPABILITIES = "get_capabilities"
         const val METHOD_BEGIN_CHUNK_SESSION = "begin_chunk_session"
         const val METHOD_APPEND_CHUNK = "append_chunk"
         const val METHOD_COMMIT_CHUNK_SESSION = "commit_chunk_session"
+        const val METHOD_ABORT_CHUNK_SESSION = "abort_chunk_session"
         const val METHOD_READ_CHUNK = "read_chunk"
+
+        fun permissionFor(packageName: String) = "$packageName.permission.READ_WRITE_DATABASE"
     }
 
     private val ioExecutor = Executors.newCachedThreadPool()
@@ -140,19 +70,21 @@ class MyAmgiProvider : ContentProvider() {
     private var uriMatcher: UriMatcher? = null
 
     private val sessionStore = ChunkSessionStore(
-        readTarget = { notetypeId, target, ord ->
-            readNotetypeTargetText(notetypeId, target, ord)
-        },
-        writeTarget = { notetypeId, target, ord, content ->
-            writeNotetypeTargetText(notetypeId, target, ord, content)
-        }
+        readTarget = FlashcardsOps::readTarget,
+        writeTarget = FlashcardsOps::writeTarget,
     )
+
+    /** The authority the manifest really gave this provider (per flavor), not one rebuilt from the package. */
+    override fun attachInfo(context: Context?, info: ProviderInfo?) {
+        info?.authority?.split(';')?.firstOrNull()?.takeIf { it.isNotBlank() }?.let { authority = it }
+        super.attachInfo(context, info)
+    }
 
     override fun onCreate(): Boolean {
         val ctx = context ?: return false
+        // Cheap: only sets the folder. The collection opens on the first call (withBackend), on that caller's thread.
         AnkiEngine.initDirectory(ctx)
-        authority = "${ctx.packageName}.flashcards"
-        uriMatcher = buildUriMatcher(authority)
+        ensureMatcher()
         return true
     }
 
@@ -166,6 +98,7 @@ class MyAmgiProvider : ContentProvider() {
             addURI(auth, "models/#/templates/#/qfmt", MATCH_TEMPLATE_QFMT_FILE)
             addURI(auth, "models/#/templates/#/afmt", MATCH_TEMPLATE_AFMT_FILE)
             addURI(auth, "notes", MATCH_NOTES)
+            addURI(auth, "notes/#", MATCH_NOTE_ID)
             addURI(auth, "notes/#/cards", MATCH_NOTE_CARDS)
             addURI(auth, "notes/#/cards/#", MATCH_NOTE_CARD_ID)
             addURI(auth, "decks", MATCH_DECKS)
@@ -175,10 +108,11 @@ class MyAmgiProvider : ContentProvider() {
 
     private fun ensureMatcher(): UriMatcher {
         uriMatcher?.let { return it }
-        val ctx: Context = context ?: throw IllegalStateException("Provider context unavailable")
-        val auth = "${ctx.packageName}.flashcards"
-        authority = auth
-        return buildUriMatcher(auth).also { uriMatcher = it }
+        if (authority.isEmpty()) {
+            val ctx: Context = context ?: throw IllegalStateException("Provider context unavailable")
+            authority = "${ctx.packageName}.flashcards"
+        }
+        return buildUriMatcher(authority).also { uriMatcher = it }
     }
 
     override fun getType(uri: Uri): String? {
@@ -188,6 +122,7 @@ class MyAmgiProvider : ContentProvider() {
             MATCH_MODEL_TEMPLATES -> "vnd.android.cursor.dir/vnd.$authority.templates"
             MATCH_MODEL_TEMPLATE_ID -> "vnd.android.cursor.item/vnd.$authority.templates"
             MATCH_NOTES -> "vnd.android.cursor.dir/vnd.$authority.notes"
+            MATCH_NOTE_ID -> "vnd.android.cursor.item/vnd.$authority.notes"
             MATCH_NOTE_CARDS -> "vnd.android.cursor.dir/vnd.$authority.cards"
             MATCH_NOTE_CARD_ID -> "vnd.android.cursor.item/vnd.$authority.cards"
             MATCH_DECKS -> "vnd.android.cursor.dir/vnd.$authority.decks"
@@ -204,45 +139,36 @@ class MyAmgiProvider : ContentProvider() {
         selection: String?,
         selectionArgs: Array<out String>?,
         sortOrder: String?
-    ): Cursor {
-        return when (ensureMatcher().match(uri)) {
-            MATCH_MODELS -> queryModels()
-            MATCH_MODEL_ID -> queryModelById(parseLongSegment(uri, 1))
-            MATCH_MODEL_TEMPLATES -> queryModelTemplates(parseLongSegment(uri, 1))
-            MATCH_MODEL_TEMPLATE_ID -> queryModelTemplate(
-                notetypeId = parseLongSegment(uri, 1),
-                ord = parseIntSegment(uri, 3)
-            )
-            MATCH_NOTES -> queryNotes(selection)
-            MATCH_NOTE_CARDS -> queryNoteCards(parseLongSegment(uri, 1))
-            MATCH_DECKS -> queryDecks()
+    ): Cursor = parcelable {
+        val table = when (ensureMatcher().match(uri)) {
+            MATCH_MODELS -> FlashcardsOps.models(projection)
+            MATCH_MODEL_ID -> FlashcardsOps.model(longAt(uri, 1), projection)
+            MATCH_MODEL_TEMPLATES -> FlashcardsOps.templates(longAt(uri, 1), projection)
+            MATCH_MODEL_TEMPLATE_ID -> FlashcardsOps.template(longAt(uri, 1), intAt(uri, 3), projection)
+            // As in AnkiDroid: the selection is an Anki search string; selectionArgs and sortOrder are not used.
+            MATCH_NOTES -> FlashcardsOps.notes(selection, projection)
+            MATCH_NOTE_ID -> FlashcardsOps.note(longAt(uri, 1), projection)
+            MATCH_NOTE_CARDS -> FlashcardsOps.noteCards(longAt(uri, 1), projection)
+            MATCH_NOTE_CARD_ID -> FlashcardsOps.noteCard(longAt(uri, 1), intAt(uri, 3), projection)
+            MATCH_DECKS -> FlashcardsOps.decks(projection)
             else -> throw IllegalArgumentException("Unsupported query URI: $uri")
         }
+        TableCursor(table)
     }
 
-    override fun insert(uri: Uri, values: ContentValues?): Uri? {
-        val cv = values ?: ContentValues()
-        return when (ensureMatcher().match(uri)) {
-            MATCH_NOTES -> {
-                val mid = cv.getAsLong("mid")
-                    ?: throw IllegalArgumentException("Missing 'mid' for note insert")
-                val did = cv.getAsLong("did") ?: 1L
-                val rawFields = cv.getAsString("flds") ?: ""
-                val fields = if (rawFields.isEmpty()) listOf("") else rawFields.split(FIELD_SEPARATOR)
-                val rawTags = cv.getAsString("tags") ?: ""
-                val tags = rawTags.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
-                val noteId = AnkiEngine.addNote(mid, did, fields, tags)
-                ContentUris.withAppendedId(uri, noteId)
-            }
+    override fun insert(uri: Uri, values: ContentValues?): Uri? = parcelable {
+        val cv = values.asMap()
+        val result = when (ensureMatcher().match(uri)) {
+            MATCH_NOTES -> ContentUris.withAppendedId(uri, FlashcardsOps.insertNote(cv))
             MATCH_DECKS -> {
-                val deckName = cv.getAsString("deck_name")?.trim()
-                    ?.takeIf { it.isNotEmpty() }
+                val name = cv[FlashcardsContract.Deck.NAME]?.toString()
                     ?: throw IllegalArgumentException("Missing 'deck_name' for deck insert")
-                val deckId = AnkiEngine.createDeck(deckName)
-                ContentUris.withAppendedId(uri, deckId)
+                ContentUris.withAppendedId(uri, FlashcardsOps.insertDeck(name))
             }
             else -> throw IllegalArgumentException("Unsupported insert URI: $uri")
         }
+        changed(uri)
+        result
     }
 
     override fun update(
@@ -250,62 +176,18 @@ class MyAmgiProvider : ContentProvider() {
         values: ContentValues?,
         selection: String?,
         selectionArgs: Array<out String>?
-    ): Int {
-        val cv = values ?: return 0
-        return when (ensureMatcher().match(uri)) {
-            MATCH_MODEL_ID -> {
-                val notetypeId = parseLongSegment(uri, 1)
-                val css = cv.getAsString("css") ?: return 0
-                AnkiEngine.updateNotetypeCss(notetypeId, css)
-                1
-            }
-            MATCH_MODEL_TEMPLATE_ID -> {
-                val notetypeId = parseLongSegment(uri, 1)
-                val ord = parseIntSegment(uri, 3)
-                val qfmt = if (cv.containsKey("question_format")) cv.getAsString("question_format") else null
-                val afmt = if (cv.containsKey("answer_format")) cv.getAsString("answer_format") else null
-                val templateName = if (cv.containsKey("card_template_name")) cv.getAsString("card_template_name") else null
-
-                if (qfmt != null || afmt != null) {
-                    AnkiEngine.updateNotetypeTemplate(notetypeId, ord, qfmt, afmt)
-                }
-                if (templateName != null) {
-                    updateTemplateName(notetypeId, ord, templateName)
-                }
-                if (qfmt != null || afmt != null || templateName != null) 1 else 0
-            }
-            MATCH_NOTE_CARD_ID -> {
-                val noteId = parseLongSegment(uri, 1)
-                val ord = parseIntSegment(uri, 3)
-                val deckId = cv.getAsLong("deck_id")
-                    ?: throw IllegalArgumentException("Missing 'deck_id' for card update")
-                val matchingCardIds = findNoteCardIdsByOrd(noteId, ord)
-                if (matchingCardIds.isEmpty()) 0 else {
-                    AnkiEngine.moveCardsToDeck(matchingCardIds, deckId)
-                    matchingCardIds.size
-                }
-            }
-            MATCH_SCHEDULE -> {
-                val noteId = cv.getAsLong("note_id")
-                    ?: throw IllegalArgumentException("Missing 'note_id' for schedule update")
-                val ord = cv.getAsInteger("ord")
-                val suspended = cv.getAsInteger("suspended") ?: 0
-                val cardIds = if (ord != null) {
-                    findNoteCardIdsByOrd(noteId, ord)
-                } else {
-                    AnkiEngine.cardsOfNote(noteId)
-                }
-                if (cardIds.isEmpty()) {
-                    0
-                } else {
-                    if (suspended != 0) {
-                        AnkiEngine.suspendCards(cardIds)
-                    }
-                    cardIds.size
-                }
-            }
+    ): Int = parcelable {
+        val cv = values.asMap()
+        val rows = when (ensureMatcher().match(uri)) {
+            MATCH_MODEL_ID -> FlashcardsOps.updateModel(longAt(uri, 1), cv)
+            MATCH_MODEL_TEMPLATE_ID -> FlashcardsOps.updateTemplate(longAt(uri, 1), intAt(uri, 3), cv)
+            MATCH_NOTE_ID -> FlashcardsOps.updateNote(longAt(uri, 1), cv)
+            MATCH_NOTE_CARD_ID -> FlashcardsOps.updateCard(longAt(uri, 1), intAt(uri, 3), cv)
+            MATCH_SCHEDULE -> FlashcardsOps.updateSchedule(cv)
             else -> throw IllegalArgumentException("Unsupported update URI: $uri")
         }
+        if (rows > 0) changed(uri)
+        rows
     }
 
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int {
@@ -314,9 +196,9 @@ class MyAmgiProvider : ContentProvider() {
 
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
         val (notetypeId, target, ord) = when (ensureMatcher().match(uri)) {
-            MATCH_MODEL_CSS_FILE -> Triple(parseLongSegment(uri, 1), "css", 0)
-            MATCH_TEMPLATE_QFMT_FILE -> Triple(parseLongSegment(uri, 1), "qfmt", parseIntSegment(uri, 3))
-            MATCH_TEMPLATE_AFMT_FILE -> Triple(parseLongSegment(uri, 1), "afmt", parseIntSegment(uri, 3))
+            MATCH_MODEL_CSS_FILE -> Triple(longAt(uri, 1), "css", 0)
+            MATCH_TEMPLATE_QFMT_FILE -> Triple(longAt(uri, 1), "qfmt", intAt(uri, 3))
+            MATCH_TEMPLATE_AFMT_FILE -> Triple(longAt(uri, 1), "afmt", intAt(uri, 3))
             else -> throw FileNotFoundException("Unsupported pipe URI: $uri")
         }
 
@@ -329,7 +211,7 @@ class MyAmgiProvider : ContentProvider() {
             normalizedMode.startsWith("r") -> {
                 ioExecutor.execute {
                     try {
-                        val content = readNotetypeTargetText(notetypeId, target, ord)
+                        val content = FlashcardsOps.readTarget(notetypeId, target, ord)
                         ParcelFileDescriptor.AutoCloseOutputStream(writeEnd).use { out ->
                             out.write(content.toByteArray(Charsets.UTF_8))
                             out.flush()
@@ -346,7 +228,7 @@ class MyAmgiProvider : ContentProvider() {
                         val text = ParcelFileDescriptor.AutoCloseInputStream(readEnd).use { input ->
                             input.readBytes().toString(Charsets.UTF_8)
                         }
-                        writeNotetypeTargetText(notetypeId, target, ord, text)
+                        FlashcardsOps.writeTarget(notetypeId, target, ord, text)
                     } catch (_: Throwable) {
                         runCatching { readEnd.close() }
                     }
@@ -361,8 +243,21 @@ class MyAmgiProvider : ContentProvider() {
         }
     }
 
-    override fun call(method: String, arg: String?, extras: Bundle?): Bundle {
-        return when (method) {
+    /**
+     * Android checks a provider's read/write permission for query, insert, update and openFile, but never for
+     * call(): without this check any installed app could rewrite a note type through a chunk session.
+     */
+    private fun enforceCallPermission() {
+        val ctx = context ?: throw SecurityException("Provider context unavailable")
+        val permission = permissionFor(ctx.packageName)
+        if (ctx.checkCallingOrSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
+            throw SecurityException("Permission $permission required")
+        }
+    }
+
+    override fun call(method: String, arg: String?, extras: Bundle?): Bundle = parcelable {
+        if (method != METHOD_GET_CAPABILITIES) enforceCallPermission()
+        when (method) {
             METHOD_GET_CAPABILITIES -> Bundle().apply {
                 putBoolean("unlimited_pipe", true)
                 putBoolean("chunked_session", true)
@@ -399,6 +294,12 @@ class MyAmgiProvider : ContentProvider() {
                     putInt("chars_written", charsWritten)
                 }
             }
+            METHOD_ABORT_CHUNK_SESSION -> {
+                val b = extras ?: throw IllegalArgumentException("Missing extras for $method")
+                val sessionId = b.getString("session_id")
+                    ?: throw IllegalArgumentException("Missing session_id")
+                Bundle().apply { putBoolean("aborted", sessionStore.abortSession(sessionId)) }
+            }
             METHOD_READ_CHUNK -> {
                 val b = extras ?: throw IllegalArgumentException("Missing extras for $method")
                 val notetypeId = b.getLong("notetype_id", -1L)
@@ -419,155 +320,85 @@ class MyAmgiProvider : ContentProvider() {
         }
     }
 
-    // --- Query Helpers ---
-
-    private fun queryModels(): Cursor {
-        val cursor = MatrixCursor(arrayOf("_id", "name"))
-        for (item in AnkiEngine.getNotetypeNames()) {
-            cursor.addRow(arrayOf<Any>(item.id, item.name))
-        }
-        return cursor
+    private fun changed(uri: Uri) {
+        // notifyChange is only a hint for observers (none in another app needs it to work).
+        runCatching { context?.contentResolver?.notifyChange(uri, null) }
     }
 
-    private fun queryModelById(notetypeId: Long): Cursor {
-        val cursor = MatrixCursor(arrayOf("_id", "name", "field_names", "css"))
-        val nt = AnkiEngine.getNotetype(notetypeId)
-        val fieldNames = nt.fieldsList.joinToString(FIELD_SEPARATOR) { it.name }
-        cursor.addRow(arrayOf<Any>(nt.id, nt.name, fieldNames, nt.config.css))
-        return cursor
-    }
+    private fun ContentValues?.asMap(): Map<String, Any?> =
+        this?.keySet()?.associateWith { get(it) } ?: emptyMap()
 
-    private fun queryModelTemplates(notetypeId: Long): Cursor {
-        val cursor = MatrixCursor(
-            arrayOf("ord", "card_template_name", "question_format", "answer_format")
-        )
-        val nt = AnkiEngine.getNotetype(notetypeId)
-        nt.templatesList.forEachIndexed { idx, tmpl ->
-            val ord = if (tmpl.hasOrd()) tmpl.ord.`val` else idx
-            cursor.addRow(
-                arrayOf<Any>(
-                    ord,
-                    tmpl.name,
-                    tmpl.config.qFormat,
-                    tmpl.config.aFormat
-                )
-            )
-        }
-        return cursor
-    }
-
-    private fun queryModelTemplate(notetypeId: Long, ord: Int): Cursor {
-        val cursor = MatrixCursor(
-            arrayOf("question_format", "answer_format", "card_template_name")
-        )
-        val nt = AnkiEngine.getNotetype(notetypeId)
-        val tmpl = nt.templatesList.getOrNull(ord)
-            ?: throw IndexOutOfBoundsException("Template ord $ord out of range for model $notetypeId")
-        cursor.addRow(
-            arrayOf<Any>(
-                tmpl.config.qFormat,
-                tmpl.config.aFormat,
-                tmpl.name
-            )
-        )
-        return cursor
-    }
-
-    private fun queryNotes(selection: String?): Cursor {
-        val cursor = MatrixCursor(arrayOf("_id", "flds", "tags"))
-        val query = selection?.takeIf { it.isNotBlank() } ?: ""
-        val noteIds = AnkiEngine.searchNotes(query)
-        for (noteId in noteIds) {
-            val note = AnkiEngine.getNote(noteId)
-            val flds = note.fieldsList.joinToString(FIELD_SEPARATOR)
-            val tags = note.tagsList.joinToString(" ")
-            cursor.addRow(arrayOf<Any>(note.id, flds, tags))
-        }
-        return cursor
-    }
-
-    private fun queryNoteCards(noteId: Long): Cursor {
-        val cursor = MatrixCursor(arrayOf("ord", "card_name"))
-        val note = AnkiEngine.getNote(noteId)
-        val nt = AnkiEngine.getNotetype(note.notetypeId)
-        val cardIds = AnkiEngine.cardsOfNote(noteId)
-        for (cardId in cardIds) {
-            val card = AnkiEngine.getCard(cardId)
-            val ord = card.templateIdx
-            val cardName = nt.templatesList.getOrNull(ord)?.name ?: "Card ${ord + 1}"
-            cursor.addRow(arrayOf<Any>(ord, cardName))
-        }
-        return cursor
-    }
-
-    private fun queryDecks(): Cursor {
-        val cursor = MatrixCursor(arrayOf("deck_id", "deck_name"))
-        for (deck in AnkiEngine.getDeckNames()) {
-            cursor.addRow(arrayOf<Any>(deck.id, deck.name))
-        }
-        return cursor
-    }
-
-    // --- Backend Target Helpers ---
-
-    private fun readNotetypeTargetText(notetypeId: Long, target: String, ord: Int): String {
-        val nt = AnkiEngine.getNotetype(notetypeId)
-        return when (target) {
-            "css" -> nt.config.css
-            "qfmt" -> {
-                val tmpl = nt.templatesList.getOrNull(ord)
-                    ?: throw IndexOutOfBoundsException("Template ord $ord out of range")
-                tmpl.config.qFormat
-            }
-            "afmt" -> {
-                val tmpl = nt.templatesList.getOrNull(ord)
-                    ?: throw IndexOutOfBoundsException("Template ord $ord out of range")
-                tmpl.config.aFormat
-            }
-            else -> throw IllegalArgumentException("Unknown target: $target")
-        }
-    }
-
-    private fun writeNotetypeTargetText(notetypeId: Long, target: String, ord: Int, content: String) {
-        when (target) {
-            "css" -> AnkiEngine.updateNotetypeCss(notetypeId, content)
-            "qfmt" -> AnkiEngine.updateNotetypeTemplate(notetypeId, ord, questionFormat = content)
-            "afmt" -> AnkiEngine.updateNotetypeTemplate(notetypeId, ord, answerFormat = content)
-            else -> throw IllegalArgumentException("Unknown target: $target")
-        }
-    }
-
-    private fun updateTemplateName(notetypeId: Long, ord: Int, newName: String) {
-        AnkiEngine.withBackend { b ->
-            val nt = b.getNotetype(notetypeId)
-            val templates = nt.templatesList.toMutableList()
-            if (ord !in templates.indices) {
-                throw IndexOutOfBoundsException("Template ord $ord out of range")
-            }
-            val old = templates[ord]
-            templates[ord] = old.toBuilder().setName(newName).build()
-            val updated = nt.toBuilder().clearTemplates().addAllTemplates(templates).build()
-            b.updateNotetype(updated)
-        }
-    }
-
-    private fun findNoteCardIdsByOrd(noteId: Long, ord: Int): List<Long> {
-        return AnkiEngine.cardsOfNote(noteId).filter { cardId ->
-            AnkiEngine.getCard(cardId).templateIdx == ord
-        }
-    }
-
-    private fun parseLongSegment(uri: Uri, index: Int): Long {
+    private fun longAt(uri: Uri, index: Int): Long {
         val seg = uri.pathSegments.getOrNull(index)
             ?: throw IllegalArgumentException("Missing path segment $index in $uri")
         return seg.toLongOrNull()
             ?: throw IllegalArgumentException("Invalid Long segment '$seg' in $uri")
     }
 
-    private fun parseIntSegment(uri: Uri, index: Int): Int {
+    private fun intAt(uri: Uri, index: Int): Int {
         val seg = uri.pathSegments.getOrNull(index)
             ?: throw IllegalArgumentException("Missing path segment $index in $uri")
         return seg.toIntOrNull()
             ?: throw IllegalArgumentException("Invalid Int segment '$seg' in $uri")
+    }
+}
+
+/**
+ * Runs [block], turning any failure into an exception Binder can carry back to the calling app.
+ *
+ * Android parcels only a few exception types across a provider call (IllegalArgument, IllegalState, Security,
+ * UnsupportedOperation, NullPointer, FileNotFound …). Any other one — the Anki engine's BackendException, a
+ * LinkageError from the native library — is rethrown inside the binder thread and ends myAmgi's process while
+ * the owner studies. The caller sees an IllegalStateException with the engine's message instead.
+ */
+internal inline fun <T> parcelable(block: () -> T): T = try {
+    block()
+} catch (e: SecurityException) {
+    throw e
+} catch (e: IllegalArgumentException) {
+    throw e
+} catch (e: IllegalStateException) {
+    throw e
+} catch (e: UnsupportedOperationException) {
+    throw e
+} catch (e: FileNotFoundException) {
+    throw e
+} catch (e: Throwable) {
+    throw IllegalStateException(e.javaClass.simpleName + ": " + (e.message ?: ""), e)
+}
+
+/**
+ * A [ProviderTable] as a Cursor, in the caller's column order. Over IPC Android fills its windows through
+ * [AbstractCursor.fillWindow] using [getType], so numbers travel as integers and rows load only when copied.
+ */
+private class TableCursor(private val table: ProviderTable) : AbstractCursor() {
+    override fun getCount(): Int = table.count
+    override fun getColumnNames(): Array<String> = table.columns
+
+    private fun value(column: Int): Any? = parcelable { table.value(position, column) }
+
+    override fun getString(column: Int): String? = value(column)?.toString()
+    override fun getShort(column: Int): Short = number(column).toShort()
+    override fun getInt(column: Int): Int = number(column).toInt()
+    override fun getLong(column: Int): Long = number(column).toLong()
+    override fun getFloat(column: Int): Float = number(column).toFloat()
+    override fun getDouble(column: Int): Double = number(column).toDouble()
+    override fun isNull(column: Int): Boolean = value(column) == null
+
+    override fun getType(column: Int): Int = when (value(column)) {
+        null -> Cursor.FIELD_TYPE_NULL
+        is Long, is Int, is Short, is Byte -> Cursor.FIELD_TYPE_INTEGER
+        is Float, is Double -> Cursor.FIELD_TYPE_FLOAT
+        is ByteArray -> Cursor.FIELD_TYPE_BLOB
+        else -> Cursor.FIELD_TYPE_STRING
+    }
+
+    override fun getBlob(column: Int): ByteArray? = value(column) as? ByteArray
+
+    private fun number(column: Int): Number = when (val v = value(column)) {
+        null -> 0
+        is Number -> v
+        is Boolean -> if (v) 1 else 0
+        else -> v.toString().trim().let { it.toLongOrNull() ?: it.toDoubleOrNull() } ?: 0
     }
 }
