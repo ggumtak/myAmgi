@@ -36,15 +36,15 @@ and a `Host` header of `127.0.0.1:<port>` or `localhost:<port>`; otherwise `403`
 
 | Route | Behaviour |
 | --- | --- |
-| `GET /ui/**` | myAmgi UI bundle. Looks in the OTA directory first (if its version is valid and newer than the built-in one), then the built-in bundle. `/ui/` serves `index.html`. |
+| `GET /ui/**` | myAmgi UI bundle. Each bundle carries `ui-version.json` = `{"version": "<dotted numbers>"}` at its root (the web build writes it). The OTA directory is used only if it has an `index.html` and a valid version newer than the built-in one; files missing there fall back to the built-in bundle. `/ui/` serves `index.html`. |
 | `GET /_app/**`, `GET /<official route>` | Official Anki SvelteKit pages from the backend artifact (`backend/sveltekit`): `deck-options`, `graphs`, `card-info`, `congrats`, `change-notetype`, `image-occlusion`, `import-anki-package`, `import-csv`, `import-page`. |
 | `GET /_anki/**` (static) | Official `backend/js`, `backend/css` (reviewer.js, reviewer.css, MathJax). |
 | `POST /_anki/<camelCaseMethod>` | Raw protobuf request → backend method `<method>Raw(byte[])` → raw protobuf response. Errors: status 500, body = UTF-8 message. Frontend-service methods the backend does not implement are answered by the host (see `HostServer`). |
 | `GET /media/<file>` | A file from `collection.media`. URL-decoded once. Supports `Range` (audio/video seeking), correct MIME type, `Cache-Control: no-cache` with `Last-Modified`. Path traversal rejected. |
 | `GET /media/__amgi_frame.html` | The card frame document from the UI bundle (`card-frame.html`). Cards render inside an iframe with this URL so that relative media references in card HTML resolve to `/media/...`, and deck scripts/styles stay isolated from the app UI. |
 | `POST /api/host/<name>` | JSON in, JSON out. Host functions, below. Errors: non-2xx with `{"error": "<Korean message>", "detail": "<stack or code>"}`. |
-| `GET /api/host/events` | Server-sent events: `progress` (sync/import/export), `back` (Android back button), `open-file` (a file was opened with the app), `sync-state`. |
-| `POST /api/host/upload?name=<file>` | Streams the request body to a temp file; returns `{"path": "..."}` for import calls. |
+| `GET /api/host/events` | Server-sent events: `progress` (sync/import/export/backup), `back` (Android back button), `open-file` (a file was opened with the app), `sync-state`, `anki-page` `{method, close}` (an embedded official page made a frontend-service call; `close: true` means the UI should close that page, e.g. after deck options were saved). |
+| `POST /api/host/upload?name=<file>` | Streams the request body to a temp file in `dataDir/tmp`; returns `{path, name, size}` for import calls. |
 | `GET /api/host/download?path=<temp path>&name=<file>` | Streams a host-created export file (only from the host's export temp dir). |
 
 ### Host functions (`/api/host/<name>`)
@@ -52,13 +52,13 @@ and a `Host` header of `127.0.0.1:<port>` or `localhost:<port>`; otherwise `403`
 UI state must not rely on `localStorage`: the port (and therefore the origin) changes between launches.
 
 - `info` → `{appVersion, build, flavor, platform: "android"|"desktop", eink, device, uiVersion, backendVersion}`
-- `prefs.get` `{}` → all UI preferences as one JSON object; `prefs.set` `{key: value, ...}` (merged, persisted by the host)
+- `prefs.get` `{}` → all UI preferences as one JSON object; `prefs.set` `{key: value, ...}` (merged, persisted by the host; a `null` value deletes the key)
 - `collection.status` → open/closed, path, size, last error
-- `sync.status`, `sync.login {user, password, endpoint?}`, `sync.logout`, `sync.run {mode: "normal"|"upload"|"download"}`, `sync.abort`
-  (AnkiWeb protocol via the backend; the host handles "full sync required" by returning `{"needsFullSync": true}` so the UI asks the owner for a direction; media sync runs after collection sync, progress over events)
-- `backup.create`, `backup.list`, `backup.restore {name}` (`.colpkg` files in the host backup dir, automatic backup before every full download / colpkg import / restore)
-- `import.file {path, name}` → classifies `.apkg` / `.colpkg` / text and returns the UI route to continue with
-- `export.package {deckId?, withScheduling, withMedia, legacy}` / `export.collection {withMedia}` → `{path, name}` then the shell saves or shares it
+- `sync.status` → `{loggedIn, user, endpoint, running, phase, needsFullSync, lastSync, lastError}`, `sync.login {user, password, endpoint?}`, `sync.logout`, `sync.run {mode: "normal"|"upload"|"download"}` → `{ok, needsFullSync, serverMessage, lastSync}`, `sync.abort`
+  (AnkiWeb protocol via the backend. "Full sync required" returns `needsFullSync: true` so the UI asks the owner for a direction — except that an empty local collection downloads and an empty server uploads automatically. A backup is taken before any download. Media sync follows unless pref `sync.media` is false. Progress over events. Errors: 401 not logged in / login expired, 409 busy or cancelled, 502 network.)
+- `backup.create`, `backup.list`, `backup.restore {name}` → `{ok, safetyBackup}` (`backup-YYYY-MM-DD-HH.MM.SS.colpkg` in `dataDir/backups`, without media like Anki's own backups, kept count = pref `backup.keep`, default 20; automatic backup before every full download / colpkg import / restore)
+- `import.file {path, name, replace?}` → `{kind: "apkg"|"colpkg"|"csv", path, route}`; `path` must come from `/api/host/upload`. `route` is the official page to continue with (`/import-anki-package/<encoded path>` or `/import-csv/<encoded path>`). A `.colpkg` replaces the whole collection only with `replace: true` (after an automatic backup); without it the answer is `needsConfirm: true`.
+- `export.package {deckId?, withScheduling, withMedia, legacy}` / `export.collection {withMedia}` → `{path, name, size, notes?}` (`name` is the display file name to pass to `/api/host/download?name=`), then the shell saves or shares it
 - `platform.share {path, name}`, `platform.openExternal {url}`, `platform.tts {text, lang, rate}`, `platform.ttsStop`, `platform.clipboardWrite {text}`, `platform.exit`
 - `hanja.lookup {text, sentence?}` (Android: opens the owner's Hanja app through `hanja://lookup`)
 - `update.status`, `update.check`, `update.apply` (APK on Android, OTA UI bundle everywhere)
