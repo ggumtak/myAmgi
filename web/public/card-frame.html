@@ -7,54 +7,259 @@
 <!--
   myAmgi card frame. Served by the host at /media/__amgi_frame.html so that
   relative media references in card HTML resolve to /media/<file>, and deck
-  scripts/styles stay isolated from the app UI.
+  scripts/styles stay isolated from the app UI. It loads Anki's official
+  reviewer (/_anki/js/reviewer.js, /_anki/css/reviewer.css) and uses its
+  _showQuestion / _showAnswer / _drawFlag / _drawMark, so templates see the
+  same environment as in Anki (#qa, #_mark, #_flag, #typeans, onUpdateHook,
+  onShownHook, MathJax, image occlusion, pycmd / bridgeCommand).
 
-  Message protocol (window.postMessage, JSON objects, both directions carry
-  `type` prefixed with "amgi:"). The parent must be same-origin; messages from
+  Message protocol (window.postMessage, JSON-cloneable objects; every `type`
+  is prefixed with "amgi:"). The parent must be same-origin; messages from
   other origins are ignored.
 
   parent -> frame
-    {type: "amgi:render", seq: number, html: string, css: string, bodyClass: string}
-        Replace the card: <style> gets `css`, <body class> gets `bodyClass`
-        (e.g. "card card1 nightMode night_mode"), the card container gets `html`.
-        Inline <script> elements in `html` are executed in order, like Anki does.
+    {type: "amgi:render", seq: number, side: "question"|"answer", html: string,
+     css: string, bodyClass: string, answerPreload?: string, info?: object}
+        Show a card side. "question" calls reviewer.js _showQuestion(html,
+        answerPreload, bodyClass) (the answer HTML is only used to preload its
+        images); "answer" calls _showAnswer(html, bodyClass). <style id=card-css>
+        gets `css`. Scripts in `html` run in order, like Anki. `info` holds
+        values for the AnkiDroid JS API shims (counts, flag, mark, card ids,
+        next-interval labels, ...). Without reviewer.js the frame falls back
+        to plain innerHTML + script execution.
+    {type: "amgi:flag", flag: 0..7}       _drawFlag(flag)
+    {type: "amgi:mark", marked: boolean}  _drawMark(marked)
+    {type: "amgi:config", htmlClass: string, fontScale: number, inject: string|null}
+        `htmlClass` is added to <html> (e.g. "night-mode"); `fontScale` is a
+        percentage applied as zoom; `inject` is a script run after every render
+        (the Hanja tap script).
+    {type: "amgi:scroll", by: "lineUp"|"lineDown"|"pageUp"|"pageDown"}
+    {type: "amgi:mutate-states", id: number, js: string, statesWithContext: Uint8Array}
+        Runs the deck's custom scheduling code (`cardStateCustomizer`) through
+        reviewer.js anki.mutateNextCardStates(), answering its
+        getSchedulingStatesWithContext request with `statesWithContext`
+        (anki.frontend.SchedulingStatesWithContext bytes) and capturing its
+        setSchedulingStates request. Replies "amgi:states-mutated".
+    {type: "amgi:preload", html: string}   Preload images of an upcoming card.
 
   frame -> parent
-    {type: "amgi:ready"}
-        Sent once when the frame has loaded and can accept "amgi:render".
+    {type: "amgi:ready", reviewer: boolean}
+        Sent once when the frame has loaded and can accept "amgi:render";
+        `reviewer` is false if the official reviewer.js could not be loaded.
     {type: "amgi:rendered", seq}
-        After a render was applied (scripts run).
+        After a render was applied (scripts run, MathJax typeset, onShownHook done).
     {type: "amgi:height", seq, height}
-        Document height in CSS px; sent after render and whenever it changes
-        (images loading, MathJax, ...).
+        Document height in CSS px; sent after render and whenever it changes.
     {type: "amgi:tap", x, y}
         A tap on the card background that is NOT on a link, button, input,
-        select, textarea, label, audio/video control, [onclick], or an element
+        select, textarea, label, audio/video control, [onclick], an element
         (or ancestor) with class/attribute "tappable", and not while text is
         selected. Coordinates are relative to the frame viewport.
-
-  The full reviewer (round 2) will load the official reviewer.js/reviewer.css
-  inside this frame; this minimal version only renders and reports.
+    {type: "amgi:bridge", cmd: string, typed: string|null}
+        pycmd(cmd) / bridgeCommand(cmd) from reviewer.js or the card: "ans",
+        "ease1".."ease4", "play:q:0", ... plus the AnkiDroid shims' commands
+        "amgi:mark", "amgi:flag:<n>", "amgi:bury-card", "amgi:bury-note",
+        "amgi:suspend-card", "amgi:suspend-note", "amgi:toast:<text>",
+        "amgi:tts:<lang>:<text>", "amgi:tts-stop". `typed` is the current
+        type-in-the-answer input value. reviewer.js's own "updateToolbar" and
+        "repaintNeeded" are not forwarded.
+    {type: "amgi:typed", value: string}
+        The #typeans input changed.
+    {type: "amgi:key", key, code, ctrlKey, shiftKey, altKey, metaKey, repeat}
+        A keydown inside the frame that did not target an editable element.
+    {type: "amgi:script-error", message: string}
+        A card script threw (window error / unhandled rejection / failed
+        onUpdateHook or onShownHook / custom scheduling code).
+    {type: "amgi:states-mutated", id, request: Uint8Array|null, error?: string}
+        Result of "amgi:mutate-states": anki.frontend.SetSchedulingStatesRequest
+        bytes, or null if the code did not set states or failed.
 -->
-<style>
-  html, body { margin: 0; padding: 0; }
-  body { font-family: system-ui, "Noto Sans KR", sans-serif; overflow-wrap: anywhere; }
-  #qa { padding: 16px; }
+<link rel="stylesheet" href="/_anki/css/root-vars.css">
+<link rel="stylesheet" href="/_anki/css/reviewer.css">
+<style id="amgi-base">
+  html { -webkit-text-size-adjust: 100%; }
+  body { overflow-wrap: anywhere; -webkit-tap-highlight-color: transparent; }
+  /* The app draws the flag stripe and mark star around the frame. */
+  #_flag, #_mark { display: none !important; }
+  /* App palette in dark mode so the card blends with the reviewer chrome. */
+  html.night-mode { --canvas: #121316; --fg: #e6e7ea; }
+  body.eink, body.eink * { transition: none !important; animation: none !important; }
+  body.eink { background: #fff; color: #000; }
+  #typeans { padding: 6px 8px; border: 1px solid #888; border-radius: 6px; }
+  .replay-button svg { width: 40px; height: 40px; }
+  body.eink .replay-button svg circle { fill: #fff; stroke: #000; stroke-width: 3px; }
+  body.eink .replay-button svg path { fill: #000; }
 </style>
 <style id="card-css"></style>
-</head>
-<body class="card">
-<div id="qa"></div>
 <script>
+// Runs before reviewer.js: transport hooks, pycmd, error capture, AnkiDroid shims.
 (function () {
   'use strict';
   var parentOrigin = location.origin;
+  function send(msg) {
+    try {
+      if (window.parent && window.parent !== window) window.parent.postMessage(msg, parentOrigin);
+    } catch (e) { /* ignore */ }
+  }
+  var amgi = (window.__amgi = { send: send, info: {}, mutation: null });
+
+  function typedValue() {
+    var el = document.getElementById('typeans');
+    return el && 'value' in el ? String(el.value) : null;
+  }
+  amgi.typedValue = typedValue;
+
+  var IGNORED = { updateToolbar: 1, repaintNeeded: 1, statesMutated: 1 };
+  function bridge(cmd, cb) {
+    cmd = String(cmd);
+    if (!IGNORED[cmd.split(':')[0]]) send({ type: 'amgi:bridge', cmd: cmd, typed: typedValue() });
+    if (typeof cb === 'function') {
+      try { cb(undefined); } catch (e) { reportError(e); }
+    }
+    return false;
+  }
+  window.pycmd = bridge;
+  window.bridgeCommand = bridge;
+
+  function reportError(err) {
+    var msg;
+    if (err && err.stack) msg = String(err.stack);
+    else if (err && err.message) msg = String(err.message);
+    else msg = String(err);
+    send({ type: 'amgi:script-error', message: msg.substring(0, 4000) });
+  }
+  amgi.reportError = reportError;
+  window.addEventListener('error', function (ev) {
+    // Resource load errors (img/script 404) are not script errors.
+    if (ev.target && ev.target !== window) return;
+    var where = ev.filename ? ' (' + String(ev.filename).split('/').pop() + ':' + ev.lineno + ')' : '';
+    send({ type: 'amgi:script-error', message: (ev.error && ev.error.stack ? String(ev.error.stack) : String(ev.message)) + where });
+  }, true);
+  window.addEventListener('unhandledrejection', function (ev) { reportError(ev.reason); });
+  // reviewer.js reports failing onUpdateHook / onShownHook functions with console.log("Hook failed: ", e).
+  var origLog = console.log;
+  console.log = function () {
+    if (arguments[0] === 'Hook failed: ') reportError(arguments[1]);
+    return origLog.apply(console, arguments);
+  };
+
+  // The custom-scheduling hook: reviewer.js asks the backend for the states and
+  // posts them back. The host does not hold reviewer state, so the frame answers
+  // these two calls itself with what the app sent (see "amgi:mutate-states").
+  var origFetch = window.fetch.bind(window);
+  window.fetch = function (input, init) {
+    var url = typeof input === 'string' ? input : input && input.url;
+    if (url && /\/_anki\/getSchedulingStatesWithContext$/.test(url) && amgi.mutation) {
+      return Promise.resolve(new Response(amgi.mutation.statesWithContext, { status: 200 }));
+    }
+    if (url && /\/_anki\/setSchedulingStates$/.test(url) && amgi.mutation) {
+      var body = init && init.body;
+      amgi.mutation.request = body instanceof Uint8Array ? body.slice() : body ? new Uint8Array(body) : null;
+      return Promise.resolve(new Response(new Uint8Array(0), { status: 200 }));
+    }
+    return origFetch(input, init);
+  };
+
+  // --- AnkiDroid JS API shims -------------------------------------------
+  function info(k, d) { var v = amgi.info[k]; return v === undefined ? d : v; }
+  var api = {
+    ankiGetNewCardCount: function () { return info('newCount', 0); },
+    ankiGetLrnCardCount: function () { return info('lrnCount', 0); },
+    ankiGetRevCardCount: function () { return info('revCount', 0); },
+    ankiGetETA: function () { return 0; },
+    ankiGetCardMark: function () { return info('marked', false); },
+    ankiGetCardFlag: function () { return info('flag', 0); },
+    ankiGetCardId: function () { return info('cardId', 0); },
+    ankiGetCardNid: function () { return info('noteId', 0); },
+    ankiGetCardDid: function () { return info('deckId', 0); },
+    ankiGetCardODid: function () { return info('originalDeckId', 0); },
+    ankiGetCardType: function () { return info('type', 0); },
+    ankiGetCardQueue: function () { return info('queue', 0); },
+    ankiGetCardReps: function () { return info('reps', 0); },
+    ankiGetCardLapses: function () { return info('lapses', 0); },
+    ankiGetCardInterval: function () { return info('interval', 0); },
+    ankiGetCardFactor: function () { return info('factor', 0); },
+    ankiGetCardDue: function () { return info('due', 0); },
+    ankiGetCardMod: function () { return info('mod', 0); },
+    ankiGetCardLeft: function () { return info('left', 0); },
+    ankiGetCardODue: function () { return info('originalDue', 0); },
+    ankiGetDeckName: function () { return info('deckName', ''); },
+    ankiGetNextTime1: function () { return (info('nextTimes', [])[0]) || ''; },
+    ankiGetNextTime2: function () { return (info('nextTimes', [])[1]) || ''; },
+    ankiGetNextTime3: function () { return (info('nextTimes', [])[2]) || ''; },
+    ankiGetNextTime4: function () { return (info('nextTimes', [])[3]) || ''; },
+    ankiIsDisplayingAnswer: function () { return info('side', 'question') === 'answer'; },
+    ankiIsInNightMode: function () { return !!info('nightMode', false); },
+    ankiIsInFullscreen: function () { return false; },
+    ankiIsTopbarShown: function () { return true; },
+    ankiIsActiveNetworkMetered: function () { return false; },
+    ankiShowAnswer: function () { bridge('ans'); },
+    ankiAnswerEase1: function () { bridge('ease1'); },
+    ankiAnswerEase2: function () { bridge('ease2'); },
+    ankiAnswerEase3: function () { bridge('ease3'); },
+    ankiAnswerEase4: function () { bridge('ease4'); },
+    ankiMarkCard: function () { bridge('amgi:mark'); },
+    ankiToggleFlag: function (f) {
+      var names = { none: 0, red: 1, orange: 2, green: 3, blue: 4, pink: 5, turquoise: 6, purple: 7 };
+      var n = typeof f === 'number' ? f : names[String(f).toLowerCase()];
+      if (n !== undefined) bridge('amgi:flag:' + n);
+    },
+    ankiBuryCard: function () { bridge('amgi:bury-card'); return true; },
+    ankiBuryNote: function () { bridge('amgi:bury-note'); return true; },
+    ankiSuspendCard: function () { bridge('amgi:suspend-card'); return true; },
+    ankiSuspendNote: function () { bridge('amgi:suspend-note'); return true; },
+    ankiShowToast: function (text) { bridge('amgi:toast:' + String(text)); return true; },
+    ankiTtsSpeak: function (text) { bridge('amgi:tts:' + (amgi.ttsLang || '') + ':' + String(text)); return 0; },
+    ankiTtsSetLanguage: function (lang) { amgi.ttsLang = String(lang); return 0; },
+    ankiTtsSetPitch: function () { return 0; },
+    ankiTtsSetSpeechRate: function () { return 0; },
+    ankiTtsIsSpeaking: function () { return false; },
+    ankiTtsStop: function () { bridge('amgi:tts-stop'); return 0; },
+    ankiEnableHorizontalScrollbar: function () {},
+    ankiEnableVerticalScrollbar: function () {},
+    ankiSearchCard: function () {},
+    ankiSearchCardWithCallback: function () {},
+    ankiSetCardDue: function () { return false; },
+    ankiResetProgress: function () { return false; },
+    ankiAddTagToCard: function () {},
+    ankiGetDebugInfo: function () { return 'myAmgi'; },
+  };
+  // New API (AnkiDroid 2.17+): `const a = new AnkiDroidJS({version, developer}); await a.ankiGetCardFlag()`.
+  function AnkiDroidJS() { if (!(this instanceof AnkiDroidJS)) return new AnkiDroidJS(); }
+  Object.keys(api).forEach(function (k) {
+    AnkiDroidJS.prototype[k] = function () {
+      try { return Promise.resolve(api[k].apply(null, arguments)); } catch (e) { return Promise.reject(e); }
+    };
+    // Legacy API: synchronous `AnkiDroidJS.ankiGetCardMark()` and global functions.
+    AnkiDroidJS[k] = api[k];
+  });
+  AnkiDroidJS.init = function () { return JSON.stringify({ markCard: true, toggleFlag: true }); };
+  window.AnkiDroidJS = AnkiDroidJS;
+  window.showAnswer = function () { bridge('ans'); };
+  window.buttonAnswerEase1 = function () { bridge('ease1'); };
+  window.buttonAnswerEase2 = function () { bridge('ease2'); };
+  window.buttonAnswerEase3 = function () { bridge('ease3'); };
+  window.buttonAnswerEase4 = function () { bridge('ease4'); };
+  Object.keys(api).forEach(function (k) { if (!(k in window)) window[k] = api[k]; });
+})();
+</script>
+<script src="/_anki/js/reviewer.js"></script>
+</head>
+<body class="card">
+<div id="_mark" hidden>&#x2605;</div>
+<div id="_flag" hidden>&#x2691;</div>
+<div id="qa" dir="auto"></div>
+<script>
+(function () {
+  'use strict';
+  var amgi = window.__amgi;
+  var send = amgi.send;
+  var parentOrigin = location.origin;
+  var hasReviewer = typeof window._showQuestion === 'function' && typeof window._queueAction === 'function';
   var seq = 0;
   var lastHeight = -1;
-
-  function send(msg) {
-    if (window.parent && window.parent !== window) window.parent.postMessage(msg, parentOrigin);
-  }
+  var config = { htmlClass: '', fontScale: 100, inject: null };
+  var appliedHtmlClasses = [];
 
   function reportHeight() {
     var h = Math.ceil(document.documentElement.scrollHeight);
@@ -75,36 +280,136 @@
     }
   }
 
+  function applyConfig() {
+    var root = document.documentElement;
+    appliedHtmlClasses.forEach(function (c) { root.classList.remove(c); });
+    appliedHtmlClasses = String(config.htmlClass || '').split(/\s+/).filter(Boolean);
+    appliedHtmlClasses.forEach(function (c) { root.classList.add(c); });
+    root.setAttribute('data-bs-theme', root.classList.contains('night-mode') ? 'dark' : 'light');
+    var z = Number(config.fontScale) || 100;
+    root.style.zoom = z === 100 ? '' : String(z / 100);
+  }
+
+  function injectExtra() {
+    if (!config.inject) return;
+    try {
+      var s = document.createElement('script');
+      s.textContent = config.inject;
+      document.body.appendChild(s);
+      s.remove();
+    } catch (e) { amgi.reportError(e); }
+  }
+
+  function finished(mySeq) {
+    injectExtra();
+    lastHeight = -1;
+    send({ type: 'amgi:rendered', seq: mySeq });
+    reportHeight();
+  }
+
   function render(msg) {
     seq = msg.seq || 0;
+    var mySeq = seq;
+    amgi.info = msg.info || {};
     document.getElementById('card-css').textContent = msg.css || '';
-    document.body.className = msg.bodyClass || 'card';
+    var bodyClass = msg.bodyClass || 'card';
+    if (hasReviewer) {
+      try {
+        if (msg.side === 'answer') window._showAnswer(msg.html || '', bodyClass);
+        else window._showQuestion(msg.html || '', msg.answerPreload || '', bodyClass);
+      } catch (e) { amgi.reportError(e); }
+      window._queueAction(function () { finished(mySeq); });
+      return;
+    }
+    document.body.className = bodyClass;
     var qa = document.getElementById('qa');
     qa.innerHTML = msg.html || '';
-    try { runScripts(qa); } catch (e) { console.error(e); }
-    window.scrollTo(0, 0);
-    lastHeight = -1;
-    send({ type: 'amgi:rendered', seq: seq });
-    reportHeight();
+    try { runScripts(qa); } catch (e) { amgi.reportError(e); }
+    if (msg.side !== 'answer') window.scrollTo(0, 0);
+    else {
+      var a = document.getElementById('answer');
+      if (a) a.scrollIntoView();
+    }
+    finished(mySeq);
+  }
+
+  function mutateStates(msg) {
+    var done = function (err) {
+      var req = amgi.mutation && amgi.mutation.request;
+      amgi.mutation = null;
+      send({ type: 'amgi:states-mutated', id: msg.id, request: err ? null : req || null, error: err ? String(err && err.stack || err) : undefined });
+    };
+    if (!hasReviewer || !window.anki || typeof window.anki.mutateNextCardStates !== 'function') return done('reviewer.js is not loaded');
+    var fn;
+    try {
+      // Same wrapper as aqt/reviewer.py RUN_STATE_MUTATION (js on its own line).
+      fn = new Function('return async (states, customData, ctx) => {\n' + msg.js + '\n}')();
+    } catch (e) {
+      amgi.reportError(e);
+      return done(e);
+    }
+    amgi.mutation = { statesWithContext: msg.statesWithContext, request: null };
+    window.anki.mutateNextCardStates('amgi', fn).then(function () { done(null); }, function (e) { amgi.reportError(e); done(e); });
+  }
+
+  function preload(html) {
+    var re = /<img[^>]+src=["']?([^"' >]+)/gi;
+    var m;
+    var n = 0;
+    while ((m = re.exec(html)) && n < 20) {
+      n++;
+      var img = new Image();
+      img.src = m[1];
+    }
   }
 
   window.addEventListener('message', function (ev) {
     if (ev.origin !== parentOrigin || !ev.data || typeof ev.data !== 'object') return;
-    if (ev.data.type === 'amgi:render') render(ev.data);
+    var d = ev.data;
+    switch (d.type) {
+      case 'amgi:render': render(d); break;
+      case 'amgi:flag': if (hasReviewer) window._drawFlag(d.flag || 0); break;
+      case 'amgi:mark': if (hasReviewer) window._drawMark(!!d.marked); break;
+      case 'amgi:config': config = d; applyConfig(); break;
+      case 'amgi:scroll': {
+        var page = window.innerHeight * 0.85;
+        var by = { lineUp: -60, lineDown: 60, pageUp: -page, pageDown: page }[d.by] || 0;
+        window.scrollBy(0, by);
+        break;
+      }
+      case 'amgi:mutate-states': mutateStates(d); break;
+      case 'amgi:preload': preload(String(d.html || '')); break;
+    }
   });
 
-  var INTERACTIVE = 'a, button, input, select, textarea, label, audio, video, summary, [onclick], [contenteditable], .tappable, [tappable]';
+  // Taps: never on interactive elements or deck-marked ".tappable", never while text is selected.
+  var INTERACTIVE = 'a, button, input, select, textarea, label, audio, video, summary, details, object, embed, [onclick], [contenteditable], [role=button], .tappable, [tappable]';
   document.addEventListener('click', function (ev) {
+    if (ev.defaultPrevented) return;
     var t = ev.target;
+    if (t && t.nodeType !== 1) t = t.parentElement;
     if (t && t.closest && t.closest(INTERACTIVE)) return;
     var sel = window.getSelection && window.getSelection();
     if (sel && !sel.isCollapsed && String(sel).length) return;
     send({ type: 'amgi:tap', x: ev.clientX, y: ev.clientY });
   });
 
+  var RESERVED = { ' ': 1, Enter: 1, PageUp: 1, PageDown: 1, ArrowLeft: 1, ArrowRight: 1, ArrowUp: 1, ArrowDown: 1 };
+  document.addEventListener('keydown', function (ev) {
+    var t = ev.target;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    if (ev.defaultPrevented) return;
+    if (RESERVED[ev.key] && !ev.ctrlKey && !ev.altKey && !ev.metaKey) ev.preventDefault();
+    send({ type: 'amgi:key', key: ev.key, code: ev.code, ctrlKey: ev.ctrlKey, shiftKey: ev.shiftKey, altKey: ev.altKey, metaKey: ev.metaKey, repeat: ev.repeat });
+  });
+
+  document.addEventListener('input', function (ev) {
+    if (ev.target && ev.target.id === 'typeans') send({ type: 'amgi:typed', value: String(ev.target.value) });
+  });
+
   if (window.ResizeObserver) new ResizeObserver(reportHeight).observe(document.documentElement);
   window.addEventListener('load', reportHeight);
-  send({ type: 'amgi:ready' });
+  send({ type: 'amgi:ready', reviewer: hasReviewer });
 })();
 </script>
 </body>
