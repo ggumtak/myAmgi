@@ -28,8 +28,8 @@ class UpdateInfoTest {
         asset("myAmgi-Comet-12.from-11.patch", 140_000),
         // Patch for another target build: ignored while latest announces 12.
         asset("myAmgi-Pro-11.from-10.patch", 100_000),
-        asset("ota-manifest.json", 500),
-        asset("ota__card__card-base.css", 900)
+        asset("ui-manifest.json", 500),
+        asset("myAmgi-ui-1.0.12.zip", 900)
     )
 
     @Test
@@ -45,14 +45,9 @@ class UpdateInfoTest {
         assertTrue(UpdateInfo.LATEST_URL.endsWith("/releases/tags/latest"))
         assertTrue(UpdateInfo.UPDATE_FILES_URL.endsWith("/releases/tags/update-files"))
         assertEquals(
-            "https://github.com/o/r/releases/download/update-files/ota-manifest.json",
-            UpdateInfo.downloadUrl(UpdateInfo.UPDATE_FILES_TAG, "ota-manifest.json", "o/r")
+            "https://github.com/o/r/releases/download/update-files/ui-manifest.json",
+            UpdateInfo.downloadUrl(UpdateInfo.UPDATE_FILES_TAG, UiOtaManifest.NAME, "o/r")
         )
-    }
-
-    @Test
-    fun otaManifestIsReadFromUpdateFiles() {
-        assertTrue(OtaAssetUpdater.manifestUrl().endsWith("/releases/download/update-files/ota-manifest.json"))
     }
 
     @Test

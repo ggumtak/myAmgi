@@ -4,7 +4,6 @@
 -keepclassmembers class anki.backend.GeneratedBackend {
     public *** *Raw(byte[]);
 }
--keep class com.ggumtak.myamgi.ui.**$*Bridge { *; }
 -keepclassmembers class * {
     @android.webkit.JavascriptInterface <methods>;
 }

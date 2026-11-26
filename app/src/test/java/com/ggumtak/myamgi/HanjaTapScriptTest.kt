@@ -71,3 +71,14 @@ class HanjaTapScriptTest {
         assertTrue(HanjaIntegration.RUNNER.contains("if(w.__hjtapRun)return;"))
     }
 }
+
+class HanjaScriptVersionTest {
+    @org.junit.Test
+    fun versionIsTheHighestHjCodeIndex() {
+        val bundled = java.io.File("src/main/assets/hanja/anki-tap.js").readText()
+        org.junit.Assert.assertEquals(9, HanjaIntegration.scriptVersion(bundled))
+        org.junit.Assert.assertEquals(11, HanjaIntegration.scriptVersion(
+            "(window.__hjCode = window.__hjCode || {})[10] = 1;\n(window.__hjCode = window.__hjCode || {})[11] = 2;"))
+        org.junit.Assert.assertNull(HanjaIntegration.scriptVersion("nothing"))
+    }
+}

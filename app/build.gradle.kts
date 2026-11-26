@@ -1,4 +1,6 @@
 import java.io.File
+import javax.inject.Inject
+import org.gradle.process.ExecOperations
 
 plugins {
     id("com.android.application")
@@ -39,6 +41,7 @@ android {
             buildConfigField("boolean", "IS_COMET", "false")
             manifestPlaceholders["providerAuthority"] = "com.ggumtak.myamgi.flashcards"
             manifestPlaceholders["fileProviderAuthority"] = "com.ggumtak.myamgi.fileprovider"
+            buildConfigField("String", "FILE_PROVIDER_AUTHORITY", "\"com.ggumtak.myamgi.fileprovider\"")
         }
         create("comet") {
             dimension = "device"
@@ -49,6 +52,7 @@ android {
             buildConfigField("boolean", "IS_COMET", "true")
             manifestPlaceholders["providerAuthority"] = "com.ggumtak.myamgi.comet.flashcards"
             manifestPlaceholders["fileProviderAuthority"] = "com.ggumtak.myamgi.comet.fileprovider"
+            buildConfigField("String", "FILE_PROVIDER_AUTHORITY", "\"com.ggumtak.myamgi.comet.fileprovider\"")
         }
     }
 
@@ -133,18 +137,117 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
-    implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("androidx.activity:activity-ktx:1.9.3")
-    implementation("androidx.webkit:webkit:1.12.1")
-    implementation("androidx.documentfile:documentfile:1.0.1")
 
-    // Coroutines & Networking
+    // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // Unit Tests with real Anki 26.09.4 Rust backend on JVM
     testImplementation("junit:junit:4.13.2")
     testImplementation("io.github.david-allison:anki-android-backend-testing:0.1.77-anki26.09.4")
     testImplementation("org.json:json:20240303")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The web UI bundle (web/dist) is packaged into the APK assets as ui/ for both flavors.
+//
+// buildWebUi runs `npm ci` (when node_modules is missing or older than package-lock.json) and `npm run build`
+// in web/ when web/dist is missing or older than its sources. Pass -PskipWebBuild when an earlier CI step built
+// the bundle. The UI version is AMGI_UI_VERSION (CI: 1.0.<run number>; locally 1.0.<BUILD_NUMBER or 1>).
+// packageWebUi copies web/dist and fails the build when the bundle is absent; if the web build did not write
+// ui-version.json, the packaged copy gets one with that version (web/dist itself is not modified).
+// ---------------------------------------------------------------------------------------------------------------
+
+val webRoot: File = rootProject.file("web")
+val webDist = File(webRoot, "dist")
+val webUiVersion: String = System.getenv("AMGI_UI_VERSION")?.takeIf { it.isNotBlank() } ?: "1.0.$buildNumber"
+val skipWebBuild: Boolean = providers.gradleProperty("skipWebBuild").isPresent
+
+fun newestFile(f: File): Long =
+    if (!f.exists()) 0L else f.walkTopDown().filter { it.isFile }.maxOfOrNull { it.lastModified() } ?: 0L
+
+abstract class NpmBuildTask @Inject constructor(private val exec: ExecOperations) : DefaultTask() {
+    @get:Internal
+    abstract val webDir: Property<File>
+
+    @get:Internal
+    abstract val uiVersion: Property<String>
+
+    @TaskAction
+    fun build() {
+        val dir = webDir.get()
+        val npm = if (System.getProperty("os.name").startsWith("Windows")) "npm.cmd" else "npm"
+        val stamp = File(dir, "node_modules/.package-lock.json")
+        if (!stamp.isFile || stamp.lastModified() < File(dir, "package-lock.json").lastModified()) {
+            logger.lifecycle("web: npm ci")
+            exec.exec { workingDir = dir; commandLine(npm, "ci", "--no-audit", "--no-fund") }
+        }
+        logger.lifecycle("web: npm run build (AMGI_UI_VERSION=${uiVersion.get()})")
+        exec.exec {
+            workingDir = dir
+            environment("AMGI_UI_VERSION", uiVersion.get())
+            commandLine(npm, "run", "build")
+        }
+    }
+}
+
+abstract class PackageWebUiTask : DefaultTask() {
+    @get:Internal
+    abstract val distDir: Property<File>
+
+    @get:Internal
+    abstract val uiVersion: Property<String>
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun copy() {
+        val dist = distDir.get()
+        if (!File(dist, "index.html").isFile) {
+            throw GradleException(
+                "The web UI bundle is missing: ${dist.path}/index.html does not exist. " +
+                    "Build it with `npm ci && npm run build` in web/ (or drop -PskipWebBuild)."
+            )
+        }
+        val out = outputDir.get().asFile
+        out.deleteRecursively()
+        val ui = File(out, "ui")
+        dist.copyRecursively(ui, overwrite = true)
+        val version = File(ui, "ui-version.json")
+        if (!version.isFile) {
+            logger.warn("web/dist has no ui-version.json; packaging version ${uiVersion.get()}")
+            version.writeText("{\"version\":\"${uiVersion.get()}\"}\n")
+        }
+    }
+}
+
+val buildWebUi by tasks.registering(NpmBuildTask::class) {
+    description = "Builds web/dist when it is missing or older than its sources (skip with -PskipWebBuild)."
+    webDir.set(webRoot)
+    uiVersion.set(webUiVersion)
+    onlyIf("web/dist is missing or stale, and -PskipWebBuild is not set") {
+        if (skipWebBuild) return@onlyIf false
+        val built = File(webDist, "index.html").takeIf { it.isFile }?.lastModified() ?: return@onlyIf true
+        val sources = listOf("src", "public", "index.html", "package.json", "package-lock.json", "vite.config.ts",
+            "tsconfig.json", "tsconfig.app.json", "tsconfig.node.json")
+        sources.maxOf { newestFile(File(webRoot, it)) } > built
+    }
+    outputs.upToDateWhen { false }
+}
+
+val packageWebUi by tasks.registering(PackageWebUiTask::class) {
+    description = "Copies web/dist into the APK assets as ui/."
+    dependsOn(buildWebUi)
+    distDir.set(webDist)
+    uiVersion.set(webUiVersion)
+    outputDir.set(layout.buildDirectory.dir("generated/webUi"))
+    outputs.upToDateWhen { false }
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(packageWebUi, PackageWebUiTask::outputDir)
+    }
 }
