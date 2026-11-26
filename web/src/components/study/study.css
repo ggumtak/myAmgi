@@ -1,0 +1,555 @@
+/* ==========================================================================
+   myAmgi Distraction-Free Reviewer (#/study/:id)
+   ========================================================================== */
+
+.amgi-study-screen {
+  height: 100dvh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+}
+
+/* Slim 48px (46px E-Ink) Top Bar */
+.amgi-study-topbar {
+  flex-shrink: 0;
+  min-height: calc(48px + var(--safe-top));
+  padding: var(--safe-top) 6px 0;
+  background: var(--surface);
+  border-bottom: var(--border-w) solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+:root[data-theme="eink"] .amgi-study-topbar {
+  min-height: calc(56px + var(--safe-top));
+  height: calc(56px + var(--safe-top));
+}
+
+.amgi-study-top-btn {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.amgi-study-top-btn:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.amgi-study-top-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+:root[data-theme="eink"] .amgi-study-top-btn {
+  width: 48px;
+  min-width: 48px;
+  height: 48px;
+}
+
+:root[data-theme="eink"] .amgi-study-top-btn:hover:not(:disabled) {
+  background: #FFFFFF;
+  border: 2px solid #000000;
+}
+
+.amgi-study-title-group {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.amgi-study-deck-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.amgi-study-counts {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.amgi-study-q-num {
+  padding: 2px 1px;
+  line-height: 1.2;
+}
+
+.amgi-study-q-new {
+  color: var(--count-new);
+}
+
+.amgi-study-q-learn {
+  color: var(--count-learn);
+}
+
+.amgi-study-q-review {
+  color: var(--count-review);
+}
+
+:root[data-theme="eink"] .amgi-study-q-num {
+  color: #000000;
+}
+
+.amgi-study-q-active {
+  font-weight: 800;
+  text-decoration: underline;
+  text-decoration-thickness: 2.5px;
+  text-underline-offset: 4px;
+}
+
+.amgi-study-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Flag accent stripe at top edge of card stage */
+.amgi-study-flag-stripe {
+  flex-shrink: 0;
+  height: 4px;
+  width: 100%;
+}
+
+.amgi-study-flag-stripe-1 { background: var(--flag-1); }
+.amgi-study-flag-stripe-2 { background: var(--flag-2); }
+.amgi-study-flag-stripe-3 { background: var(--flag-3); }
+.amgi-study-flag-stripe-4 { background: var(--flag-4); }
+.amgi-study-flag-stripe-5 { background: var(--flag-5); }
+.amgi-study-flag-stripe-6 { background: var(--flag-6); }
+.amgi-study-flag-stripe-7 { background: var(--flag-7); }
+
+:root[data-theme="eink"] .amgi-study-flag-stripe {
+  height: 3px;
+  background: #000000;
+}
+
+/* Card Stage */
+.amgi-study-stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+}
+
+:root[data-theme="dark"] .amgi-study-stage,
+html.night_mode:not([data-theme="light"]):not([data-theme="eink"]) .amgi-study-stage {
+  background: #121316;
+}
+
+.amgi-study-stage-overlay {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  right: 10px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.amgi-study-overlay-left,
+.amgi-study-overlay-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.amgi-audio-pill {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  border: var(--border-w) solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+}
+
+:root[data-theme="eink"] .amgi-audio-pill {
+  min-height: 48px;
+  background: #FFFFFF;
+  color: #000000;
+  border: 2px solid #000000;
+}
+
+.amgi-mark-pill {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  border: var(--border-w) solid var(--border);
+  background: var(--surface);
+  color: var(--flag-2);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+:root[data-theme="eink"] .amgi-mark-pill {
+  background: #FFFFFF;
+  color: #000000;
+  border: 2px solid #000000;
+  border-radius: 4px;
+}
+
+.amgi-timer-pill {
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  border: var(--border-w) solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+:root[data-theme="eink"] .amgi-timer-pill {
+  background: #FFFFFF;
+  color: #000000;
+  border: 2px solid #000000;
+}
+
+.amgi-study-frame-wrap {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-width: 840px;
+  margin: 0 auto;
+  display: flex;
+}
+
+.amgi-study-loading-box {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  gap: 10px;
+}
+
+/* Bottom Answer Bar */
+.amgi-answer-bar {
+  flex-shrink: 0;
+  background: var(--surface);
+  border-top: var(--border-w) solid var(--border);
+  padding: 10px 12px calc(10px + var(--safe-bottom));
+}
+
+.amgi-answer-bar-inner {
+  width: 100%;
+  margin: 0 auto;
+}
+
+@media (min-width: 900px) {
+  .amgi-answer-bar-inner {
+    max-width: 680px;
+  }
+}
+
+.amgi-show-answer-btn {
+  width: 100%;
+  min-height: 56px;
+  border-radius: var(--radius-md);
+  font-size: 16px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+:root[data-theme="eink"] .amgi-show-answer-btn {
+  min-height: 58px;
+}
+
+.amgi-rate-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.amgi-rate-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+@media (min-width: 600px) {
+  .amgi-rate-grid-4 {
+    gap: 10px;
+  }
+}
+
+.amgi-rate-btn {
+  min-height: 56px;
+  padding: 6px 4px;
+  border-radius: var(--radius-md);
+  border: var(--border-w) solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.amgi-rate-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.amgi-rate-ivl {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  opacity: 0.9;
+}
+
+.amgi-rate-label {
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.amgi-rate-grid-2 .amgi-rate-label {
+  font-size: 16px;
+}
+
+.amgi-rate-again {
+  background: var(--again-bg);
+  color: var(--again);
+  border-color: var(--again-border);
+}
+
+.amgi-rate-hard {
+  background: var(--hard-bg);
+  color: var(--hard);
+  border-color: var(--hard-border);
+}
+
+.amgi-rate-good {
+  background: var(--good-bg);
+  color: var(--good);
+  border-color: var(--good-border);
+}
+
+.amgi-rate-easy {
+  background: var(--easy-bg);
+  color: var(--easy);
+  border-color: var(--easy-border);
+}
+
+/* E-Ink rating contrast: outline for Again/Hard/Easy, solid black for Good (암기 완료 / 알맞음) */
+:root[data-theme="eink"] .amgi-rate-btn {
+  min-height: 58px;
+  background: #FFFFFF;
+  color: #000000;
+  border: 2px solid #000000;
+  border-radius: var(--radius-sm);
+}
+
+:root[data-theme="eink"] .amgi-rate-grid-2 .amgi-rate-btn {
+  min-height: 60px;
+}
+
+:root[data-theme="eink"] .amgi-rate-good {
+  background: #000000;
+  color: #FFFFFF;
+}
+
+/* Congrats Empty Queue Screen */
+.amgi-study-congrats-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 16px;
+  overflow-y: auto;
+}
+
+.amgi-study-congrats-card {
+  width: 100%;
+  max-width: 480px;
+  background: var(--surface);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 28px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+}
+
+.amgi-study-congrats-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--ok-soft);
+  color: var(--ok);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+:root[data-theme="eink"] .amgi-study-congrats-icon {
+  background: #FFFFFF;
+  color: #000000;
+  border: 2px solid #000000;
+}
+
+.amgi-study-congrats-title {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.amgi-study-congrats-stats {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 14px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  border: var(--border-w) solid var(--border);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+:root[data-theme="eink"] .amgi-study-congrats-stats {
+  background: #FFFFFF;
+  border: 2px solid #000000;
+}
+
+.amgi-study-congrats-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.amgi-study-congrats-actions .amgi-btn {
+  min-height: 52px;
+  flex: 1 1 160px;
+}
+
+:root[data-theme="eink"] .amgi-study-congrats-actions .amgi-btn {
+  min-height: 56px;
+}
+
+@media (max-width: 420px) {
+  .amgi-study-congrats-actions {
+    flex-direction: column;
+  }
+
+  .amgi-study-congrats-actions .amgi-btn {
+    width: 100%;
+    flex: none;
+  }
+}
+
+/* Flag Picker Sheet */
+.amgi-flag-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.amgi-flag-option {
+  width: 100%;
+  min-height: var(--target-min);
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.amgi-flag-option.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+:root[data-theme="eink"] .amgi-flag-option.active {
+  background: #FFFFFF;
+  border: 2px solid #000000;
+  border-left: 5px solid #000000;
+}
+
+.amgi-flag-option-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.amgi-flag-shortcut {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+
+/* Card Info Modal Frame */
+.amgi-cardinfo-frame {
+  width: 100%;
+  height: min(65dvh, 520px);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-sm);
+}

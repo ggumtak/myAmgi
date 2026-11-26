@@ -133,7 +133,6 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
-    implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.webkit:webkit:1.12.1")
     implementation("androidx.documentfile:documentfile:1.0.1")
@@ -148,3 +147,24 @@ dependencies {
     testImplementation("org.json:json:20240303")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
 }
+
+val webDistDir = rootProject.layout.projectDirectory.dir("web/dist")
+val generatedWebUiRoot = layout.buildDirectory.dir("generated/webUi")
+
+val bundleWebUi by tasks.registering(Sync::class) {
+    from(webDistDir)
+    into(generatedWebUiRoot.map { it.dir("ui") })
+}
+
+android {
+    sourceSets.getByName("main") {
+        assets.srcDir(generatedWebUiRoot)
+    }
+}
+
+tasks.matching {
+    it.name.startsWith("merge") && it.name.endsWith("Assets")
+}.configureEach {
+    dependsOn(bundleWebUi)
+}
+

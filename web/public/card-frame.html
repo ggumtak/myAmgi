@@ -1,0 +1,744 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes"
+    />
+    <title>myAmgi Card Frame</title>
+    <link rel="stylesheet" href="/_anki/css/root-vars.css" />
+    <link rel="stylesheet" href="/_anki/css/reviewer.css" />
+    <link rel="stylesheet" href="/_anki/css/reviewer_extras.css" />
+    <style id="amgi-base-css">
+      :root {
+        --card-font-scale: 1;
+        --card-line-height: 1.55;
+      }
+
+      html.night-mode {
+        --canvas: #121316;
+        --canvas-elevated: #161B24;
+        --fg: #F1F5F9;
+        --border: #242C3A;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background-color: #ffffff;
+        color: #1b1c1f;
+        font-family: "Pretendard", "Noto Sans CJK KR", "Noto Sans KR", system-ui, sans-serif;
+        font-size: calc(18px * var(--card-font-scale, 1));
+        line-height: var(--card-line-height, 1.55);
+        word-break: keep-all;
+        overflow-wrap: break-word;
+        -webkit-text-size-adjust: 100%;
+      }
+
+      body {
+        padding: 28px 20px 36px;
+        box-sizing: border-box;
+        min-height: 100vh;
+      }
+
+      :where(.card) {
+        font-family: "Pretendard", "Noto Sans CJK KR", "Noto Sans KR", system-ui, sans-serif;
+        font-size: calc(20px * var(--card-font-scale, 1));
+        line-height: var(--card-line-height, 1.55);
+        text-align: center;
+        color: inherit;
+        background-color: transparent;
+      }
+
+      :where(img, svg, video, canvas) {
+        max-width: 100%;
+        height: auto;
+      }
+
+      :where(img) {
+        max-width: 100%;
+        height: auto;
+      }
+
+      :where(.cloze) {
+        font-weight: 700;
+        color: #2f6fed;
+      }
+
+      :where(.cloze-inactive) {
+        opacity: 0.65;
+      }
+
+      :where(hr#answer) {
+        border: 0;
+        border-top: 1px solid rgba(0, 0, 0, 0.16);
+        margin: 16px 0;
+      }
+
+      :where(input#typeans) {
+        width: 100%;
+        max-width: 480px;
+        box-sizing: border-box;
+        padding: 10px 12px;
+        font-family: inherit;
+        font-size: calc(16px * var(--card-font-scale, 1));
+        line-height: 1.5;
+        color: #1b1c1f;
+        background-color: #f4f5f8;
+        border: 1px solid #dde1e8;
+        border-radius: 10px;
+        outline: none;
+      }
+
+      :where(input#typeans:focus) {
+        border-color: #2f6fed;
+      }
+
+      :where(.replay-button) {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 40px;
+        min-height: 40px;
+        padding: 6px 10px;
+        margin: 4px;
+        border-radius: 999px;
+        border: 1px solid rgba(0, 0, 0, 0.18);
+        background-color: rgba(0, 0, 0, 0.04);
+        color: inherit;
+        text-decoration: none;
+        cursor: pointer;
+        vertical-align: middle;
+        box-sizing: border-box;
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      :where(.replay-button svg) {
+        width: 24px;
+        height: 24px;
+        display: block;
+      }
+
+      :where(.replay-button svg circle) {
+        fill: transparent;
+        stroke: currentColor;
+        stroke-width: 2;
+      }
+
+      :where(.replay-button svg path) {
+        fill: currentColor;
+      }
+
+      /* Dark theme */
+      html.night-mode,
+      html.night-mode body,
+      body.nightMode {
+        background-color: #121316;
+        color: #F1F5F9;
+      }
+
+      :where(html.night-mode .card, body.nightMode .card) {
+        background-color: #121316;
+        color: #F1F5F9;
+      }
+
+      :where(html.night-mode .cloze, body.nightMode .cloze) {
+        color: #7aa7ff;
+      }
+
+      :where(html.night-mode hr#answer, body.nightMode hr#answer) {
+        border-top-color: rgba(255, 255, 255, 0.22);
+      }
+
+      :where(html.night-mode input#typeans, body.nightMode input#typeans) {
+        color: #e6e7ea;
+        background-color: #1c1e23;
+        border-color: #2c2f36;
+      }
+
+      :where(html.night-mode input#typeans:focus, body.nightMode input#typeans:focus) {
+        border-color: #7aa7ff;
+      }
+
+      :where(html.night-mode .replay-button, body.nightMode .replay-button) {
+        border-color: rgba(255, 255, 255, 0.25);
+        background-color: rgba(255, 255, 255, 0.08);
+      }
+
+      /* E-Ink theme: pure #FFFFFF bg, #000000 ink, zero transitions/animations, underlined .cloze */
+      html.eink-mode,
+      html.eink-mode body,
+      body.einkMode {
+        background-color: #ffffff;
+        color: #000000;
+      }
+
+      html.eink-mode .card,
+      body.einkMode .card {
+        background-color: #ffffff !important;
+        color: #000000 !important;
+      }
+
+      html.eink-mode *,
+      html.eink-mode *::before,
+      html.eink-mode *::after,
+      body.einkMode *,
+      body.einkMode *::before,
+      body.einkMode *::after {
+        transition: none !important;
+        animation: none !important;
+        box-shadow: none !important;
+        text-shadow: none !important;
+      }
+
+      html.eink-mode .cloze,
+      body.einkMode .cloze {
+        color: #000000 !important;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+
+      html.eink-mode .cloze-inactive,
+      body.einkMode .cloze-inactive {
+        opacity: 1;
+        text-decoration: underline dotted #000000;
+      }
+
+      html.eink-mode hr#answer,
+      body.einkMode hr#answer {
+        border: none;
+        border-top: 2px solid #000000;
+        background: transparent;
+        height: 0;
+        margin: 18px 0;
+      }
+
+      html.eink-mode input#typeans,
+      body.einkMode input#typeans {
+        background-color: #ffffff;
+        color: #000000;
+        border: 2px solid #000000;
+        border-radius: 4px;
+      }
+
+      html.eink-mode .replay-button,
+      body.einkMode .replay-button {
+        background-color: #ffffff;
+        color: #000000;
+        border: 2px solid #000000;
+      }
+
+      html.eink-mode a,
+      body.einkMode a {
+        color: #000000;
+        text-decoration: underline;
+      }
+
+      html.eink-mode .typeGood,
+      body.einkMode .typeGood {
+        background-color: #ffffff !important;
+        color: #000000 !important;
+        border: 2px solid #000000;
+        padding: 0 3px;
+        font-weight: 700;
+      }
+
+      html.eink-mode .typeBad,
+      body.einkMode .typeBad {
+        background-color: #000000 !important;
+        color: #ffffff !important;
+        padding: 0 3px;
+        font-weight: 700;
+        text-decoration: line-through;
+      }
+
+      html.eink-mode .typeMissed,
+      body.einkMode .typeMissed {
+        background-color: #ffffff !important;
+        color: #000000 !important;
+        border-bottom: 2px dashed #000000;
+        padding: 0 2px;
+      }
+    </style>
+    <style id="amgi-card-css"></style>
+  </head>
+  <body class="card">
+    <div id="_flag" hidden>⚑</div>
+    <div id="_mark" hidden>★</div>
+    <div id="qa"></div>
+
+    <script src="/_anki/js/jquery.min.js"></script>
+    <script src="/_anki/js/reviewer_extras_bundle.js"></script>
+    <script src="/_anki/js/reviewer.js"></script>
+
+    <script>
+      (function () {
+        'use strict';
+
+        var state = {
+          theme: 'light',
+          fontScale: 1,
+          lineHeight: 1.55,
+          tapToFlip: true,
+          hanjaEnabled: true,
+          side: 'question',
+          bodyClass: 'card',
+        };
+
+        var INTERACTIVE_SELECTOR = [
+          'a',
+          'button',
+          'input',
+          'textarea',
+          'select',
+          'audio',
+          'video',
+          '.tappable',
+          '.hjtap',
+          '.hjchip',
+          '.replay-button',
+          '[onclick]',
+          '[contenteditable]',
+        ].join(',');
+
+        function postToParent(payload) {
+          try {
+            if (window.parent && window.parent !== window) {
+              window.parent.postMessage(payload, '*');
+            }
+          } catch (_) {
+            // Ignore cross-origin postMessage errors
+          }
+        }
+
+        function resolveTheme(theme) {
+          if (theme === 'dark' || theme === 'eink' || theme === 'light') {
+            return theme;
+          }
+          if (theme === 'auto') {
+            try {
+              if (
+                window.matchMedia &&
+                window.matchMedia('(prefers-color-scheme: dark)').matches
+              ) {
+                return 'dark';
+              }
+            } catch (_) {
+              // Ignore matchMedia errors
+            }
+          }
+          return 'light';
+        }
+
+        function computeBodyClass(baseClass) {
+          var tokens = (baseClass || 'card').split(/\s+/).filter(Boolean);
+          var filtered = tokens.filter(function (c) {
+            return c !== 'nightMode' && c !== 'night_mode' && c !== 'einkMode' && c !== 'eink_mode';
+          });
+          if (filtered.length === 0) {
+            filtered.push('card');
+          }
+          if (state.theme === 'dark') {
+            filtered.push('nightMode');
+          } else if (state.theme === 'eink') {
+            filtered.push('einkMode');
+          }
+          return filtered.join(' ');
+        }
+
+        function applyTheme(theme) {
+          state.theme = resolveTheme(theme);
+          var root = document.documentElement;
+          root.classList.toggle('night-mode', state.theme === 'dark');
+          root.classList.toggle('eink-mode', state.theme === 'eink');
+          root.setAttribute('data-bs-theme', state.theme === 'dark' ? 'dark' : 'light');
+          root.setAttribute('data-theme', state.theme);
+          if (document.body) {
+            document.body.className = computeBodyClass(state.bodyClass);
+          }
+        }
+
+        function applyFontScale(fontScale) {
+          var num = Number(fontScale);
+          if (!Number.isFinite(num) || num <= 0) num = 1;
+          num = Math.max(0.5, Math.min(3, num));
+          state.fontScale = num;
+          document.documentElement.style.setProperty('--card-font-scale', String(num));
+        }
+
+        function applyLineHeight(lineHeight) {
+          var num = Number(lineHeight);
+          if (!Number.isFinite(num) || num <= 0) num = 1.55;
+          num = Math.max(1.0, Math.min(3.0, num));
+          state.lineHeight = num;
+          document.documentElement.style.setProperty('--card-line-height', String(num));
+        }
+
+        function injectCardCss(css) {
+          var el = document.getElementById('amgi-card-css');
+          if (!el) {
+            el = document.createElement('style');
+            el.id = 'amgi-card-css';
+            document.head.appendChild(el);
+          }
+          var next = typeof css === 'string' ? css : '';
+          if (el.textContent !== next) {
+            el.textContent = next;
+          }
+        }
+
+        function parseHanjaHref(href) {
+          if (!href) return null;
+          var trimmed = String(href).trim();
+          if (!/^(intent|hanja):\/\/lookup/i.test(trimmed)) return null;
+          try {
+            var qIndex = trimmed.indexOf('?');
+            if (qIndex < 0) return null;
+            var endIdx = trimmed.indexOf('#', qIndex);
+            var query = endIdx >= 0 ? trimmed.slice(qIndex + 1, endIdx) : trimmed.slice(qIndex + 1);
+            var params = new URLSearchParams(query);
+            var text = params.get('q') || params.get('text') || '';
+            var sentence = params.get('s') || params.get('sentence') || '';
+            if (!text) return null;
+            return { text: text, sentence: sentence };
+          } catch (_) {
+            return null;
+          }
+        }
+
+        function extractSoundTag(el) {
+          if (!el) return '';
+          var dataSound = el.getAttribute('data-myamgi-sound') || el.getAttribute('data-sound');
+          if (dataSound) return dataSound;
+          var href = el.getAttribute('href') || '';
+          if (href.indexOf('playsound:') === 0) {
+            try {
+              return decodeURIComponent(href.slice('playsound:'.length));
+            } catch (_) {
+              return href.slice('playsound:'.length);
+            }
+          }
+          var onclickAttr = el.getAttribute('onclick') || '';
+          var pycmdMatch = onclickAttr.match(/pycmd\s*\(\s*['"]play:([^'"]+)['"]\s*\)/);
+          if (pycmdMatch && pycmdMatch[1]) return pycmdMatch[1];
+          return '';
+        }
+
+        function emitTypedAnswer(value) {
+          postToParent({
+            type: 'typeAnsSubmit',
+            value: typeof value === 'string' ? value : getCurrentTypedAnswer(),
+          });
+        }
+
+        function getCurrentTypedAnswer() {
+          if (typeof window.getTypedAnswer === 'function') {
+            var v = window.getTypedAnswer();
+            if (typeof v === 'string') return v;
+          }
+          var input = document.getElementById('typeans');
+          return input && 'value' in input ? String(input.value || '') : '';
+        }
+
+        // Intercept official Anki reviewer bridge commands (including Enter on #typeans -> bridgeCommand('ans'))
+        window.bridgeCommand = function (cmd) {
+          if (typeof cmd !== 'string') return;
+          if (cmd === 'ans') {
+            emitTypedAnswer();
+            return;
+          }
+          if (cmd.indexOf('play:') === 0) {
+            postToParent({ type: 'playSound', tag: cmd.slice(5) });
+            return;
+          }
+          if (/^ease([1-4])$/.test(cmd)) {
+            postToParent({ type: 'bridgeCommand', cmd: cmd });
+            return;
+          }
+          if (cmd === 'updateToolbar' || cmd === 'repaintNeeded') {
+            return;
+          }
+          postToParent({ type: 'bridgeCommand', cmd: cmd });
+        };
+
+        window.pycmd = window.bridgeCommand;
+
+        // Intercept hanja lookup links and .replay-button / playsound: clicks in capture phase
+        document.addEventListener(
+          'click',
+          function (event) {
+            var target = event.target;
+            if (!target) return;
+            if (target.nodeType === 3) target = target.parentElement;
+            if (!target || !target.closest) return;
+
+            var anchor = target.closest('a[href]');
+            if (anchor) {
+              var href = anchor.getAttribute('href') || '';
+              var lookup = parseHanjaHref(href);
+              if (lookup) {
+                event.preventDefault();
+                event.stopPropagation();
+                postToParent({
+                  type: 'hanjaLookup',
+                  text: lookup.text,
+                  sentence: lookup.sentence,
+                });
+                return;
+              }
+            }
+
+            var soundEl = target.closest('.replay-button, a[href^="playsound:"], [data-myamgi-sound]');
+            if (soundEl) {
+              var tag = extractSoundTag(soundEl);
+              if (tag || soundEl.matches('.replay-button, a[href^="playsound:"]')) {
+                event.preventDefault();
+                event.stopPropagation();
+                postToParent({ type: 'playSound', tag: tag });
+                return;
+              }
+            }
+          },
+          true
+        );
+
+        // Also handle #typeans Enter even if a deck template didn't bind onkeypress="_typeAnsPress()"
+        document.addEventListener(
+          'keydown',
+          function (event) {
+            var target = event.target;
+            if (target && target.id === 'typeans' && event.key === 'Enter' && !event.isComposing) {
+              event.preventDefault();
+              event.stopPropagation();
+              emitTypedAnswer(target.value || '');
+            }
+          },
+          true
+        );
+
+        // Drag-safe (< 18px) and selection-safe tap-to-flip
+        var pointerStart = null;
+
+        document.addEventListener(
+          'pointerdown',
+          function (event) {
+            if (event.button !== undefined && event.button !== 0) {
+              pointerStart = null;
+              return;
+            }
+            pointerStart = { x: event.clientX || 0, y: event.clientY || 0 };
+          },
+          { passive: true }
+        );
+
+        document.addEventListener(
+          'click',
+          function (event) {
+            if (!state.tapToFlip) return;
+            if (event.defaultPrevented) return;
+
+            var sel = window.getSelection ? window.getSelection() : null;
+            if (sel && !sel.isCollapsed && String(sel).trim().length > 0) return;
+
+            if (pointerStart) {
+              var dx = Math.abs((event.clientX || 0) - pointerStart.x);
+              var dy = Math.abs((event.clientY || 0) - pointerStart.y);
+              pointerStart = null;
+              if (dx >= 18 || dy >= 18) return;
+            }
+
+            var target = event.target;
+            if (!target) return;
+            if (target.nodeType === 3) target = target.parentElement;
+            if (!target || !target.closest) return;
+            if (target.closest(INTERACTIVE_SELECTOR)) return;
+
+            postToParent({ type: 'cardTap' });
+          },
+          false
+        );
+
+        function triggerHanjaTap() {
+          if (state.hanjaEnabled === false) return;
+          if (typeof window.__hjtapRun === 'function') {
+            try {
+              window.__hjtapRun();
+              return;
+            } catch (_) {
+              // Ignore Hanja tap errors
+            }
+          }
+          if (window.__hjCode && typeof window.__hjCode === 'object') {
+            var best = 0;
+            for (var k in window.__hjCode) {
+              if (Object.prototype.hasOwnProperty.call(window.__hjCode, k) && +k > best) {
+                best = +k;
+              }
+            }
+            if (best && typeof window.__hjCode[best] === 'function') {
+              try {
+                window.__hjCode[best]();
+              } catch (_) {
+                // Ignore Hanja runner errors
+              }
+            }
+          }
+        }
+
+        // Load /api/host/hanja-tap.js dynamically & non-blockingly
+        function loadHanjaScript() {
+          if (state.hanjaEnabled === false) return;
+          var script = document.createElement('script');
+          script.src = '/api/host/hanja-tap.js';
+          script.async = true;
+          script.onload = function () {
+            triggerHanjaTap();
+          };
+          script.onerror = function () {
+            // Ignore when empty/offline/unavailable
+          };
+          document.head.appendChild(script);
+        }
+
+        function handleRender(msg) {
+          state.side = msg.side === 'answer' ? 'answer' : 'question';
+          if (typeof msg.bodyClass === 'string' && msg.bodyClass.trim()) {
+            state.bodyClass = msg.bodyClass;
+          } else {
+            state.bodyClass = 'card';
+          }
+          if (typeof msg.tapToFlip === 'boolean') {
+            state.tapToFlip = msg.tapToFlip;
+          }
+          if (typeof msg.hanjaEnabled === 'boolean') {
+            state.hanjaEnabled = msg.hanjaEnabled;
+          }
+          if (msg.theme !== undefined) {
+            applyTheme(msg.theme);
+          } else {
+            applyTheme(state.theme);
+          }
+          if (msg.fontScale !== undefined) {
+            applyFontScale(msg.fontScale);
+          }
+          if (msg.lineHeight !== undefined) {
+            applyLineHeight(msg.lineHeight);
+          }
+
+          injectCardCss(msg.css || '');
+
+          var nextBodyClass = computeBodyClass(state.bodyClass);
+          var html = typeof msg.html === 'string' ? msg.html : '';
+          var preloadAnswerHtml =
+            typeof msg.preloadAnswerHtml === 'string' ? msg.preloadAnswerHtml : '';
+
+          var resetShortCardScroll = function () {
+            if (document.documentElement.scrollHeight <= window.innerHeight + 64) {
+              window.scrollTo(0, 0);
+            }
+          };
+
+          var runAfterUpdate = function () {
+            triggerHanjaTap();
+            // Schedule a post-render scan after reviewer.js finishes its queued DOM update
+            setTimeout(triggerHanjaTap, 0);
+            if (state.side === 'answer') {
+              setTimeout(resetShortCardScroll, 0);
+            }
+            postToParent({ type: 'rendered', side: state.side });
+          };
+
+          if (state.side === 'answer' && typeof window._showAnswer === 'function') {
+            if (Array.isArray(window.onShownHook)) {
+              window.onShownHook.push(triggerHanjaTap);
+              window.onShownHook.push(resetShortCardScroll);
+            }
+            window._showAnswer(html, nextBodyClass);
+            if (Array.isArray(window.onShownHook)) {
+              window.onShownHook.push(resetShortCardScroll);
+            }
+            setTimeout(resetShortCardScroll, 0);
+            runAfterUpdate();
+          } else if (typeof window._showQuestion === 'function') {
+            if (Array.isArray(window.onShownHook)) {
+              window.onShownHook.push(triggerHanjaTap);
+            }
+            window._showQuestion(html, preloadAnswerHtml, nextBodyClass);
+            runAfterUpdate();
+          } else {
+            var qa = document.getElementById('qa');
+            if (qa) qa.innerHTML = html;
+            if (document.body) document.body.className = nextBodyClass;
+            runAfterUpdate();
+          }
+        }
+
+        window.addEventListener('message', function (event) {
+          var msg = event && event.data;
+          if (!msg || typeof msg !== 'object') return;
+
+          switch (msg.type) {
+            case 'render':
+              handleRender(msg);
+              break;
+            case 'setTheme':
+              applyTheme(msg.theme);
+              break;
+            case 'setFontScale':
+              applyFontScale(msg.fontScale);
+              break;
+            case 'setLineHeight':
+              applyLineHeight(msg.lineHeight);
+              break;
+            case 'hanjaKey': {
+              var fnName =
+                msg.action === 'open'
+                  ? 'userJs1'
+                  : msg.action === 'next'
+                    ? 'userJs2'
+                    : msg.action === 'prev'
+                      ? 'userJs3'
+                      : null;
+              if (fnName && typeof window[fnName] === 'function') {
+                try {
+                  window[fnName]();
+                } catch (_) {
+                  // Ignore userJs errors
+                }
+              }
+              break;
+            }
+            case 'getTypedAnswer':
+              postToParent({
+                type: 'typedAnswer',
+                value: getCurrentTypedAnswer(),
+              });
+              break;
+            default:
+              break;
+          }
+        });
+
+        // Apply optional initial URL query params (?theme=...&fontScale=...&lineHeight=...)
+        try {
+          var qs = new URLSearchParams(window.location.search);
+          var initialTheme = qs.get('theme');
+          if (initialTheme) applyTheme(initialTheme);
+          var initialScale = qs.get('fontScale');
+          if (initialScale) applyFontScale(initialScale);
+          var initialLineHeight = qs.get('lineHeight');
+          if (initialLineHeight) applyLineHeight(initialLineHeight);
+          var initialHanja = qs.get('hanjaEnabled');
+          if (initialHanja === 'false' || initialHanja === '0') state.hanjaEnabled = false;
+        } catch (_) {
+          // Ignore query parse errors
+        }
+
+        loadHanjaScript();
+        postToParent({ type: 'frameReady' });
+      })();
+    </script>
+  </body>
+</html>

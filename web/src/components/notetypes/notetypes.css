@@ -1,0 +1,380 @@
+/* ==========================================================================
+   Note Type Manager & 1M+ Char Chunked Template/CSS Editor
+   ========================================================================== */
+
+.amgi-nt-list-root {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.amgi-nt-list-body {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 14px 12px calc(32px + var(--safe-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+@media (min-width: 840px) {
+  .amgi-nt-list-body {
+    padding: 20px 24px 40px;
+  }
+}
+
+.amgi-nt-header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.amgi-nt-list-root .amgi-btn-sm,
+.amgi-nt-editor-root .amgi-btn-sm {
+  min-height: 44px;
+}
+
+:root[data-theme="eink"] .amgi-nt-list-root .amgi-btn-sm,
+:root[data-theme="eink"] .amgi-nt-editor-root .amgi-btn-sm {
+  min-height: 48px;
+}
+
+.amgi-nt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 68px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+:root[data-theme="eink"] .amgi-nt-row {
+  border-bottom: 2px solid #000000;
+}
+
+.amgi-nt-row:last-child,
+:root[data-theme="eink"] .amgi-nt-row:last-child {
+  border-bottom: none;
+}
+
+.amgi-nt-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.amgi-nt-title-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.amgi-nt-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.amgi-nt-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+:root[data-theme="eink"] .amgi-nt-badge {
+  background: #FFFFFF;
+  color: #000000;
+  border: 2px solid #000000;
+}
+
+.amgi-nt-meta {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+/* NoteType Editor Workspace */
+.amgi-nt-editor-root {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  background: var(--bg);
+}
+
+.amgi-nt-topbar,
+.amgi-nt-editor-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 25;
+  min-height: calc(var(--topbar-h) + var(--safe-top));
+  padding: var(--safe-top) 12px 0;
+  background: var(--surface);
+  border-bottom: var(--border-w) solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+@media (min-width: 840px) {
+  .amgi-nt-topbar,
+  .amgi-nt-editor-topbar {
+    padding: var(--safe-top) 20px 0;
+  }
+}
+
+.amgi-nt-tabs-bar {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border-bottom: var(--border-w) solid var(--border);
+}
+
+.amgi-nt-tab-btn {
+  min-height: 44px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.amgi-nt-tab-btn.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+}
+
+:root[data-theme="eink"] .amgi-nt-tab-btn {
+  min-height: 48px;
+  background: #FFFFFF;
+  color: #000000;
+  border-color: #000000;
+}
+
+:root[data-theme="eink"] .amgi-nt-tab-btn.active {
+  background: #000000;
+  color: #FFFFFF;
+}
+
+.amgi-nt-dirty-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.amgi-nt-dirty-pill.dirty {
+  background: var(--warn-soft);
+  border-color: var(--hard-border);
+  color: var(--warn);
+}
+
+:root[data-theme="eink"] .amgi-nt-dirty-pill.dirty {
+  background: #000000;
+  color: #FFFFFF;
+  border-color: #000000;
+}
+
+.amgi-nt-fields-wrap {
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 16px 14px calc(36px + var(--safe-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.amgi-nt-field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.amgi-nt-field-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.amgi-nt-split {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 900px) {
+  .amgi-nt-split.with-preview {
+    grid-template-columns: minmax(480px, 58%) minmax(340px, 42%);
+  }
+}
+
+.amgi-nt-template-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px;
+  gap: 10px;
+}
+
+.amgi-nt-card-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.amgi-nt-insert-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+
+.amgi-nt-insert-chips::-webkit-scrollbar {
+  display: none;
+}
+
+/* ChunkedCodeEditor (1M+ char O(1) 8KB chunk editor) */
+.amgi-chunked-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 360px;
+  background: var(--surface);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.amgi-chunked-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border-bottom: var(--border-w) solid var(--border);
+}
+
+:root[data-theme="eink"] .amgi-chunked-toolbar {
+  background: #FFFFFF;
+  border-bottom: 2px solid #000000;
+}
+
+.amgi-chunked-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.amgi-chunked-stats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.amgi-chunked-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.amgi-chunked-slider {
+  flex: 1;
+  min-width: 100px;
+  height: 32px;
+  accent-color: var(--primary);
+}
+
+.amgi-chunked-meta-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--text-2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.amgi-chunked-textarea {
+  flex: 1;
+  width: 100%;
+  min-height: 320px;
+  padding: 12px 14px;
+  border: none;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  tab-size: 2;
+  resize: vertical;
+  outline: none;
+  white-space: pre;
+  overflow: auto;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.amgi-nt-preview-pane {
+  border-left: var(--border-w) solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg);
+}

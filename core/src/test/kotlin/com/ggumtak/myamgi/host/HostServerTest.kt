@@ -43,6 +43,7 @@ class HostServerTest {
 
     private class TestPlatform : Platform {
         override fun info() = PlatformInfo("desktop", "9.9.9", 42, "test", false, "junit")
+        override fun hanjaTapScript() = "window.__hjTest = true;"
     }
 
     @Before
@@ -59,7 +60,9 @@ class HostServerTest {
         }
         val anki = tmp.newFolder("anki").apply {
             File(this, "sveltekit/app/immutable/entry").mkdirs()
-            File(this, "sveltekit/index.html").writeText("<!doctype html><title>sveltekit</title>")
+            File(this, "sveltekit/index.html").writeText(
+                """<!doctype html><html><head><meta http-equiv="content-security-policy" content="script-src 'self' 'sha256-orig'"><title>sveltekit</title></head><body></body></html>"""
+            )
             File(this, "sveltekit/app/immutable/entry/start.js").writeText("export {}")
             File(this, "js").mkdirs()
             File(this, "js/reviewer.js").writeText("var reviewer = 1;")
@@ -407,6 +410,77 @@ class HostServerTest {
         assertEquals(null, HostServer.parseRange("100-", 100))
         assertEquals(null, HostServer.parseRange("5-2", 100))
         assertEquals(null, HostServer.parseRange("0-1,5-6", 100))
+    }
+
+    @Test
+    fun hanjaTapScriptRequiresAuthAndServesScript() {
+        assertEquals(403, http.get("/api/host/hanja-tap.js").status)
+        login()
+        val r = http.get("/api/host/hanja-tap.js")
+        assertEquals(200, r.status)
+        assertEquals("application/javascript; charset=utf-8", r.header("content-type"))
+        assertEquals("no-cache", r.header("cache-control"))
+        assertEquals("window.__hjTest = true;", r.text)
+    }
+
+    @Test
+    fun sveltePagesInjectKoreanKeepAllAndThemeBootstrap() {
+        login()
+        // /preferences was removed from SVELTE_ROUTES so it must not serve the SPA shell
+        assertEquals(404, http.get("/preferences").status)
+
+        val dark = http.get("/deck-options/1?theme=dark")
+        assertEquals(200, dark.status)
+        assertTrue(dark.text.contains("word-break: keep-all"))
+        assertTrue(dark.text.contains("myamgi-anki-polish"))
+        assertTrue(dark.text.contains("? q : 'dark'"))
+        assertTrue(dark.text.contains("root.setAttribute('data-bs-theme', 'dark')"))
+        // CSP header includes injected script's sha256 alongside original hash
+        assertTrue(dark.text.contains("'sha256-orig'"))
+        assertTrue(Regex("script-src 'sha256-[A-Za-z0-9+/=]+' 'self'").containsMatchIn(dark.text))
+
+        val eink = http.get("/deck-options/1?theme=eink")
+        assertEquals(200, eink.status)
+        assertTrue(eink.text.contains("? q : 'eink'"))
+        assertTrue(eink.text.contains("html.eink-mode"))
+
+        // Falls back to persisted prefs theme when query param is absent
+        api("prefs.set", """{"theme":"dark"}""")
+        val fromPrefs = http.get("/graphs")
+        assertEquals(200, fromPrefs.status)
+        assertTrue(fromPrefs.text.contains("? q : 'dark'"))
+    }
+
+    @Test
+    fun importFileNormalizesCp949CsvToUtf8() {
+        login()
+        val cp949 = java.nio.charset.Charset.forName("x-windows-949")
+        val sampleCsv = "단어,뜻\n한자,공부\n"
+        val cp949Bytes = sampleCsv.toByteArray(cp949)
+
+        val up = http.post("/api/host/upload?name=" + URLEncoder.encode("단어장.csv", "UTF-8"), cp949Bytes)
+        assertEquals(200, up.status)
+        val upPath = Json.parseToJsonElement(up.text).jsonObject.s("path")
+
+        val (status, resp) = api("import.file", """{"path":${JsonPrimitive(upPath).toString()},"name":"단어장.csv"}""")
+        assertEquals(200, status)
+        assertEquals("csv", resp.s("kind"))
+        assertEquals("CP949", resp.s("detectedEncoding"))
+        assertTrue(resp.s("route").startsWith("/import-csv/"))
+        assertEquals(sampleCsv, File(upPath).readText(Charsets.UTF_8))
+
+        // UTF-8 BOM and UTF-16LE BOM are also stripped and normalized to UTF-8
+        val bomFile = tmp.newFile("utf8_bom.csv").apply {
+            writeBytes(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()) + "앞,뒤\n".toByteArray(Charsets.UTF_8))
+        }
+        assertEquals("UTF-8", CsvEncoding.ensureUtf8(bomFile))
+        assertEquals("앞,뒤\n", bomFile.readText(Charsets.UTF_8))
+
+        val utf16File = tmp.newFile("utf16le.tsv").apply {
+            writeBytes(byteArrayOf(0xFF.toByte(), 0xFE.toByte()) + "질문\t정답\n".toByteArray(Charsets.UTF_16LE))
+        }
+        assertEquals("UTF-16LE", CsvEncoding.ensureUtf8(utf16File))
+        assertEquals("질문\t정답\n", utf16File.readText(Charsets.UTF_8))
     }
 
     companion object {

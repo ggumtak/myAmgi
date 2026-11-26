@@ -1,0 +1,381 @@
+/* ==========================================================================
+   Native Korean Deck Options Styles
+   ========================================================================== */
+
+.amgi-options-shell {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.amgi-options-topbar {
+  min-height: calc(var(--topbar-h) + var(--safe-top));
+  padding-top: calc(6px + var(--safe-top));
+  padding-bottom: 6px;
+}
+
+.amgi-options-topbar-title-wrap {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.amgi-options-deck-sub {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.amgi-options-save-btn {
+  min-height: 44px;
+  padding: 0 16px;
+}
+
+:root[data-theme="eink"] .amgi-options-save-btn {
+  min-height: 48px;
+}
+
+.amgi-options-body {
+  width: 100%;
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 16px 14px calc(36px + var(--safe-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+@media (min-width: 840px) {
+  .amgi-options-body {
+    max-width: 728px;
+    padding: 20px 24px calc(36px + var(--safe-bottom));
+  }
+}
+
+.amgi-options-loading {
+  padding: 48px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text-2);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Shared preset info banner */
+.amgi-options-banner {
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  border: var(--border-w) solid var(--border);
+  background: var(--primary-soft);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+:root[data-theme="eink"] .amgi-options-banner {
+  background: #FFFFFF;
+  border: 2px solid #000000;
+}
+
+/* Quick-start recommended 3-column preset grid */
+.amgi-preset-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.amgi-preset-chip {
+  min-height: 54px;
+  padding: 8px 6px;
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.amgi-preset-chip:hover {
+  background: var(--surface-active);
+  border-color: var(--primary);
+}
+
+.amgi-preset-chip-title {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.amgi-preset-chip-counts {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+:root[data-theme="eink"] .amgi-preset-chip {
+  min-height: 58px;
+  background: #FFFFFF;
+  border: 2px solid #000000;
+  color: #000000;
+}
+
+:root[data-theme="eink"] .amgi-preset-chip-counts {
+  color: #000000;
+}
+
+/* Numeric Stepper inside SettingRow */
+.amgi-num-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.amgi-num-step-btn {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.amgi-num-step-btn:hover:not(:disabled) {
+  background: var(--surface-active);
+  border-color: var(--border-strong);
+}
+
+.amgi-num-step-input {
+  width: 64px;
+  min-height: 44px;
+  padding: 6px 6px;
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  text-align: center;
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.amgi-num-step-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+:root[data-theme="eink"] .amgi-num-step-btn,
+:root[data-theme="eink"] .amgi-num-step-input {
+  min-height: 48px;
+  background: #FFFFFF;
+  color: #000000;
+  border: 2px solid #000000;
+}
+
+:root[data-theme="eink"] .amgi-num-step-btn {
+  min-width: 48px;
+}
+
+/* Stacked Full-Width Input Rows (Steps, Slider, Optimize) */
+.amgi-options-subrow {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+:root[data-theme="eink"] .amgi-options-subrow {
+  border-bottom: 2px solid #000000;
+}
+
+.amgi-options-subrow:last-child,
+:root[data-theme="eink"] .amgi-options-subrow:last-child {
+  border-bottom: none;
+}
+
+.amgi-options-subrow-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.amgi-options-subrow-label {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.amgi-options-subrow-desc {
+  font-size: 13px;
+  line-height: 1.48;
+  color: var(--text-2);
+}
+
+.amgi-options-error-hint {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--danger);
+}
+
+:root[data-theme="eink"] .amgi-options-error-hint {
+  color: #000000;
+  text-decoration: underline;
+}
+
+.amgi-options-inline-note {
+  padding: 10px 14px;
+  margin: 0 20px 14px;
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--border);
+  background: var(--surface-2);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+:root[data-theme="eink"] .amgi-options-inline-note {
+  background: #FFFFFF;
+  border: 2px solid #000000;
+  color: #000000;
+}
+
+.amgi-steps-input {
+  width: 100%;
+  min-height: 46px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.amgi-steps-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+:root[data-theme="eink"] .amgi-steps-input {
+  min-height: 50px;
+  border: 2px solid #000000;
+}
+
+/* FSRS Retention Slider */
+.amgi-retention-badge {
+  font-size: 16px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--primary);
+}
+
+:root[data-theme="eink"] .amgi-retention-badge {
+  color: #000000;
+}
+
+.amgi-retention-slider {
+  width: 100%;
+  height: 36px;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+:root[data-theme="eink"] .amgi-retention-slider {
+  accent-color: #000000;
+}
+
+.amgi-options-dimmed {
+  opacity: 0.52;
+}
+
+.amgi-options-today-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+:root[data-theme="eink"] .amgi-options-today-badge {
+  background: #FFFFFF;
+  color: #000000;
+  border: 2px solid #000000;
+}
+
+/* Bottom Escape Hatch */
+.amgi-options-escape {
+  margin-top: 4px;
+  padding: 18px 20px;
+  border-radius: var(--radius-md);
+  border: var(--border-w) solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+:root[data-theme="eink"] .amgi-options-escape {
+  border: 2px solid #000000;
+}
+
+.amgi-options-escape-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+@media (max-width: 390px) {
+  .amgi-options-body {
+    padding: 12px 10px calc(32px + var(--safe-bottom));
+    gap: 18px;
+  }
+
+  .amgi-options-subrow {
+    padding: 14px 16px;
+  }
+
+  .amgi-options-inline-note {
+    margin: 0 16px 12px;
+  }
+
+  .amgi-num-step-input {
+    width: 52px;
+  }
+
+  .amgi-num-step-btn {
+    min-width: 38px;
+  }
+}

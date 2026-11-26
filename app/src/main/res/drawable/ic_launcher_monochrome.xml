@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Outer optical framing matching ic_launcher_fg.xml: scale 0.88 around (54,54), shifted (+0.5, +1.1) -->
+    <group
+        android:translateX="0.5"
+        android:translateY="1.1"
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="0.88"
+        android:scaleY="0.88">
+
+        <!-- Back card peeking silhouette (translucent white for subtle depth in themed monochrome) -->
+        <group
+            android:translateX="-4.5"
+            android:translateY="-1.0"
+            android:pivotX="54"
+            android:pivotY="54"
+            android:rotation="-9">
+            <path
+                android:fillColor="#FFFFFF"
+                android:fillAlpha="0.48"
+                android:pathData="M43,32.5 H65 C68.04,32.5 70.5,34.96 70.5,38 V70 C70.5,73.04 68.04,75.5 65,75.5 H43 C39.96,75.5 37.5,73.04 37.5,70 V38 C37.5,34.96 39.96,32.5 43,32.5 Z" />
+        </group>
+
+        <!-- Front card with even-odd cutouts for the 4-pointed spark + segmented progress indicator (65% pill + 1.6dp gap + short right pill) -->
+        <group
+            android:translateX="3.2"
+            android:translateY="1.0"
+            android:pivotX="54"
+            android:pivotY="54"
+            android:rotation="6.5">
+            <path
+                android:fillColor="#FFFFFF"
+                android:fillType="evenOdd"
+                android:pathData="
+                    M42.3,31.5 H65.7 C68.90,31.5 71.5,34.10 71.5,37.3 V70.7 C71.5,73.90 68.90,76.5 65.7,76.5 H42.3 C39.10,76.5 36.5,73.90 36.5,70.7 V37.3 C36.5,34.10 39.10,31.5 42.3,31.5 Z
+                    M 54,40.4 C 54.45,40.4 54.65,41.2 55.15,43.0 C 56.15,46.6 56.9,47.35 60.5,48.35 C 62.3,48.85 63.1,49.05 63.1,49.5 C 63.1,49.95 62.3,50.15 60.5,50.65 C 56.9,51.65 56.15,52.4 55.15,56.0 C 54.65,57.8 54.45,58.6 54,58.6 C 53.55,58.6 53.35,57.8 52.85,56.0 C 51.85,52.4 51.1,51.65 47.5,50.65 C 45.7,50.15 44.9,49.95 44.9,49.5 C 44.9,49.05 45.7,48.85 47.5,48.35 C 51.1,47.35 51.85,46.6 52.85,43.0 C 53.35,41.2 53.55,40.4 54,40.4 Z
+                    M44.2,65.3 H55.75 C56.69,65.3 57.45,66.06 57.45,67.0 C57.45,67.94 56.69,68.7 55.75,68.7 H44.2 C43.26,68.7 42.5,67.94 42.5,67.0 C42.5,66.06 43.26,65.3 44.2,65.3 Z
+                    M60.75,65.3 H63.8 C64.74,65.3 65.5,66.06 65.5,67.0 C65.5,67.94 64.74,68.7 63.8,68.7 H60.75 C59.81,68.7 59.05,67.94 59.05,67.0 C59.05,66.06 59.81,65.3 60.75,65.3 Z" />
+        </group>
+    </group>
+</vector>
