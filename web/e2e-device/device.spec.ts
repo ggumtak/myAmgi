@@ -317,15 +317,20 @@ test.describe('pro @pro', () => {
     expect(musicVolume()).toBe(v0);
 
     // Pref off: the key belongs to the system again.
+    // Pref off (the reviewer reads its prefs when it opens, like after changing them in Settings).
     await hostFn(page, 'prefs.set', { volumeKeys: false });
+    await page.reload();
+    await rendered(page, 'question');
     const cid2 = await cardId(page);
+    const v1 = musicVolume();
     keyevent('KEYCODE_VOLUME_DOWN');
-    await expect.poll(() => musicVolume(), { message: 'music volume goes down' }).toBeLessThan(v0!);
+    await sleep(1_500);
     shot('volume-key-system-volume');
-    await sleep(1_000);
+    log(`pref off: volume ${v1} → ${musicVolume()}; focus ${adbRaw(['shell', 'dumpsys window | grep mCurrentFocus']).out.trim()}`);
     await expect(page.getByTestId('study')).toHaveAttribute('data-rendered', 'question');
     expect(await cardId(page)).toBe(cid2);
     expect((await engine(page, 'getReviewLogs', { cid: cid2 })).entries).toHaveLength(0);
+    await expect.poll(() => musicVolume(), { message: 'music volume goes down' }).toBeLessThan(v1!);
     await hostFn(page, 'prefs.set', { volumeKeys: true });
     // Let the volume panel disappear before the next screenshot.
     await sleep(3_500);
@@ -626,8 +631,10 @@ test.describe('pro @pro', () => {
     const after = { pid: pidOf(), origin: new URL(page.url()).origin, cookie: await cookie(page) };
     log(`after relaunch: ${JSON.stringify(after)}`);
     expect(after.pid).not.toBe(before.pid);
-    if (before.cookie && after.cookie) expect(after.cookie).not.toBe(before.cookie);
-    else expect(after.origin).not.toBe(before.origin);
+    expect(before.cookie).toBeTruthy();
+    expect(after.cookie).toBeTruthy();
+    expect(after.cookie).not.toBe(before.cookie);
+    expect(after.origin).not.toBe(before.origin);
     await expect(page.locator(`[data-deck-name="${DECK}"]`)).toBeVisible();
     await expect(page.locator('[data-deck-name="기기 가져오기::열기"]')).toBeVisible();
     expect(await searchNotes(page, `"deck:${DECK}"`)).toHaveLength(5);
@@ -642,9 +649,13 @@ test.describe('pro @pro', () => {
   });
 });
 
+/** The session token cookie (WebView has no Storage.getCookies; Network.getCookies works per page). */
 async function cookie(page: Page): Promise<string | null> {
   try {
-    return (await page.context().cookies()).find((c) => c.name === 'amgi_t')?.value ?? null;
+    const cdp = await page.context().newCDPSession(page);
+    const { cookies } = (await cdp.send('Network.getCookies')) as { cookies: { name: string; value: string }[] };
+    await cdp.detach().catch(() => {});
+    return cookies.find((c) => c.name === 'amgi_t')?.value ?? null;
   } catch (e) {
     log(`cookies unavailable: ${String(e)}`);
     return null;
@@ -670,6 +681,13 @@ test.describe('comet @comet', () => {
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'eink');
     await checkLayout(page, 'comet-cold-start');
     shot('comet-cold-start');
+
+    // Volume keys answer cards on Comet by default, but outside the reviewer they must still change the volume.
+    setMusicVolume(8);
+    const v0 = musicVolume()!;
+    keyevent('KEYCODE_VOLUME_DOWN');
+    await expect.poll(() => musicVolume(), { message: 'volume key on the deck list changes the volume' }).toBeLessThan(v0);
+    await sleep(3_500);
 
     const deck = await engine(page, 'newDeck', {});
     deck.name = '코멧 테스트';

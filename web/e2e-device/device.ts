@@ -493,13 +493,17 @@ export function testPng(size = 96): Uint8Array {
   return new Uint8Array(png);
 }
 
-/** Music stream volume (`cmd media_session volume --get`), or null if it could not be read. */
+/** Music stream volume from `dumpsys audio` (STREAM_MUSIC, current device), or null if it could not be read. */
 export function musicVolume(): number | null {
-  const out = adbRaw(['shell', 'cmd media_session volume --stream 3 --get']).out;
-  const m = /volume is (\d+)/.exec(out);
+  const out = adbRaw(['shell', 'dumpsys audio']).out;
+  const block = /- STREAM_MUSIC:\n([\s\S]*?)\n- STREAM_/.exec(out)?.[1] ?? '';
+  const current = /Current: ([^\n]*)/.exec(block)?.[1] ?? '';
+  const m = /\(speaker\): (\d+)/.exec(current) ?? /\(default\): (\d+)/.exec(current) ?? /: (\d+)/.exec(current);
+  if (!m) log(`music volume not found; STREAM_MUSIC block: ${block.slice(0, 400)}`);
   return m ? Number(m[1]) : null;
 }
 
 export function setMusicVolume(v: number) {
-  adbRaw(['shell', `cmd media_session volume --stream 3 --set ${v}`]);
+  const r = adbRaw(['shell', `cmd media_session volume --stream 3 --set ${v}`]);
+  if (r.code !== 0 || /error|exception/i.test(r.out + r.err)) log(`set volume: ${r.out} ${r.err}`);
 }
