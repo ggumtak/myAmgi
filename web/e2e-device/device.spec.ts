@@ -28,6 +28,8 @@ import {
   loadState,
   log,
   musicVolume,
+  audioDiagnostics,
+  volumeAdjustments,
   nodeBounds,
   pidOf,
   route,
@@ -300,10 +302,11 @@ test.describe('pro @pro', () => {
     await rendered(page, 'question');
     setMusicVolume(8);
     const v0 = musicVolume();
-    log(`music volume before: ${v0}`);
-    expect(v0).toBeGreaterThan(0);
+    const a0 = volumeAdjustments();
+    log(`music volume before: ${v0}, volume adjustments so far: ${a0}`);
+    audioDiagnostics('before');
 
-    // Pref on (set in step 03): VOLUME_DOWN = "positive": show the answer, then Good.
+    // Pref on (set in step 03): VOLUME_DOWN = "positive": show the answer, then Good. The system never sees the key.
     const cid = await cardId(page);
     keyevent('KEYCODE_VOLUME_DOWN');
     await rendered(page, 'answer');
@@ -315,8 +318,8 @@ test.describe('pro @pro', () => {
     await expect.poll(() => cardId(page)).not.toBe(cid);
     await rendered(page, 'question');
     expect(musicVolume()).toBe(v0);
+    expect(volumeAdjustments(), 'the system adjusted the volume although the app took the key').toBe(a0);
 
-    // Pref off: the key belongs to the system again.
     // Pref off (the reviewer reads its prefs when it opens, like after changing them in Settings).
     await hostFn(page, 'prefs.set', { volumeKeys: false });
     await page.reload();
@@ -326,11 +329,12 @@ test.describe('pro @pro', () => {
     keyevent('KEYCODE_VOLUME_DOWN');
     await sleep(1_500);
     shot('volume-key-system-volume');
-    log(`pref off: volume ${v1} → ${musicVolume()}; focus ${adbRaw(['shell', 'dumpsys window | grep mCurrentFocus']).out.trim()}`);
+    log(`pref off: volume ${v1} → ${musicVolume()}, adjustments ${a0} → ${volumeAdjustments()}`);
+    audioDiagnostics('pref-off');
     await expect(page.getByTestId('study')).toHaveAttribute('data-rendered', 'question');
     expect(await cardId(page)).toBe(cid2);
     expect((await engine(page, 'getReviewLogs', { cid: cid2 })).entries).toHaveLength(0);
-    await expect.poll(() => musicVolume(), { message: 'music volume goes down' }).toBeLessThan(v1!);
+    await expect.poll(() => volumeAdjustments(), { message: 'the system handled the volume key' }).toBeGreaterThan(a0);
     await hostFn(page, 'prefs.set', { volumeKeys: true });
     // Let the volume panel disappear before the next screenshot.
     await sleep(3_500);
@@ -683,10 +687,11 @@ test.describe('comet @comet', () => {
     shot('comet-cold-start');
 
     // Volume keys answer cards on Comet by default, but outside the reviewer they must still change the volume.
-    setMusicVolume(8);
-    const v0 = musicVolume()!;
+    const a0 = volumeAdjustments();
     keyevent('KEYCODE_VOLUME_DOWN');
-    await expect.poll(() => musicVolume(), { message: 'volume key on the deck list changes the volume' }).toBeLessThan(v0);
+    await sleep(1_000);
+    audioDiagnostics('comet-deck-list');
+    await expect.poll(() => volumeAdjustments(), { message: 'volume key on the deck list reaches the system volume' }).toBeGreaterThan(a0);
     await sleep(3_500);
 
     const deck = await engine(page, 'newDeck', {});

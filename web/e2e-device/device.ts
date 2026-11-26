@@ -507,3 +507,22 @@ export function setMusicVolume(v: number) {
   const r = adbRaw(['shell', `cmd media_session volume --stream 3 --set ${v}`]);
   if (r.code !== 0 || /error|exception/i.test(r.out + r.err)) log(`set volume: ${r.out} ${r.err}`);
 }
+
+/**
+ * How many volume adjustments the system has handled (`dumpsys audio` volume event log: one
+ * adjustSuggestedStreamVolume/adjustStreamVolume line per volume key the system acted on). Counts work even
+ * where the emulator's volume index does not move (no audio device).
+ */
+export function volumeAdjustments(): number {
+  const out = adbRaw(['shell', 'dumpsys audio']).out;
+  return (out.match(/adjustSuggestedStreamVolume|adjustStreamVolume\(/g) ?? []).length;
+}
+
+/** Diagnostics: the STREAM_MUSIC block and the last volume events. */
+export function audioDiagnostics(label: string) {
+  const out = adbRaw(['shell', 'dumpsys audio']).out;
+  writeLog(`audio-${FLAVOR}-${label}.txt`, out);
+  const block = /- STREAM_MUSIC:\n([\s\S]*?)\n- STREAM_/.exec(out)?.[1] ?? '';
+  const events = out.split('\n').filter((l) => /adjust(Suggested)?StreamVolume|setStreamVolume/.test(l)).slice(-5);
+  log(`audio ${label}: ${block.replace(/\s+/g, ' ').slice(0, 300)} | events: ${events.join(' / ')}`);
+}

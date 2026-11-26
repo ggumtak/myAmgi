@@ -36,6 +36,12 @@ adb shell settings put global transition_animation_scale 0 || true
 adb shell settings put global animator_duration_scale 0 || true
 adb shell input keyevent KEYCODE_HOME || true
 
+# Calibration: does a volume key on the home screen show up in the system's volume event log?
+vol_events() { adb shell dumpsys audio | grep -cE "adjustSuggestedStreamVolume|adjustStreamVolume\(" || true; }
+c0="$(vol_events)"; adb shell input keyevent KEYCODE_VOLUME_DOWN; sleep 1; c1="$(vol_events)"
+echo "volume key on the home screen: system volume events $c0 -> $c1"
+adb shell input keyevent KEYCODE_HOME || true
+
 {
   echo "== wm size / density"; adb shell wm size; adb shell wm density
   echo "== build"; adb shell getprop ro.build.fingerprint; adb shell getprop ro.product.model
