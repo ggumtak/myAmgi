@@ -1,99 +1,63 @@
 # myAmgi
 
-개인 맞춤형 Anki(`.apkg`) 기반 플래시카드 학습 앱입니다.  
-스마트폰·태블릿·이노스페이스원 코멧(E-Ink)·PC 웹 PWA까지 **최대 5대 기기를 무료 Supabase 클라우드로 동기화**하며 학습할 수 있습니다.
-
----
+개인용 Anki 클라이언트입니다. 안쪽은 공식 Anki 엔진(Rust 백엔드 26.09.4)이라 일정·FSRS·검색·가져오기/내보내기·동기화가
+Anki와 똑같이 동작하고, 화면은 하나의 웹 UI(`web/`)를 휴대폰·태블릿·코멧(E-Ink)·PC에서 같이 씁니다.
+구조는 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), 화면 규칙은 [`docs/UI_SPEC.md`](docs/UI_SPEC.md)에 있습니다.
 
 ## 내려받기
 
-- GitHub 릴리스의 **`latest`(다운로드 페이지)** 에는 설치 파일만 있습니다.
+- GitHub 릴리스 **`latest`**(다운로드 페이지)에는 설치 파일만 있습니다.
   - 휴대폰·태블릿 → `myAmgi-Pro-<빌드번호>.apk`
   - 코멧(E-Ink) → `myAmgi-Comet-<빌드번호>.apk`
 - 한 번 설치하면 그다음부터는 앱이 스스로 업데이트합니다.
-- **`update-files`** 릴리스는 앱 자동 업데이트용 파일(델타 패치 `.patch`, `ota-manifest.json`, `ota__*`)을 두는 곳입니다. 직접 받을 필요가 없습니다.
-- **`apk-history`** 릴리스는 델타 패치를 만들 때 쓰는 이전 빌드 보관소입니다. 이것도 직접 받을 필요가 없습니다.
+- **`update-files`** 릴리스는 앱이 스스로 쓰는 파일(APK 델타 패치 `.patch`, 화면 번들 `myAmgi-ui-<버전>.zip`과 `ui-manifest.json`)을 두는 곳입니다. 직접 받을 필요가 없습니다.
+- **`apk-history`** 릴리스는 델타 패치를 만들 때 쓰는 이전 빌드 보관소입니다.
 
----
+## 안드로이드 앱 (`app/`)
 
-## 빌드 에디션 비교: Pro vs Comet
+- 화면은 `HostActivity` 하나입니다. 앱 안에서 도는 로컬 서버(`core`의 `HostServer`, 127.0.0.1, 실행마다 바뀌는 포트와 토큰)가
+  웹 UI와 Anki 공식 화면(덱 옵션, 통계 등)을 내주고, 전체 화면 WebView가 그것을 보여 줍니다.
+- 휴대폰 기능(공유, 기기에 저장, 파일 고르기, 음성 읽기, 클립보드, 한자 바로보기 연동, 업데이트)은 `AndroidPlatform`이 맡습니다.
+- 볼륨키·블루투스 리모컨: 설정에서 켜 두면 볼륨/미디어 키가 화면에 `keydown`(`AudioVolumeUp`, `AudioVolumeDown`, `MediaPlayPause`,
+  `MediaTrackNext`, `MediaTrackPrevious` …)으로 전달됩니다. 꺼 두면 볼륨키는 원래대로 소리를 조절합니다.
+- 파일 관리자에서 `.apkg`, `.colpkg`, `.txt`, `.csv`를 "myAmgi로 열기"/공유하면 바로 가져오기 화면으로 넘어갑니다.
+- 데이터 위치: 컬렉션 `filesDir/anki_collection/`(이전 빌드와 같음), 앱 설정·백업·임시 파일 `filesDir/amgi-host/`, 화면 번들 `filesDir/ui-ota/`.
+- 제품 버전: `pro`(휴대폰·태블릿)와 `comet`(E-Ink, 기본 테마 `eink`, 화면 효과 없음). 둘 다 `arm64-v8a` 전용입니다.
 
-두 버전 모두 `arm64-v8a` 전용 경량 APK로 빌드됩니다.
+## 업데이트
 
-| 구분 | `myAmgi-Pro` | `myAmgi-Comet` |
-| --- | --- | --- |
-| **대상 기기** | 일반 Android 스마트폰 / 태블릿 | **이노스페이스원 코멧(Comet)** 등 E-Ink 리더기 |
-| **화면/렌더링** | 부드러운 전환 애니메이션, 다크/라이트 자동 모드 | E-Ink 고대비 흑백 최적화, 잔상 방지, 애니메이션 최소화 |
-| **조작 방식** | 터치 + 2버튼 학습 + 볼륨키/블루투스 리모컨 | E-Ink 물리 버튼/터치 최적화 + 2버튼 학습 |
-| **패키지 구조** | `pro` productFlavor | `comet` productFlavor |
+- **APK**: 앱이 `latest`의 새 APK를 확인하고, 있으면 `update-files`의 델타 패치(설치된 APK + 변경분)로 다시 만들어 설치합니다.
+  패치가 없거나 검증에 실패하면 전체 APK를 받습니다.
+- **화면(UI) 번들**: 웹 UI만 바뀐 경우 APK 없이 화면만 바뀝니다. 앱이 켜질 때(6시간에 한 번까지, 조용히)와
+  설정 › 업데이트 확인에서 `ui-manifest.json`을 읽고, 새 번들을 받아 크기·SHA-256을 확인하고 안전하게 풀어 검사한 뒤 교체합니다.
+  새 화면이 30초 안에 정상적으로 뜨지 않으면 앱에 들어 있는 기본 화면으로 되돌리고 그 버전은 다시 받지 않습니다.
+  `minApkBuild`보다 오래된 APK에는 설치되지 않습니다(`tools/ui_min_apk_build.txt`).
 
----
+## 빌드와 검사
 
-## 핵심 기능
+```bash
+# 웹 UI (Node 22)
+cd web && npm ci && npm run test && npm run build && cd ..
 
-### 1. 2버튼 학습 & 빠른 단축 조작
-- 복잡한 4버튼(Again/Hard/Good/Easy) 대신 직관적인 **2버튼 학습 모드(모름 / 암기 완료)** 기본 제공 (설정에 따라 표준 모드 전환 가능).
-- **볼륨 키 / 블루투스 리모컨 / 키보드 단축키**로 화면을 가리지 않고 빠르게 정답 확인 및 채점.
+# 안드로이드 (web/dist가 없거나 오래됐으면 Gradle이 npm 빌드를 먼저 돌립니다; -PskipWebBuild로 건너뜀)
+./gradlew :core:test testProDebugUnitTest testCometDebugUnitTest assembleProDebug assembleCometDebug
 
-### 2. 한자(Hanja) 즉시 조회 연동
-- 카드 내부의 한자(`hanja/anki-tap.js`)를 탭하면 뜻/음과 부수 정보를 즉시 팝업으로 확인할 수 있습니다.
-- 대형 카드 편집기(`editor/large-editor.html`) 및 커스텀 카드 스타일(`card/card-base.css`) 지원.
+# 릴리스 도구 (APK 델타 패치, 화면 번들)
+python3 -m unittest discover -s tools -p "test_*.py"
+python3 tools/make_ui_bundle.py --dist web/dist --out-dir dist --version 1.0.123 --repo ggumtak/myAmgi --min-apk-build 12
+```
 
-### 3. 5대 기기 무료 Supabase 동기화
-- **대상**: 태블릿 + 스마트폰 2대 + PC(Web PWA) + 이노스페이스원 코멧 등 5대 이상 자유롭게 연결.
-- **무료 인프라**: Supabase Free Tier(DB 500MB + Storage 1GB) 활용.
-- **1초 기기 연동 코드**: 첫 기기에서 로그인 후 `MYAMGI1:...` 코드를 복사해 나머지 기기에 붙여넣기만 하면 URL·키·계정 정보가 즉시 연동됩니다.
-- **증분 + 스냅샷 하이브리드 동기화**:
-  - `amgi_collections`: 전체 `.apkg` / 컬렉션 스냅샷 메타데이터
-  - `amgi_sync_items`: 덱·노트타입·노트·카드·복습 로그(`revlog`) LWW 증분 동기화
-  - `amgi_media_manifest` & `amgi-media` 비공개 버킷: 미디어 SHA-256 중복 제거 업로드/다운로드
-  - `amgi_user_settings`: 기기 간 학습 설정 동기화
-- 자세한 설정 방법은 [`supabase/SETUP_GUIDE.md`](./supabase/SETUP_GUIDE.md)를 참고하세요.
+CI(`.github/workflows/build.yml`)는 웹 UI 테스트·빌드(`AMGI_UI_VERSION=1.0.<실행 번호>`), 엔진·앱 단위 테스트, 두 APK 빌드와 검사,
+화면 번들 포장, 델타 패치 생성, 릴리스 게시를 차례로 합니다.
 
-### 4. 2단계 초고속 업데이트 (OTA 핫패치 + 바이너리 델타 패치)
-- **1단계 — OTA 에셋 핫패치 (`tools/make_ota_manifest.py`)**:
-  - `card/card-base.css`, `card/card-bridge.js`, `hanja/anki-tap.js`, `editor/large-editor.html` 변경 시 APK 재설치 없이 `ota-manifest.json`으로 즉시 반영합니다.
-- **2단계 — APK 바이너리 델타 패치 (`tools/apk_patch.py`)**:
-  - `AMGPAT01` 포맷으로 이전 Pro/Comet 빌드 대비 변경된 바이트만 `.patch`로 내려받아 기기에서 기존 APK와 결합·SHA-256 검증 후 업데이트합니다(전체 APK 대비 65% 미만일 때만 생성).
-
-### 5. PC 웹 PWA (`web/`)
-- 별도 설치 없이 브라우저에서 학습·카드 관리·Supabase 동기화를 그대로 사용할 수 있는 React/Vite 기반 PWA입니다.
-- `main` 브랜치의 `web/**` 변경 시 GitHub Pages(`https://<username>.github.io/myAmgi/`)로 자동 테스트·빌드·배포됩니다.
-
----
-
-## 프로젝트 구조
+## 구조
 
 ```text
 myAmgi/
-├── app/                          # Android 앱 (Pro / Comet productFlavors)
-├── web/                          # PC 웹 PWA (Vite + React)
-├── supabase/
-│   ├── migrations/0001_init.sql  # 멱등(Idempotent) 테이블·RLS·스토리지 버킷 SQL
-│   └── SETUP_GUIDE.md            # 5대 기기 무료 Supabase 연동 가이드
-├── tools/
-│   ├── apk_patch.py              # AMGPAT01 바이너리 델타 패치 생성/적용 도구
-│   ├── make_ota_manifest.py      # OTA 핫패치 매니페스트 및 에셋 생성기
-│   └── test_tools.py             # Python 도구 단위 테스트
-└── .github/workflows/
-    ├── build.yml                 # Pro/Comet APK 빌드, arm64 검증, latest·update-files 릴리스 게시
-    └── deploy-web.yml            # Web PWA 테스트 및 GitHub Pages 배포
-```
-
----
-
-## 개발 및 검증
-
-### Python 업데이트 도구 테스트
-```bash
-python3 -m unittest -v tools/test_tools.py
-```
-
-### OTA 매니페스트 수동 생성 예시
-```bash
-python3 tools/make_ota_manifest.py \
-  --assets-dir app/src/main/assets \
-  --out-dir dist/ota \
-  --version 1 \
-  --repo ggumtak/myAmgi
+├── core/      # 엔진 래퍼 + 로컬 호스트 서버 (순수 JVM)
+├── app/       # 안드로이드 셸 (HostActivity, AndroidPlatform, 업데이트, ContentProvider)
+├── desktop/   # PC 실행기 겸 개발용 호스트
+├── web/       # 화면 (Vite + React + TypeScript)
+├── tools/     # apk_patch.py, make_ui_bundle.py, gen_proto.py
+└── docs/
 ```

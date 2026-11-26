@@ -40,7 +40,8 @@ object AppUpdater {
      * Reads the full APK from release `latest`. Only when it is newer, also reads release
      * `update-files` for delta patches; if that fails, the full APK is used.
      */
-    private fun fetchLatest(): UpdateInfo.Latest? {
+    /** Blocking: call off the main thread. Null when the release could not be read. */
+    fun fetchLatest(): UpdateInfo.Latest? {
         val latestJson = getText(UpdateInfo.LATEST_URL) ?: return null
         val apkOnly = UpdateInfo.parse(latestJson, BuildConfig.APK_PREFIX) ?: return null
         if (!UpdateInfo.isNewer(apkOnly, current)) return apkOnly

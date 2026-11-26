@@ -1,9 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.MyAmgi" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="colorPrimary">#60A5FA</item>
-        <item name="colorOnPrimary">#0B1220</item>
-        <item name="android:statusBarColor">#121212</item>
-        <item name="android:windowLightStatusBar">false</item>
+        <item name="colorPrimary">#7AA7FF</item>
+        <item name="android:windowBackground">@color/bg_dark</item>
     </style>
 </resources>

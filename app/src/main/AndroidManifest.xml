@@ -16,6 +16,10 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="hanja" />
         </intent>
+        <!-- platform.tts: bind to the installed text-to-speech engine -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
     </queries>
 
     <application
@@ -25,16 +29,20 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.MyAmgi"
-        android:usesCleartextTraffic="true">
+        android:networkSecurityConfig="@xml/network_security_config">
 
+        <!--
+            The whole UI: a WebView on the local host server. Rotation, size, keyboard and density changes are
+            handled in place so the page survives them; a dark-mode switch (uiMode) recreates the activity so
+            the WebView's prefers-color-scheme follows the system.
+        -->
         <activity
-            android:name=".ui.MainActivity"
+            android:name=".shell.HostActivity"
             android:exported="true"
-            android:configChanges="orientation|screenSize|keyboardHidden|keyboard|navigation">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|density|fontScale">
+            <!-- Open with: Anki packages and text/CSV files from a file manager -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -45,39 +53,50 @@
                 <data android:pathPattern=".*\\.apkg" />
                 <data android:pathPattern=".*\\.colpkg" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/apkg" />
+                <data android:mimeType="application/x-apkg" />
+                <data android:mimeType="application/vnd.anki" />
+                <data android:mimeType="application/x-colpkg" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="text/csv" />
+                <data android:mimeType="text/comma-separated-values" />
+                <data android:mimeType="text/tab-separated-values" />
+            </intent-filter>
+            <!-- Share target -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/apkg" />
+                <data android:mimeType="application/x-apkg" />
+                <data android:mimeType="application/vnd.anki" />
+                <data android:mimeType="application/x-colpkg" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="text/csv" />
+                <data android:mimeType="text/comma-separated-values" />
+                <data android:mimeType="text/tab-separated-values" />
+            </intent-filter>
         </activity>
 
-        <activity
-            android:name=".ui.StudyActivity"
-            android:exported="false"
-            android:configChanges="orientation|screenSize|keyboardHidden|keyboard|navigation" />
-
-        <activity
-            android:name=".ui.NoteEditorActivity"
-            android:exported="false"
-            android:windowSoftInputMode="adjustResize" />
-
-        <activity
-            android:name=".ui.TemplateEditorActivity"
-            android:exported="false"
-            android:windowSoftInputMode="adjustResize" />
-
-        <activity
-            android:name=".ui.DeckOptionsActivity"
-            android:exported="false" />
-
-        <activity
-            android:name=".ui.AnkiPageActivity"
-            android:exported="false"
-            android:configChanges="orientation|screenSize|keyboardHidden" />
-
-        <activity
-            android:name=".ui.SettingsActivity"
-            android:exported="false" />
-
-        <activity
-            android:name=".ui.CardBrowserActivity"
-            android:exported="false" />
+        <!--
+            Launcher entry. Keeps the component name of the native UI's launcher activity (builds <= 11) so home
+            screen shortcuts made before the upgrade keep working; it opens HostActivity.
+        -->
+        <activity-alias
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:targetActivity=".shell.HostActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <provider
             android:name=".provider.MyAmgiProvider"
@@ -85,6 +104,17 @@
             android:exported="true"
             android:readPermission="${applicationId}.permission.READ_WRITE_DATABASE"
             android:writePermission="${applicationId}.permission.READ_WRITE_DATABASE" />
+
+        <!-- platform.share: host exports, under their display names -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${fileProviderAuthority}"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <receiver
             android:name=".update.UpdateReceiver"

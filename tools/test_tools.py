@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unit tests for myAmgi update tools (apk_patch.py and make_ota_manifest.py)."""
+"""Unit tests for the APK delta patch tool (apk_patch.py)."""
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
 import apk_patch
-import make_ota_manifest
 
 
 def build_sample_apk(
@@ -159,117 +158,6 @@ class TestApkPatch(unittest.TestCase):
                 hashlib.sha256(new_apk.read_bytes()).hexdigest(),
             )
             self.assertEqual(apk_patch.main(["apk_patch.py", "sha256", str(rebuilt)]), 0)
-
-
-class TestMakeOtaManifest(unittest.TestCase):
-    def test_manifest_generation_and_flattened_files(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            assets_dir = tmp_path / "assets"
-            out_dir = tmp_path / "dist" / "ota"
-
-            tracked = {
-                "card/card-base.css": b"body { background: #fff; }\n",
-                "card/card-bridge.js": b"window.myAmgi = { version: 1 };\n",
-                "hanja/anki-tap.js": b"console.log('hanja tap');\n",
-                "editor/large-editor.html": b"<!doctype html><html><body>Editor</body></html>\n",
-            }
-            for rel, content in tracked.items():
-                p = assets_dir / rel
-                p.parent.mkdir(parents=True, exist_ok=True)
-                p.write_bytes(content)
-
-            # Untracked file should not appear in manifest or out_dir
-            untracked = assets_dir / "other/ignore.txt"
-            untracked.parent.mkdir(parents=True, exist_ok=True)
-            untracked.write_bytes(b"ignore me")
-
-            rc = make_ota_manifest.main(
-                [
-                    "--assets-dir",
-                    str(assets_dir),
-                    "--out-dir",
-                    str(out_dir),
-                    "--version",
-                    "42",
-                    "--repo",
-                    "ggumtak/myAmgi",
-                ]
-            )
-            self.assertEqual(rc, 0)
-
-            manifest_path = out_dir / "ota-manifest.json"
-            self.assertTrue(manifest_path.is_file())
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-
-            self.assertEqual(manifest["version"], 42)
-            self.assertIn("generatedAt", manifest)
-            self.assertRegex(manifest["generatedAt"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
-
-            files = manifest["files"]
-            self.assertEqual(len(files), 4)
-            by_path = {entry["path"]: entry for entry in files}
-
-            for rel, content in tracked.items():
-                expected_asset = "ota__" + rel.replace("/", "__")
-                expected_sha = hashlib.sha256(content).hexdigest()
-                entry = by_path[rel]
-                self.assertEqual(entry["assetName"], expected_asset)
-                self.assertEqual(entry["sha256"], expected_sha)
-                self.assertEqual(entry["size"], len(content))
-                self.assertEqual(
-                    entry["url"],
-                    f"https://github.com/ggumtak/myAmgi/releases/download/update-files/{expected_asset}",
-                )
-                copied = out_dir / expected_asset
-                self.assertTrue(copied.is_file())
-                self.assertEqual(copied.read_bytes(), content)
-
-            self.assertFalse((out_dir / "ota__other__ignore.txt").exists())
-
-    def test_handles_partial_missing_assets(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            assets_dir = tmp_path / "assets"
-            out_dir = tmp_path / "ota"
-            css = assets_dir / "card/card-base.css"
-            css.parent.mkdir(parents=True, exist_ok=True)
-            css.write_bytes(b".card { color: black; }\n")
-
-            manifest = make_ota_manifest.generate_ota_manifest(
-                assets_dir=assets_dir,
-                out_dir=out_dir,
-                version=7,
-            )
-            self.assertEqual(manifest["version"], 7)
-            self.assertEqual(len(manifest["files"]), 1)
-            self.assertEqual(manifest["files"][0]["assetName"], "ota__card__card-base.css")
-
-    def test_default_and_explicit_tag_in_urls(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            assets_dir = tmp_path / "assets"
-            css = assets_dir / "card/card-base.css"
-            css.parent.mkdir(parents=True, exist_ok=True)
-            css.write_bytes(b".card {}\n")
-
-            default = make_ota_manifest.generate_ota_manifest(
-                assets_dir=assets_dir, out_dir=tmp_path / "a", version=1, repo="o/r"
-            )
-            self.assertEqual(
-                default["files"][0]["url"],
-                "https://github.com/o/r/releases/download/update-files/ota__card__card-base.css",
-            )
-            # The download page release must never be the OTA source by default.
-            self.assertNotIn("/latest/", default["files"][0]["url"])
-
-            explicit = make_ota_manifest.generate_ota_manifest(
-                assets_dir=assets_dir, out_dir=tmp_path / "b", version=1, repo="o/r", tag="other"
-            )
-            self.assertEqual(
-                explicit["files"][0]["url"],
-                "https://github.com/o/r/releases/download/other/ota__card__card-base.css",
-            )
 
 
 if __name__ == "__main__":

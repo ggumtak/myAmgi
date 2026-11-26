@@ -25,8 +25,28 @@ jobs:
     timeout-minutes: 45
     env:
       BUILD_NUMBER: ${{ github.run_number }}
+      # Version of the web UI bundle (web/dist/ui-version.json, the APK's ui/ assets and the OTA bundle).
+      AMGI_UI_VERSION: 1.0.${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build and test the web UI
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run test
+          npm run build
+          test -f dist/index.html || { echo "::error::web/dist/index.html was not produced"; exit 1; }
+          if [ -f dist/ui-version.json ]; then cat dist/ui-version.json; else echo "::warning::web build wrote no ui-version.json; the packaging steps add ${AMGI_UI_VERSION}"; fi
+
+      - name: Test the Python release tools
+        run: python3 -m unittest discover -s tools -p "test_*.py"
 
       - uses: actions/setup-java@v4
         with:
@@ -98,10 +118,10 @@ jobs:
           key: myamgi-signing-v1
 
       - name: Run unit tests (engine host, Pro & Comet)
-        run: ./gradlew --stacktrace :core:test :desktop:installDist testProDebugUnitTest testCometDebugUnitTest
+        run: ./gradlew --stacktrace -PskipWebBuild :core:test :desktop:installDist testProDebugUnitTest testCometDebugUnitTest
 
       - name: Build release APKs (Pro & Comet)
-        run: ./gradlew --stacktrace assembleProRelease assembleCometRelease
+        run: ./gradlew --stacktrace -PskipWebBuild assembleProRelease assembleCometRelease
 
       - name: Collect and rename APKs
         run: |
@@ -120,7 +140,7 @@ jobs:
           cp "$comet_apk" "dist/myAmgi-Comet-${GITHUB_RUN_NUMBER}.apk"
           ls -lh dist
 
-      - name: Verify arm64-v8a only native libraries
+      - name: Verify APK contents (arm64-v8a only, engine, UI bundle, official Anki pages)
         run: |
           python3 - "dist/myAmgi-Pro-${GITHUB_RUN_NUMBER}.apk" "dist/myAmgi-Comet-${GITHUB_RUN_NUMBER}.apk" <<'PY'
           import sys
@@ -143,17 +163,24 @@ jobs:
                       raise SystemExit(f"{apk_path} is missing {required}; lib entries: {lib_entries}")
                   if zf.getinfo(required).file_size == 0:
                       raise SystemExit(f"{apk_path} has an empty {required}")
+                  names = set(zf.namelist())
+                  for asset in ("assets/ui/index.html", "assets/ui/ui-version.json", "assets/backend/sveltekit/index.html"):
+                      if asset not in names:
+                          raise SystemExit(f"{apk_path} is missing {asset}")
+                  print(f"{apk_path}: UI bundle {zf.read('assets/ui/ui-version.json').decode().strip()}")
                   print(f"{apk_path}: verified ({len(lib_entries)} lib/arm64-v8a entries incl. librsdroid.so, no forbidden ABIs)")
           PY
 
-      - name: Generate OTA hot-patch manifest and assets
+      - name: Package the OTA UI bundle
         run: |
-          python3 tools/make_ota_manifest.py \
-            --assets-dir app/src/main/assets \
+          python3 tools/make_ui_bundle.py \
+            --dist web/dist \
             --out-dir dist \
-            --version "${GITHUB_RUN_NUMBER}" \
+            --version "${AMGI_UI_VERSION}" \
             --repo "${GITHUB_REPOSITORY}" \
-            --tag update-files
+            --tag update-files \
+            --min-apk-build "$(tr -d '[:space:]' < tools/ui_min_apk_build.txt)"
+          cat dist/ui-manifest.json
           ls -lh dist
 
       - name: Make flavor-specific binary delta patches
@@ -211,7 +238,8 @@ jobs:
           # and which assets may stay there; every other asset is deleted at the very end.
           # When the PC package ships, add its pattern here, e.g. "myAmgi-PC-${n}.zip".
           LATEST_KEEP=("${pro_apk}" "${comet_apk}")
-          UPDATE_KEEP=("myAmgi-Pro-${n}.from-*.patch" "myAmgi-Comet-${n}.from-*.patch" "ota-manifest.json" "ota__*")
+          # The UI bundle zip sorts before ui-manifest.json, so the manifest is uploaded after the file it names.
+          UPDATE_KEEP=("myAmgi-Pro-${n}.from-*.patch" "myAmgi-Comet-${n}.from-*.patch" "myAmgi-ui-*.zip" "ui-manifest.json")
 
           matches() { # name pattern...
             local name="$1" pat; shift
@@ -223,7 +251,8 @@ jobs:
           }
 
           # On latest a name is kept by pattern alone (so a PC package uploaded by another job stays).
-          # On update-files it must also be a file this run produced (drops ota__ files no longer tracked).
+          # On update-files it must also be a file this run produced (drops older UI bundles and the retired
+          # per-file OTA files ota-manifest.json / ota__* of builds <= 11, which treat a missing manifest as "no update").
           keep() { # tag name
             case "$1" in
               latest) matches "$2" "${LATEST_KEEP[@]}" ;;

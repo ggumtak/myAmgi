@@ -3,6 +3,8 @@ package com.ggumtak.myamgi.host
 import com.ggumtak.myamgi.engine.AnkiEngine
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 import java.io.File
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
@@ -65,7 +67,24 @@ class HostApi(
         "hanja.lookup" to { a -> platform.hanjaLookup(a.requireStr("text"), a.str("sentence")); ok() },
         "update.status" to { _ -> platform.updateStatus() },
         "update.check" to { _ -> platform.updateCheck() },
-        "update.apply" to { _ -> platform.updateApply() }
+        "update.apply" to { a -> platform.updateApply(a.str("kind")) },
+        "hanja.script" to { _ -> platform.hanjaScript() },
+        "ui.ready" to { a ->
+            val features = (a["features"] as? kotlinx.serialization.json.JsonArray)
+                ?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull }.orEmpty()
+            platform.uiReady(a.str("uiVersion"), features); ok()
+        },
+        "ui.state" to { a ->
+            platform.uiState(
+                UiShellState(
+                    theme = a.str("theme"),
+                    background = a.str("background"),
+                    keepScreenOn = (a["keepScreenOn"] as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull,
+                    captureKeys = (a["captureKeys"] as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull
+                )
+            ); ok()
+        },
+        "ui.backHandled" to { a -> platform.backHandled(a.long("id") ?: 0L); ok() }
         // "platform.exit" is handled by HostServer (it must answer before exiting).
     )
 

@@ -8,7 +8,6 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.widget.Toast
-import com.ggumtak.myamgi.update.AssetLoader
 import java.io.File
 import java.util.zip.ZipFile
 
@@ -18,7 +17,7 @@ import java.util.zip.ZipFile
  * - The tap script's one source of truth is the installed Hanja app: its APK's `assets/anki-tap.js` (the entry
  *   name its build really produces, checked by HanjaTapScriptTest) is read at run time, cached by the APK's
  *   `lastModified`, so every Hanja update reaches myAmgi's reviewer without a myAmgi release.
- * - Without the Hanja app installed, the bundled/OTA copy `assets/hanja/anki-tap.js` (via [AssetLoader]) is used.
+ * - Without the Hanja app installed, the bundled copy `assets/hanja/anki-tap.js` is used.
  *   A tap then has nowhere to go, so that copy only has to be close, not current. It is a byte copy of the Hanja
  *   repository's `app/src/main/assets/anki-tap.js` at the commit named in `assets/hanja/SOURCE`; to refresh it,
  *   copy the file and update SOURCE (its SHA-256 line). HanjaTapScriptTest fails when the copy and SOURCE
@@ -76,7 +75,7 @@ object HanjaIntegration {
         }
 
         val fallback = runCatching {
-            AssetLoader.readText(context, LOCAL_ASSET_PATH)
+            context.applicationContext.assets.open(LOCAL_ASSET_PATH).use { it.readBytes().toString(Charsets.UTF_8) }
         }.getOrDefault("")
         return "asset:$LOCAL_ASSET_PATH" to (if (fallback.isBlank()) fallback else withRunner(fallback))
     }
@@ -101,6 +100,22 @@ object HanjaIntegration {
                 zip.getInputStream(entry).bufferedReader(Charsets.UTF_8).use { it.readText() }
             }
         }.getOrNull()?.takeIf { it.isNotBlank() }
+    }
+
+    const val MISSING_APP_MESSAGE = "한자 바로보기 앱(com.ggumtak.hanja)이 설치되어 있지 않습니다."
+
+    private val VERSION_RE = Regex("""__hjCode\s*=\s*window\.__hjCode\s*\|\|\s*\{\}\)\s*\[(\d+)]""")
+
+    /** Highest `__hjCode[n]` the script defines, or null. */
+    fun scriptVersion(script: String): Int? =
+        VERSION_RE.findAll(script).mapNotNull { it.groupValues[1].toIntOrNull() }.maxOrNull()
+
+    /** `hanja://lookup?q=<word>&s=<sentence>` for the Hanja app's LookupActivity. */
+    fun lookupIntent(text: String, sentence: String?): Intent {
+        val uri = Uri.Builder().scheme("hanja").authority("lookup").appendQueryParameter("q", text)
+            .apply { if (!sentence.isNullOrBlank()) appendQueryParameter("s", sentence) }
+            .build()
+        return Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE).setPackage(HANJA_PACKAGE)
     }
 
     fun handleIntentUrl(activity: Activity, url: String): Boolean {
@@ -142,11 +157,7 @@ object HanjaIntegration {
 
     private fun showMissingAppToast(activity: Activity) {
         activity.runOnUiThread {
-            Toast.makeText(
-                activity,
-                "한자 바로보기 앱(com.ggumtak.hanja)이 설치되어 있지 않습니다.",
-                Toast.LENGTH_SHORT
-            ).show()
+            Toast.makeText(activity, MISSING_APP_MESSAGE, Toast.LENGTH_SHORT).show()
         }
     }
 

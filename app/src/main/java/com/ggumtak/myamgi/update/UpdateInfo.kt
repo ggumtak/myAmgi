@@ -10,7 +10,7 @@ import java.util.Locale
  * - Release `latest` is the human download page: it holds only the installable APKs
  *   (`myAmgi-Pro-<n>.apk`, `myAmgi-Comet-<n>.apk`).
  * - Release `update-files` holds the machine files: binary delta patches
- *   (`<prefix>-<n>.from-<m>.patch`), `ota-manifest.json` and `ota__*` files.
+ *   (`<prefix>-<n>.from-<m>.patch`) and the UI bundle (`ui-manifest.json`, `myAmgi-ui-<version>.zip`).
  *
  * Ensures Pro (`myAmgi-Pro`) and Comet (`myAmgi-Comet`) APKs and binary delta patches never mix.
  */
@@ -27,7 +27,7 @@ object UpdateInfo {
     /** GitHub API URL of the download page release (full APKs). */
     val LATEST_URL: String get() = releaseApiUrl(LATEST_TAG)
 
-    /** GitHub API URL of the machine-file release (delta patches, OTA). */
+    /** GitHub API URL of the machine-file release (delta patches, UI bundle). */
     val UPDATE_FILES_URL: String get() = releaseApiUrl(UPDATE_FILES_TAG)
 
     data class Patch(

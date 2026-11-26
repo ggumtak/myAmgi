@@ -1,15 +1,9 @@
 package com.ggumtak.myamgi
 
-import android.view.KeyEvent
 import com.ggumtak.myamgi.engine.EncodingDetector
 import com.ggumtak.myamgi.hanja.HanjaIntegration
 import com.ggumtak.myamgi.provider.ChunkSessionStore
-import com.ggumtak.myamgi.sync.SyncCode
-import com.ggumtak.myamgi.sync.SyncCodePayload
-import com.ggumtak.myamgi.ui.StudyKeyHandler
-import com.ggumtak.myamgi.ui.StudyKeyHandler.StudyAction
 import com.ggumtak.myamgi.update.ApkPatch
-import com.ggumtak.myamgi.update.OtaAssetUpdater
 import com.ggumtak.myamgi.update.UpdateInfo
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -64,61 +58,6 @@ class CoreModulesTest {
         assertEquals(japanese, decJp.text)
     }
 
-    // --- 2. 1-Second Sync Code (MYAMGI1:...) ---
-
-    @Test
-    fun syncCodeRoundTripAndValidation() {
-        val original = SyncCodePayload(
-            url = "https://xyzcompany.supabase.co",
-            anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.sample",
-            email = "me@example.com",
-            refreshToken = "refresh-token-123456",
-            accessToken = "access-token-abc"
-        )
-        val encoded = SyncCode.encode(original)
-        assertTrue(encoded.startsWith("MYAMGI1:"))
-
-        val decoded = SyncCode.decode(encoded)
-        assertNotNull(decoded)
-        assertEquals(original.url, decoded!!.url)
-        assertEquals(original.anonKey, decoded.anonKey)
-        assertEquals(original.email, decoded.email)
-        assertEquals(original.refreshToken, decoded.refreshToken)
-
-        // Invalid code must safely return null
-        assertNull(SyncCode.decode("INVALID:abc"))
-        assertNull(SyncCode.decode("MYAMGI1:not_valid_base64!!!"))
-    }
-
-    // --- 3. 2-Button High-Speed Keyboard & Comet Volume Keys ---
-
-    @Test
-    fun twoButtonModeMapsSpace12AndIgnores34() {
-        // Before answer: Space/Enter shows answer; 1/2/3/4 ignored
-        assertEquals(StudyAction.SHOW_ANSWER, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_SPACE, false, true, false))
-        assertEquals(StudyAction.SHOW_ANSWER, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_ENTER, false, true, false))
-        assertEquals(StudyAction.NONE, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_1, false, true, false))
-        assertEquals(StudyAction.NONE, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_2, false, true, false))
-
-        // After answer: Space/Enter/2 = GOOD, 1 = AGAIN, 3 & 4 = IGNORED
-        assertEquals(StudyAction.RATE_GOOD, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_SPACE, true, true, false))
-        assertEquals(StudyAction.RATE_GOOD, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_ENTER, true, true, false))
-        assertEquals(StudyAction.RATE_AGAIN, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_1, true, true, false))
-        assertEquals(StudyAction.RATE_GOOD, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_2, true, true, false))
-        assertEquals(StudyAction.NONE, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_3, true, true, false))
-        assertEquals(StudyAction.NONE, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_4, true, true, false))
-
-        // 4-button mode enables 1..4
-        assertEquals(StudyAction.RATE_HARD, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_2, true, false, false))
-        assertEquals(StudyAction.RATE_GOOD, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_3, true, false, false))
-        assertEquals(StudyAction.RATE_EASY, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_4, true, false, false))
-
-        // Comet physical side volume keys
-        assertEquals(StudyAction.SHOW_ANSWER, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_VOLUME_DOWN, false, true, true))
-        assertEquals(StudyAction.RATE_GOOD, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_VOLUME_DOWN, true, true, true))
-        assertEquals(StudyAction.RATE_AGAIN, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_VOLUME_UP, true, true, true))
-    }
-
     // --- 4. Flavor-Aware Release & Patch Info Parser (Pro vs Comet) ---
 
     @Test
@@ -147,30 +86,6 @@ class CoreModulesTest {
         assertEquals(12, cometLatest!!.build)
         assertEquals("https://example.com/comet-12.apk", cometLatest.url)
         assertEquals("https://example.com/comet-12-11.patch", UpdateInfo.patchFor(cometLatest, 11)?.url)
-    }
-
-    // --- 5. OTA Manifest Parsing ---
-
-    @Test
-    fun otaManifestParsesCleanly() {
-        val json = """
-            {
-              "version": 7,
-              "files": [
-                {
-                  "path": "card/card-base.css",
-                  "assetName": "ota__card__card-base.css",
-                  "sha256": "abcdef0123456789",
-                  "size": 1234,
-                  "url": "https://github.com/ggumtak/myAmgi/releases/download/latest/ota__card__card-base.css"
-                }
-              ]
-            }
-        """.trimIndent()
-        val manifest = OtaAssetUpdater.parseManifest(json)
-        assertEquals(7, manifest.version)
-        assertEquals(1, manifest.files.size)
-        assertEquals("card/card-base.css", manifest.files[0].path)
     }
 
     // --- 6. Binary Delta Patch (AMGPAT01) Round-Trip ---
