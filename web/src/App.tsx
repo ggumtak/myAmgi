@@ -1,478 +1,691 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import * as anki from './anki';
+import { AppProvider, useApp } from './context/AppContext';
+import { host } from './host';
 import {
-  AppSettings,
-  Card,
-  DEFAULT_SETTINGS,
-  Deck,
-  Ease,
-  Note,
-  NoteType,
-  Revlog,
-} from './types/models';
-import { dbStore, ensureStarterCollection } from './db/store';
-import {
-  ReviewResult,
-  applyReview,
-  buildStudyQueue,
-  computeDeckCounts,
-} from './engine/scheduler';
-import { importApkgFile } from './importers/apkg';
-import { DeckList } from './components/DeckList';
-import { StudyView } from './components/StudyView';
-import { LargeTemplateEditor } from './components/LargeTemplateEditor';
-import { Heatmap } from './components/Heatmap';
-import { ImportView } from './components/ImportView';
-import { SettingsView } from './components/SettingsView';
+  ActionMenu,
+  type ActionMenuItem,
+  IconArrowLeft,
+  IconDeck,
+  IconMore,
+  IconPlus,
+  IconRefresh,
+  IconSearch,
+  IconSettings,
+  IconSpark,
+  IconStats,
+  IconSync,
+  IconUpload,
+  SheetOrDialog,
+  ToastProvider,
+  useToast,
+} from './ui';
+import { DeckListView } from './components/decks/DeckListView';
+import { DeckOverviewPane } from './components/decks/DeckOverviewPane';
+import { AddActionSheet } from './components/decks/AddActionSheet';
+import { StudyView } from './components/study/StudyView';
+import { BrowserView } from './components/browser/BrowserView';
+import { NoteEditorView } from './components/editor/NoteEditorView';
+import { NoteTypeListView } from './components/notetypes/NoteTypeListView';
+import { NoteTypeEditorView } from './components/notetypes/NoteTypeEditorView';
+import { DeckOptionsView } from './components/options/DeckOptionsView';
+import { StatsView } from './components/stats/StatsView';
+import { SettingsView } from './components/settings/SettingsView';
+import { SyncSheet } from './components/sync/SyncSheet';
+import { FullSyncDialog } from './components/sync/FullSyncDialog';
+import { AnkiIframeView } from './components/shared/AnkiIframeView';
 
-type Tab = 'decks' | 'study' | 'editor' | 'import' | 'stats' | 'settings';
+type RootTab = 'decks' | 'browse' | 'stats' | 'settings';
 
-export function App() {
-  const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<Tab>('decks');
+type ParsedRoute =
+  | { kind: 'decks' }
+  | { kind: 'deck'; deckId: number }
+  | { kind: 'study'; deckId: number }
+  | { kind: 'browse'; query?: string }
+  | { kind: 'noteNew'; deckId?: number }
+  | { kind: 'noteEdit'; noteId: number }
+  | { kind: 'notetypes' }
+  | { kind: 'notetypeEdit'; notetypeId: number }
+  | { kind: 'stats' }
+  | { kind: 'deckOptions'; deckId: number }
+  | { kind: 'settings' }
+  | { kind: 'ankiIframe'; path: string; title: string };
 
-  const [decks, setDecks] = useState<Deck[]>([]);
-  const [noteTypes, setNoteTypes] = useState<NoteType[]>([]);
-  const [notes, setNotes] = useState<Note[]>([]);
-  const [cards, setCards] = useState<Card[]>([]);
-  const [revlogs, setRevlogs] = useState<Revlog[]>([]);
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+function parseHashRoute(rawHash: string): ParsedRoute {
+  const cleaned = rawHash.trim().replace(/^#/, '');
+  if (!cleaned || cleaned === '/') {
+    return { kind: 'decks' };
+  }
+  const normalized = cleaned.startsWith('/') ? cleaned : `/${cleaned}`;
+  const qIdx = normalized.indexOf('?');
+  const pathname = qIdx >= 0 ? normalized.slice(0, qIdx) : normalized;
+  const searchStr = qIdx >= 0 ? normalized.slice(qIdx + 1) : '';
+  const params = new URLSearchParams(searchStr);
 
-  const [studyDeckId, setStudyDeckId] = useState<number | null>(null);
-  const [undoStack, setUndoStack] = useState<ReviewResult[]>([]);
+  if (pathname === '/decks') {
+    return { kind: 'decks' };
+  }
 
-  const reloadAll = useCallback(async () => {
-    await ensureStarterCollection();
-    const [d, nt, n, c, r, s] = await Promise.all([
-      dbStore.getAllDecks(),
-      dbStore.getAllNoteTypes(),
-      dbStore.getAllNotes(),
-      dbStore.getAllCards(),
-      dbStore.getAllRevlogs(),
-      dbStore.getSettings(),
-    ]);
-    setDecks(d);
-    setNoteTypes(nt);
-    setNotes(n);
-    setCards(c);
-    setRevlogs(r);
-    setSettings(s);
+  const deckMatch = /^\/deck\/(\d+)\/?$/.exec(pathname);
+  if (deckMatch) {
+    return { kind: 'deck', deckId: Number(deckMatch[1]) };
+  }
+
+  const studyMatch = /^\/study\/(\d+)\/?$/.exec(pathname);
+  if (studyMatch) {
+    return { kind: 'study', deckId: Number(studyMatch[1]) };
+  }
+
+  if (pathname === '/browse' || pathname === '/browse/') {
+    const q = params.get('q') ?? undefined;
+    return { kind: 'browse', query: q };
+  }
+
+  if (pathname === '/note/new' || pathname === '/note/new/') {
+    const deckRaw = params.get('deck');
+    const deckId = deckRaw && /^\d+$/.test(deckRaw) ? Number(deckRaw) : undefined;
+    return { kind: 'noteNew', deckId };
+  }
+
+  const noteMatch = /^\/note\/(\d+)\/?$/.exec(pathname);
+  if (noteMatch) {
+    return { kind: 'noteEdit', noteId: Number(noteMatch[1]) };
+  }
+
+  if (pathname === '/notetypes' || pathname === '/notetypes/') {
+    return { kind: 'notetypes' };
+  }
+
+  const ntMatch = /^\/notetype\/(\d+)\/?$/.exec(pathname);
+  if (ntMatch) {
+    return { kind: 'notetypeEdit', notetypeId: Number(ntMatch[1]) };
+  }
+
+  if (pathname === '/stats' || pathname === '/stats/') {
+    return { kind: 'stats' };
+  }
+
+  const optsMatch = /^\/deck-options\/(\d+)\/?$/.exec(pathname);
+  if (optsMatch) {
+    return { kind: 'deckOptions', deckId: Number(optsMatch[1]) };
+  }
+
+  if (pathname === '/settings' || pathname.startsWith('/settings/')) {
+    return { kind: 'settings' };
+  }
+
+  if (pathname.startsWith('/card-info')) {
+    return { kind: 'ankiIframe', path: normalized, title: '카드 상세 정보' };
+  }
+  if (pathname.startsWith('/import-anki-package')) {
+    return { kind: 'ankiIframe', path: normalized, title: 'Anki 패키지 가져오기' };
+  }
+  if (pathname.startsWith('/import-csv')) {
+    return { kind: 'ankiIframe', path: normalized, title: '텍스트/CSV 가져오기' };
+  }
+  if (pathname.startsWith('/import-page')) {
+    return { kind: 'ankiIframe', path: normalized, title: '파일 가져오기' };
+  }
+  if (pathname.startsWith('/change-notetype')) {
+    return { kind: 'ankiIframe', path: normalized, title: '노트 유형 바꾸기' };
+  }
+  if (pathname.startsWith('/image-occlusion')) {
+    return { kind: 'ankiIframe', path: normalized, title: '이미지 가리기' };
+  }
+  if (pathname.startsWith('/anki/')) {
+    const subPath = normalized.slice('/anki'.length);
+    return { kind: 'ankiIframe', path: subPath, title: 'Anki 도구' };
+  }
+
+  return { kind: 'decks' };
+}
+
+function useWindowWidth(): number {
+  const [width, setWidth] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth : 1024
+  );
+  useEffect(() => {
+    const onResize = () => setWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
   }, []);
+  return width;
+}
+
+function AppShell() {
+  const {
+    syncStatus,
+    resolvedTheme,
+    refreshSyncStatus,
+    openSyncSheet,
+    closeSyncSheet,
+    syncSheetOpen,
+    openFullSyncDialog,
+    closeFullSyncDialog,
+    fullSyncOpen,
+    openAddSheet,
+    closeAddSheet,
+    addSheetOpen,
+    bumpCollection,
+    navigate,
+    goBack,
+  } = useApp();
+  const { showToast } = useToast();
+
+  const [hash, setHash] = useState(() =>
+    typeof window !== 'undefined' ? window.location.hash || '#/decks' : '#/decks'
+  );
+  const windowWidth = useWindowWidth();
+
+  const [overflowOpen, setOverflowOpen] = useState(false);
+  const [emptyCardsReport, setEmptyCardsReport] = useState<anki.EmptyCardsReport | null>(
+    null
+  );
+  const [checkingEmpty, setCheckingEmpty] = useState(false);
+  const [cleaningEmpty, setCleaningEmpty] = useState(false);
+  const [exportingColpkg, setExportingColpkg] = useState(false);
 
   useEffect(() => {
-    void reloadAll().finally(() => setLoading(false));
-  }, [reloadAll]);
-
-  // Apply html.night_mode class for Anki compatibility & app dark theme
-  useEffect(() => {
-    const applyNightClass = () => {
-      const prefersDark =
-        typeof window !== 'undefined' &&
-        window.matchMedia &&
-        window.matchMedia('(prefers-color-scheme: dark)').matches;
-      const isNight =
-        settings.nightMode === 'dark' ||
-        (settings.nightMode === 'auto' && prefersDark);
-      document.documentElement.classList.toggle('night_mode', isNight);
+    const onHashChange = () => {
+      setHash(window.location.hash || '#/decks');
+      closeAddSheet();
+      closeSyncSheet();
+      setOverflowOpen(false);
+      setEmptyCardsReport(null);
     };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, [closeAddSheet, closeSyncSheet]);
 
-    applyNightClass();
-    const mq = window.matchMedia?.('(prefers-color-scheme: dark)');
-    mq?.addEventListener?.('change', applyNightClass);
-    return () => mq?.removeEventListener?.('change', applyNightClass);
-  }, [settings.nightMode]);
+  const route = useMemo(() => parseHashRoute(hash), [hash]);
+  const isWideSplit = windowWidth >= 1024;
+  const isStudy = route.kind === 'study';
 
-  const notesById = useMemo(() => new Map(notes.map((n) => [n.id, n])), [notes]);
-  const noteTypesById = useMemo(
-    () => new Map(noteTypes.map((nt) => [nt.id, nt])),
-    [noteTypes]
-  );
+  // Determine whether the outer AppShell topbar should render (avoid double topbar!)
+  const hasOwnTopbar =
+    route.kind === 'noteNew' ||
+    route.kind === 'noteEdit' ||
+    route.kind === 'notetypes' ||
+    route.kind === 'notetypeEdit' ||
+    route.kind === 'deckOptions' ||
+    route.kind === 'ankiIframe';
 
-  const deckCounts = useMemo(
-    () =>
-      computeDeckCounts(
-        decks,
-        cards,
-        revlogs,
-        Date.now(),
-        settings.collectionCreatedAt
-      ),
-    [decks, cards, revlogs, settings.collectionCreatedAt]
-  );
-
-  const studyDeck = useMemo(
-    () => decks.find((d) => d.id === studyDeckId) ?? null,
-    [decks, studyDeckId]
-  );
-
-  const studyQueue = useMemo(() => {
-    if (!studyDeckId) return [];
-    return buildStudyQueue(
-      decks,
-      cards,
-      revlogs,
-      studyDeckId,
-      Date.now(),
-      settings.collectionCreatedAt
-    );
-  }, [decks, cards, revlogs, studyDeckId, settings.collectionCreatedAt]);
-
-  const handleStartStudy = (deckId: number) => {
-    setStudyDeckId(deckId);
-    setActiveTab('study');
-  };
-
-  const handleAnswer = async (card: Card, ease: Ease, elapsedMs: number) => {
-    const deck = decks.find((d) => d.id === card.did) ?? studyDeck ?? undefined;
-    const res = applyReview(card, deck, ease, elapsedMs);
-    await Promise.all([
-      dbStore.putCard(res.updatedCard),
-      dbStore.putRevlog(res.revlog),
-    ]);
-    setCards((prev) =>
-      prev.map((c) => (c.id === res.updatedCard.id ? res.updatedCard : c))
-    );
-    setRevlogs((prev) => [...prev, res.revlog]);
-    setUndoStack((prev) => [...prev.slice(-29), res]);
-  };
-
-  const handleUndo = async () => {
-    const last = undoStack[undoStack.length - 1];
-    if (!last) return;
-    await Promise.all([
-      dbStore.putCard(last.previousCard),
-      dbStore.deleteRevlog(last.revlog.id),
-    ]);
-    setCards((prev) =>
-      prev.map((c) => (c.id === last.previousCard.id ? last.previousCard : c))
-    );
-    setRevlogs((prev) => prev.filter((r) => r.id !== last.revlog.id));
-    setUndoStack((prev) => prev.slice(0, -1));
-  };
-
-  const handleCreateDeck = async (name: string) => {
-    const now = Date.now();
-    const parts = name.split('::').filter(Boolean);
-    const createdDecks: Deck[] = [];
-    for (let i = 1; i <= parts.length; i++) {
-      const subName = parts.slice(0, i).join('::');
-      if (decks.some((d) => d.name === subName)) continue;
-      createdDecks.push({
-        id: now + i,
-        name: subName,
-        parent: i > 1 ? parts.slice(0, i - 1).join('::') : undefined,
-        configId: 1,
-        collapsed: false,
-        newPerDay: 20,
-        revPerDay: 200,
-        fsrsEnabled: true,
-        desiredRetention: 0.9,
-        mod: Math.floor(now / 1000),
-      });
+  const activeTab: RootTab | null = useMemo(() => {
+    switch (route.kind) {
+      case 'decks':
+      case 'deck':
+        return 'decks';
+      case 'browse':
+        return 'browse';
+      case 'stats':
+        return 'stats';
+      case 'settings':
+        return 'settings';
+      default:
+        return null;
     }
-    if (createdDecks.length > 0) {
-      await dbStore.putDecks(createdDecks);
-      setDecks((prev) => [...prev, ...createdDecks]);
+  }, [route.kind]);
+
+  const showTopBar = !isStudy && !hasOwnTopbar;
+  const showNavChrome = activeTab !== null;
+  const isDecksRoot =
+    route.kind === 'decks' || (route.kind === 'deck' && isWideSplit);
+  const showFab = isDecksRoot && windowWidth < 840;
+
+  const topbarMeta = useMemo(() => {
+    switch (route.kind) {
+      case 'decks':
+        return { title: 'myAmgi', showBack: false };
+      case 'deck':
+        return isWideSplit
+          ? { title: 'myAmgi', showBack: false }
+          : { title: '덱 정보', showBack: true };
+      case 'browse':
+        return { title: '찾아보기', showBack: false };
+      case 'stats':
+        return { title: '통계', showBack: false };
+      case 'settings':
+        return { title: '설정', showBack: false };
+      case 'notetypes':
+        return { title: '노트 유형 관리', showBack: true };
+      default:
+        return { title: 'myAmgi', showBack: false };
     }
-  };
+  }, [route.kind, isWideSplit]);
 
-  const handleToggleCollapse = async (deck: Deck) => {
-    const updated: Deck = {
-      ...deck,
-      collapsed: !deck.collapsed,
-      mod: Math.floor(Date.now() / 1000),
-    };
-    await dbStore.putDeck(updated);
-    setDecks((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
-  };
-
-  const handleToggleDeckFsrs = async (deck: Deck) => {
-    const updated: Deck = {
-      ...deck,
-      fsrsEnabled: !deck.fsrsEnabled,
-      mod: Math.floor(Date.now() / 1000),
-    };
-    await dbStore.putDeck(updated);
-    setDecks((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
-  };
-
-  const handleAddCard = async (
-    deckId: number,
-    noteTypeId: number,
-    fields: string[]
-  ) => {
-    const now = Date.now();
-    const nt = noteTypes.find((n) => n.id === noteTypeId);
-    const noteId = now;
-    const mod = Math.floor(now / 1000);
-    const newNote: Note = {
-      id: noteId,
-      guid: `amgi-${now}-${Math.random().toString(36).slice(2, 8)}`,
-      mid: noteTypeId,
-      flds: fields,
-      tags: [],
-      mod,
-    };
-
-    const newCards: Card[] = [];
-    if (nt?.kind === 1) {
-      // Cloze note: detect c1, c2, ...
-      const text = fields.join(' ');
-      const matches = Array.from(text.matchAll(/\{\{c(\d+)::/g));
-      const ords = Array.from(
-        new Set(matches.map((m) => Math.max(0, Number(m[1]) - 1)))
+  const handleSyncPress = useCallback(async () => {
+    if (!syncStatus?.loggedIn) {
+      openSyncSheet();
+      return;
+    }
+    if (syncStatus.running) {
+      openSyncSheet();
+      return;
+    }
+    if (syncStatus.needsFullSync) {
+      openFullSyncDialog();
+      return;
+    }
+    if (syncStatus.lastError) {
+      openSyncSheet();
+      return;
+    }
+    try {
+      const res = await host.syncRun('normal');
+      await refreshSyncStatus();
+      if (res.needsFullSync) {
+        openFullSyncDialog();
+      } else if (res.ok) {
+        bumpCollection();
+        showToast('동기화를 마쳤습니다.', 'success');
+      }
+    } catch (err) {
+      await refreshSyncStatus().catch(() => undefined);
+      showToast(
+        err instanceof Error ? err.message : '동기화에 실패했습니다.',
+        'error'
       );
-      if (ords.length === 0) ords.push(0);
-      ords.forEach((ord, idx) => {
-        newCards.push({
-          id: now + idx + 1,
-          nid: noteId,
-          did: deckId,
-          ord,
-          queue: 0,
-          type: 0,
-          due: now + idx,
-          ivl: 0,
-          factor: 2500,
-          reps: 0,
-          lapses: 0,
-          data: {},
-          mod,
-        });
-      });
-    } else {
-      const tmpls = nt?.templates ?? [{ ord: 0, name: 'Card 1', qfmt: '', afmt: '' }];
-      tmpls.forEach((t, idx) => {
-        newCards.push({
-          id: now + idx + 1,
-          nid: noteId,
-          did: deckId,
-          ord: t.ord,
-          queue: 0,
-          type: 0,
-          due: now + idx,
-          ivl: 0,
-          factor: 2500,
-          reps: 0,
-          lapses: 0,
-          data: {},
-          mod,
-        });
-      });
+      openSyncSheet();
     }
+  }, [
+    syncStatus,
+    openSyncSheet,
+    openFullSyncDialog,
+    refreshSyncStatus,
+    bumpCollection,
+    showToast,
+  ]);
 
-    await Promise.all([dbStore.putNote(newNote), dbStore.putCards(newCards)]);
-    setNotes((prev) => [...prev, newNote]);
-    setCards((prev) => [...prev, ...newCards]);
+  const handleCheckEmptyCards = useCallback(async () => {
+    if (checkingEmpty) return;
+    setCheckingEmpty(true);
+    try {
+      const report = await anki.getEmptyCards();
+      setEmptyCardsReport(report);
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : '빈 카드를 확인하지 못했습니다.',
+        'error'
+      );
+    } finally {
+      setCheckingEmpty(false);
+    }
+  }, [checkingEmpty, showToast]);
+
+  const handleDeleteEmptyCards = useCallback(async () => {
+    if (!emptyCardsReport || cleaningEmpty) return;
+    const cids = (emptyCardsReport.notes ?? []).flatMap((n) =>
+      (n.cardIds ?? []).map((id) => anki.toNumber(id))
+    );
+    if (cids.length === 0) {
+      setEmptyCardsReport(null);
+      return;
+    }
+    setCleaningEmpty(true);
+    try {
+      await anki.removeCards(cids);
+      setEmptyCardsReport(null);
+      bumpCollection();
+      showToast(`빈 카드 ${cids.length}장을 삭제했습니다.`, 'success');
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : '빈 카드를 삭제하지 못했습니다.',
+        'error'
+      );
+    } finally {
+      setCleaningEmpty(false);
+    }
+  }, [emptyCardsReport, cleaningEmpty, bumpCollection, showToast]);
+
+  const handleExportCollection = useCallback(async () => {
+    if (exportingColpkg) return;
+    setExportingColpkg(true);
+    try {
+      const res = await host.exportCollection({ withMedia: true });
+      showToast(`전체 컬렉션을 내보냈습니다 (${res.name}).`, 'success');
+      try {
+        await host.platformShare({ path: res.path, name: res.name });
+      } catch {
+        const url = host.downloadUrl(res.path, res.name);
+        window.open(url, '_blank', 'noopener');
+      }
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : '컬렉션을 내보내지 못했습니다.',
+        'error'
+      );
+    } finally {
+      setExportingColpkg(false);
+    }
+  }, [exportingColpkg, showToast]);
+
+  const overflowItems = useMemo<ActionMenuItem[]>(
+    () => [
+      {
+        id: 'notetypes',
+        label: '노트 유형 관리',
+        description: '필드, 카드 템플릿 및 스타일 편집',
+        icon: <IconSpark size={18} />,
+        onSelect: () => navigate('#/notetypes'),
+      },
+      {
+        id: 'empty-cards',
+        label: checkingEmpty ? '빈 카드 확인 중...' : '빈 카드 정리',
+        description: '앞면이 비어 있는 카드를 찾아 삭제합니다',
+        icon: <IconDeck size={18} />,
+        disabled: checkingEmpty,
+        onSelect: () => void handleCheckEmptyCards(),
+      },
+      {
+        id: 'export-colpkg',
+        label: exportingColpkg ? '내보내는 중...' : '전체 컬렉션 내보내기 (.colpkg)',
+        description: '모든 덱, 학습 기록, 미디어를 하나로 백업',
+        icon: <IconUpload size={18} />,
+        disabled: exportingColpkg,
+        onSelect: () => void handleExportCollection(),
+      },
+      {
+        id: 'refresh',
+        label: '새로고침',
+        description: '덱 카운트와 화면을 다시 불러옵니다',
+        icon: <IconRefresh size={18} />,
+        onSelect: () => bumpCollection(),
+      },
+    ],
+    [
+      checkingEmpty,
+      exportingColpkg,
+      navigate,
+      handleCheckEmptyCards,
+      handleExportCollection,
+      bumpCollection,
+    ]
+  );
+
+  const renderRouteContent = () => {
+    switch (route.kind) {
+      case 'decks':
+        return <DeckListView />;
+      case 'deck':
+        if (isWideSplit) {
+          return <DeckListView initialSelectedDeckId={route.deckId} />;
+        }
+        return <DeckOverviewPane deckId={route.deckId} standalone />;
+      case 'study':
+        return <StudyView deckId={route.deckId} />;
+      case 'browse':
+        return <BrowserView initialQuery={route.query} />;
+      case 'noteNew':
+        return <NoteEditorView defaultDeckId={route.deckId} />;
+      case 'noteEdit':
+        return <NoteEditorView noteId={route.noteId} />;
+      case 'notetypes':
+        return <NoteTypeListView />;
+      case 'notetypeEdit':
+        return <NoteTypeEditorView notetypeId={route.notetypeId} />;
+      case 'stats':
+        return <StatsView />;
+      case 'deckOptions':
+        return <DeckOptionsView deckId={route.deckId} />;
+      case 'settings':
+        return <SettingsView />;
+      case 'ankiIframe':
+        return <AnkiIframeView path={route.path} title={route.title} />;
+    }
   };
 
-  const handleSaveNoteType = async (updated: NoteType) => {
-    await dbStore.putNoteType(updated);
-    setNoteTypes((prev) => prev.map((n) => (n.id === updated.id ? updated : n)));
-  };
-
-  const handleImportApkgComplete = async (
-    result: Awaited<ReturnType<typeof importApkgFile>>
-  ) => {
-    await Promise.all([
-      dbStore.putDecks(result.decks),
-      dbStore.putNoteTypes(result.noteTypes),
-      dbStore.putNotes(result.notes),
-      dbStore.putCards(result.cards),
-      dbStore.putRevlogs(result.revlogs),
-      dbStore.putMediaMany(result.media),
-      dbStore.saveSettings({ collectionCreatedAt: result.collectionCreatedAt }),
-    ]);
-    await reloadAll();
-  };
-
-  const handleImportCsvComplete = async (
-    deckId: number,
-    noteTypeId: number,
-    rows: string[][]
-  ) => {
-    const base = Date.now();
-    const mod = Math.floor(base / 1000);
-    const newNotes: Note[] = [];
-    const newCards: Card[] = [];
-
-    rows.forEach((row, idx) => {
-      const nid = base + idx * 10;
-      const cid = nid + 1;
-      newNotes.push({
-        id: nid,
-        guid: `csv-${nid}`,
-        mid: noteTypeId,
-        flds: row,
-        tags: ['csv-import'],
-        mod,
-      });
-      newCards.push({
-        id: cid,
-        nid,
-        did: deckId,
-        ord: 0,
-        queue: 0,
-        type: 0,
-        due: idx,
-        ivl: 0,
-        factor: 2500,
-        reps: 0,
-        lapses: 0,
-        data: {},
-        mod,
-      });
-    });
-
-    await Promise.all([dbStore.putNotes(newNotes), dbStore.putCards(newCards)]);
-    setNotes((prev) => [...prev, ...newNotes]);
-    setCards((prev) => [...prev, ...newCards]);
-  };
-
-  const handleUpdateSettings = async (partial: Partial<AppSettings>) => {
-    const next = await dbStore.saveSettings(partial);
-    setSettings(next);
-    return next;
-  };
-
-  const handleResetCollection = async () => {
-    await dbStore.clearAllData();
-    setUndoStack([]);
-    setStudyDeckId(null);
-    await reloadAll();
-  };
-
-  if (loading) {
+  if (isStudy) {
     return (
-      <div className="app-loading">
-        <div className="spinner" />
-        <p>myAmgi 로컬 데이터베이스 불러오는 중...</p>
-      </div>
+      <>
+        {renderRouteContent()}
+        <AddActionSheet open={addSheetOpen} onClose={closeAddSheet} />
+        <SyncSheet open={syncSheetOpen} onClose={closeSyncSheet} />
+        <FullSyncDialog open={fullSyncOpen} onClose={closeFullSyncDialog} />
+      </>
     );
   }
 
+  const navTabs: Array<{ id: RootTab; label: string; hash: string; icon: typeof IconDeck }> = [
+    { id: 'decks', label: '덱', hash: '#/decks', icon: IconDeck },
+    { id: 'browse', label: '찾아보기', hash: '#/browse', icon: IconSearch },
+    { id: 'stats', label: '통계', hash: '#/stats', icon: IconStats },
+    { id: 'settings', label: '설정', hash: '#/settings', icon: IconSettings },
+  ];
+
+  const isSyncing = Boolean(syncStatus?.running);
+  const needsFullSync = Boolean(syncStatus?.needsFullSync);
+  const hasSyncError = Boolean(syncStatus?.lastError);
+  const isLoggedOut = syncStatus !== null && !syncStatus.loggedIn;
+
+  const syncAriaLabel = isSyncing
+    ? '동기화 중'
+    : needsFullSync
+      ? '전체 동기화 필요'
+      : hasSyncError
+        ? '동기화 오류'
+        : isLoggedOut
+          ? '동기화 로그인 필요'
+          : '동기화';
+
+  const fullWidthContainer =
+    route.kind === 'browse' ||
+    route.kind === 'noteNew' ||
+    route.kind === 'noteEdit' ||
+    route.kind === 'notetypes' ||
+    route.kind === 'notetypeEdit' ||
+    route.kind === 'deckOptions' ||
+    route.kind === 'ankiIframe';
+
+  const emptyCardTotal = (emptyCardsReport?.notes ?? []).reduce(
+    (sum, n) => sum + (n.cardIds?.length ?? 0),
+    0
+  );
+
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <div className="brand" onClick={() => setActiveTab('decks')}>
-          <span className="brand-logo">암</span>
-          <div>
-            <div className="brand-title">myAmgi</div>
-            <div className="brand-sub">Anki + FSRS-5 Offline PWA</div>
+    <div className="amgi-shell" data-theme={resolvedTheme}>
+      {showTopBar && (
+        <header className="amgi-topbar">
+          <div className="amgi-topbar-left">
+            {topbarMeta.showBack && (
+              <button
+                type="button"
+                className="amgi-btn amgi-btn-ghost amgi-btn-icon"
+                aria-label="뒤로 가기"
+                onClick={() => goBack('#/decks')}
+              >
+                <IconArrowLeft size={20} />
+              </button>
+            )}
+            <h1 className="amgi-topbar-title">{topbarMeta.title}</h1>
           </div>
-        </div>
 
-        <nav className="nav-tabs" aria-label="주 메뉴">
-          <button
-            type="button"
-            className={`nav-tab ${activeTab === 'decks' ? 'active' : ''}`}
-            onClick={() => setActiveTab('decks')}
+          <div className="amgi-topbar-right">
+            <button
+              type="button"
+              className={`amgi-sync-btn ${isSyncing ? 'is-syncing' : ''}`}
+              aria-label={syncAriaLabel}
+              onClick={() => void handleSyncPress()}
+            >
+              <IconSync size={20} />
+              <span className="amgi-sync-chip">동기화 중</span>
+              {!isSyncing && hasSyncError && (
+                <span className="amgi-sync-badge-error" aria-hidden="true">
+                  !
+                </span>
+              )}
+              {!isSyncing && !hasSyncError && needsFullSync && (
+                <span className="amgi-sync-dot is-warn" aria-hidden="true" />
+              )}
+              {!isSyncing && !hasSyncError && !needsFullSync && isLoggedOut && (
+                <span className="amgi-sync-dot" aria-hidden="true" />
+              )}
+            </button>
+
+            {isDecksRoot && (
+              <button
+                type="button"
+                className="amgi-btn amgi-btn-ghost amgi-btn-icon"
+                aria-label="더보기 메뉴"
+                onClick={() => setOverflowOpen(true)}
+              >
+                <IconMore size={20} />
+              </button>
+            )}
+          </div>
+        </header>
+      )}
+
+      <div className="amgi-shell-body">
+        {showNavChrome && (
+          <nav className="amgi-rail" aria-label="기본 탐색">
+            <button
+              type="button"
+              className="amgi-rail-cta"
+              onClick={openAddSheet}
+              aria-label="추가"
+            >
+              <IconPlus size={20} />
+              <span>추가</span>
+            </button>
+
+            {navTabs.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={`amgi-nav-item ${isActive ? 'active' : ''}`}
+                  aria-current={isActive ? 'page' : undefined}
+                  onClick={() => navigate(tab.hash)}
+                >
+                  <Icon size={20} />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        )}
+
+        {fullWidthContainer ? (
+          <main style={{ flex: 1, minWidth: 0, width: '100%' }}>
+            {renderRouteContent()}
+          </main>
+        ) : (
+          <main
+            className={`amgi-main ${showFab ? 'amgi-main--with-fab' : ''}`.trim()}
           >
-            📚 덱 목록
-          </button>
-          <button
-            type="button"
-            className={`nav-tab ${activeTab === 'study' ? 'active' : ''}`}
-            onClick={() => {
-              if (!studyDeckId && decks[0]) setStudyDeckId(decks[0].id);
-              setActiveTab('study');
-            }}
-          >
-            ⚡ 학습
-          </button>
-          <button
-            type="button"
-            className={`nav-tab ${activeTab === 'editor' ? 'active' : ''}`}
-            onClick={() => setActiveTab('editor')}
-          >
-            🧩 템플릿 에디터
-          </button>
-          <button
-            type="button"
-            className={`nav-tab ${activeTab === 'import' ? 'active' : ''}`}
-            onClick={() => setActiveTab('import')}
-          >
-            📥 가져오기
-          </button>
-          <button
-            type="button"
-            className={`nav-tab ${activeTab === 'stats' ? 'active' : ''}`}
-            onClick={() => setActiveTab('stats')}
-          >
-            🟩 학습 잔디
-          </button>
-          <button
-            type="button"
-            className={`nav-tab ${activeTab === 'settings' ? 'active' : ''}`}
-            onClick={() => setActiveTab('settings')}
-          >
-            ⚙️ 설정 / 동기화
-          </button>
+            {renderRouteContent()}
+          </main>
+        )}
+      </div>
+
+      {showNavChrome && (
+        <nav className="amgi-bottomnav" aria-label="하단 탐색">
+          {navTabs.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                className={`amgi-nav-item ${isActive ? 'active' : ''}`}
+                aria-current={isActive ? 'page' : undefined}
+                onClick={() => navigate(tab.hash)}
+              >
+                <Icon size={20} />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
         </nav>
-      </header>
+      )}
 
-      <main className="main-content">
-        {activeTab === 'decks' && (
+      {showFab && (
+        <button
+          type="button"
+          className="amgi-fab"
+          onClick={openAddSheet}
+          aria-label="추가"
+        >
+          <IconPlus size={20} />
+          <span>추가</span>
+        </button>
+      )}
+
+      <ActionMenu
+        open={overflowOpen}
+        onClose={() => setOverflowOpen(false)}
+        title="도구 및 관리"
+        items={overflowItems}
+      />
+
+      <SheetOrDialog
+        open={emptyCardsReport !== null}
+        onClose={() => {
+          if (!cleaningEmpty) setEmptyCardsReport(null);
+        }}
+        title="빈 카드 정리"
+        footer={
           <>
-            <DeckList
-              decks={decks}
-              counts={deckCounts}
-              cards={cards}
-              notes={notes}
-              noteTypes={noteTypes}
-              onStartStudy={handleStartStudy}
-              onCreateDeck={handleCreateDeck}
-              onToggleCollapse={handleToggleCollapse}
-              onAddCard={handleAddCard}
-              onToggleDeckFsrs={handleToggleDeckFsrs}
-            />
-            <div style={{ marginTop: 20 }}>
-              <Heatmap revlogs={revlogs} />
-            </div>
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-secondary"
+              disabled={cleaningEmpty}
+              onClick={() => setEmptyCardsReport(null)}
+            >
+              닫기
+            </button>
+            {emptyCardTotal > 0 && (
+              <button
+                type="button"
+                className="amgi-btn amgi-btn-danger"
+                disabled={cleaningEmpty}
+                onClick={() => void handleDeleteEmptyCards()}
+              >
+                {cleaningEmpty
+                  ? '삭제 중...'
+                  : `빈 카드 ${emptyCardTotal}장 삭제`}
+              </button>
+            )}
           </>
+        }
+      >
+        {emptyCardTotal === 0 ? (
+          <p className="amgi-prose" style={{ margin: 0 }}>
+            정리할 빈 카드가 없습니다. 모든 카드가 정상입니다.
+          </p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <p className="amgi-prose" style={{ margin: 0 }}>
+              앞면 내용이 비어 있는 카드 <strong>{emptyCardTotal}장</strong>을
+              찾았습니다. 삭제해도 노트의 원본 데이터는 유지됩니다.
+            </p>
+            {emptyCardsReport?.report && (
+              <pre className="amgi-error-detail">{emptyCardsReport.report}</pre>
+            )}
+          </div>
         )}
+      </SheetOrDialog>
 
-        {activeTab === 'study' && studyDeck && (
-          <StudyView
-            deck={studyDeck}
-            queue={studyQueue}
-            notesById={notesById}
-            noteTypesById={noteTypesById}
-            settings={settings}
-            canUndo={undoStack.length > 0}
-            onAnswer={handleAnswer}
-            onUndo={handleUndo}
-            onExit={() => setActiveTab('decks')}
-          />
-        )}
-
-        {activeTab === 'editor' && (
-          <LargeTemplateEditor
-            noteTypes={noteTypes}
-            onSaveNoteType={handleSaveNoteType}
-          />
-        )}
-
-        {activeTab === 'import' && (
-          <ImportView
-            decks={decks}
-            noteTypes={noteTypes}
-            onImportApkgComplete={handleImportApkgComplete}
-            onImportCsvComplete={handleImportCsvComplete}
-          />
-        )}
-
-        {activeTab === 'stats' && <Heatmap revlogs={revlogs} />}
-
-        {activeTab === 'settings' && (
-          <SettingsView
-            settings={settings}
-            onUpdateSettings={handleUpdateSettings}
-            onSyncComplete={reloadAll}
-            onResetCollection={handleResetCollection}
-          />
-        )}
-      </main>
+      <AddActionSheet
+        open={addSheetOpen}
+        onClose={closeAddSheet}
+        defaultDeckId={route.kind === 'deck' ? route.deckId : undefined}
+      />
+      <SyncSheet open={syncSheetOpen} onClose={closeSyncSheet} />
+      <FullSyncDialog open={fullSyncOpen} onClose={closeFullSyncDialog} />
     </div>
+  );
+}
+
+export function App() {
+  return (
+    <ToastProvider>
+      <AppProvider>
+        <AppShell />
+      </AppProvider>
+    </ToastProvider>
   );
 }
 

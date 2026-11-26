@@ -15,6 +15,7 @@ import java.io.InputStream
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.text.SimpleDateFormat
+import java.util.Base64
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
@@ -163,10 +164,11 @@ class HostServer(
             uri.startsWith("/_anki/") && get -> serveAsset(ankiAssets, uri.removePrefix("/_anki/"))
             uri.startsWith("/_app/") && get -> serveAsset(ankiAssets, "sveltekit/app/" + uri.removePrefix("/_app/"))
             uri == "/api/host/events" && get -> sse()
+            uri == "/api/host/hanja-tap.js" && get -> serveHanjaTapScript()
             uri == "/api/host/upload" && post -> upload(req)
             uri == "/api/host/download" && get -> download(req)
             uri.startsWith("/api/host/") && post -> hostFunction(req, uri.removePrefix("/api/host/"))
-            get && isSvelteRoute(uri) -> serveAsset(ankiAssets, "sveltekit/index.html")
+            get && isSvelteRoute(uri) -> serveSvelteIndex(req)
             get -> serveAsset(ankiAssets, "sveltekit/" + uri.trimStart('/'))
             else -> text(405, "Method Not Allowed")
         }
@@ -224,6 +226,36 @@ class HostServer(
         if (path.startsWith("sveltekit/app/immutable/")) r.addHeader("Cache-Control", "max-age=31536000, immutable")
         else noCache(r)
         return r
+    }
+
+    private fun serveHanjaTapScript(): NanoHTTPD.Response {
+        val bytes = platform.hanjaTapScript().toByteArray(Charsets.UTF_8)
+        return noCache(
+            NanoHTTPD.newFixedLengthResponse(
+                status(200),
+                "application/javascript; charset=utf-8",
+                ByteArrayInputStream(bytes),
+                bytes.size.toLong()
+            )
+        )
+    }
+
+    private fun serveSvelteIndex(req: Req): NanoHTTPD.Response {
+        val stream = ankiAssets.open("sveltekit/index.html") ?: return text(404, "Not Found")
+        val rawHtml = stream.use { it.readBytes().toString(Charsets.UTF_8) }
+        val queryTheme = req.param("theme")?.trim()?.lowercase(Locale.ROOT)?.takeIf { it in VALID_THEMES }
+        val prefTheme = api.prefs.all().str("theme")?.trim()?.lowercase(Locale.ROOT)?.takeIf { it in VALID_THEMES }
+        val defaultTheme = if (platform.info().eink) "eink" else "auto"
+        val fallbackTheme = queryTheme ?: prefTheme ?: defaultTheme
+        val injected = injectSvelteHead(rawHtml, fallbackTheme).toByteArray(Charsets.UTF_8)
+        return noCache(
+            NanoHTTPD.newFixedLengthResponse(
+                status(200),
+                "text/html; charset=utf-8",
+                ByteArrayInputStream(injected),
+                injected.size.toLong()
+            )
+        )
     }
 
     private fun streamResponse(stream: InputStream, mime: String): NanoHTTPD.Response {
@@ -438,8 +470,99 @@ class HostServer(
         /** SvelteKit routes shipped in the backend artifact; all served by its index.html. */
         val SVELTE_ROUTES = listOf(
             "/card-info", "/change-notetype", "/congrats", "/deck-options", "/editor", "/graphs",
-            "/image-occlusion", "/import-anki-package", "/import-csv", "/import-page", "/preferences"
+            "/image-occlusion", "/import-anki-package", "/import-csv", "/import-page"
         )
+
+        private val VALID_THEMES = setOf("light", "dark", "eink", "auto")
+
+        internal fun injectSvelteHead(rawHtml: String, fallbackTheme: String): String {
+            val safeFallback = if (fallbackTheme in VALID_THEMES) fallbackTheme else "auto"
+            val styleTag = """
+                <style id="myamgi-anki-polish">
+                html, body, button, input, select, textarea, label, p, span, div, td, th {
+                  word-break: keep-all;
+                  overflow-wrap: break-word;
+                  font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Noto Sans CJK KR", "Noto Sans KR", system-ui, sans-serif;
+                }
+                html.night-mode, html.night-mode body {
+                  background: #161B24 !important;
+                }
+                html.eink-mode, html.eink-mode body {
+                  background: #FFFFFF !important;
+                  color: #000000 !important;
+                  --canvas: #FFFFFF;
+                  --canvas-elevated: #FFFFFF;
+                  --canvas-inset: #FFFFFF;
+                  --canvas-overlay: #FFFFFF;
+                  --fg: #000000;
+                  --fg-subtle: #000000;
+                  --border: #000000;
+                  --border-subtle: #000000;
+                  --border-strong: #000000;
+                }
+                html.eink-mode *, html.eink-mode *::before, html.eink-mode *::after {
+                  transition: none !important;
+                  animation: none !important;
+                  box-shadow: none !important;
+                }
+                html.eink-mode .card, html.eink-mode .bg-body-tertiary, html.eink-mode .list-group-item {
+                  background: #FFFFFF !important;
+                  color: #000000 !important;
+                  border: 1.5px solid #000000 !important;
+                }
+                </style>
+            """.trimIndent()
+
+            val scriptBody = """
+                (function(){
+                  var q = new URLSearchParams(location.search).get('theme');
+                  var pref = (q && /^(light|dark|eink|auto)$/.test(q)) ? q : '$safeFallback';
+                  var theme = pref === 'auto'
+                    ? ((window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light')
+                    : pref;
+                  var root = document.documentElement;
+                  function applyBody() {
+                    if (!document.body) return;
+                    document.body.classList.toggle('night-mode', theme === 'dark');
+                    document.body.classList.toggle('eink-mode', theme === 'eink');
+                  }
+                  if (theme === 'dark') {
+                    root.classList.add('night-mode');
+                    root.setAttribute('data-bs-theme', 'dark');
+                  } else if (theme === 'eink') {
+                    root.classList.add('eink-mode');
+                    root.setAttribute('data-bs-theme', 'light');
+                  } else {
+                    root.classList.remove('night-mode', 'eink-mode');
+                    root.setAttribute('data-bs-theme', 'light');
+                  }
+                  if (document.body) applyBody();
+                  else document.addEventListener('DOMContentLoaded', applyBody, { once: true });
+                })();
+            """.trimIndent()
+
+            val scriptHash = Base64.getEncoder().encodeToString(
+                MessageDigest.getInstance("SHA-256").digest(scriptBody.toByteArray(Charsets.UTF_8))
+            )
+            val injection = "$styleTag\n<script>$scriptBody</script>\n"
+
+            // Allow our injected bootstrap script in SvelteKit's inline-script CSP if present.
+            val withCsp = if (rawHtml.contains("script-src ")) {
+                rawHtml.replaceFirst("script-src ", "script-src 'sha256-$scriptHash' ")
+            } else {
+                rawHtml
+            }
+
+            val headClose = Regex("</head>", RegexOption.IGNORE_CASE).find(withCsp)
+            if (headClose != null) {
+                return withCsp.substring(0, headClose.range.first) + injection + withCsp.substring(headClose.range.first)
+            }
+            val bodyOpen = Regex("<body\\b", RegexOption.IGNORE_CASE).find(withCsp)
+            if (bodyOpen != null) {
+                return withCsp.substring(0, bodyOpen.range.first) + "<head>\n$injection</head>\n" + withCsp.substring(bodyOpen.range.first)
+            }
+            return withCsp + "\n" + injection
+        }
 
         /**
          * Anki FrontendService methods. The pages call them like backend methods, but Anki desktop's

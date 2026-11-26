@@ -1,0 +1,335 @@
+/* ==========================================================================
+   Settings View Styles (Max-width 680px, 24px breathable section gaps)
+   ========================================================================== */
+
+.amgi-settings-page {
+  width: 100%;
+  max-width: 680px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.amgi-settings-loading {
+  padding: 40px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text-2);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.amgi-setting-value-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-2);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.amgi-setting-value-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:root[data-theme="eink"] .amgi-setting-value-trigger {
+  color: #000000;
+  font-weight: 700;
+}
+
+/* Count / Status Pill inside SettingRow */
+.amgi-setting-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.amgi-setting-pill--accent {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+:root[data-theme="eink"] .amgi-setting-pill,
+:root[data-theme="eink"] .amgi-setting-pill--accent {
+  background: #FFFFFF;
+  color: #000000;
+  border: 2px solid #000000;
+}
+
+/* Segmented Font Scale Stepper */
+.amgi-scale-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.amgi-scale-btn {
+  min-width: 40px;
+  min-height: 44px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.amgi-scale-btn:hover:not(:disabled) {
+  background: var(--surface-active);
+  border-color: var(--border-strong);
+}
+
+.amgi-scale-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.amgi-scale-val {
+  min-width: 48px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+:root[data-theme="eink"] .amgi-scale-btn {
+  min-width: 44px;
+  min-height: 48px;
+  background: #FFFFFF;
+  color: #000000;
+  border: 2px solid #000000;
+}
+
+/* Sub-sheet Lists (Backups, Media Check, Empty Cards, Info) */
+.amgi-sheet-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.amgi-sheet-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.amgi-backup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.amgi-backup-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--border);
+  background: var(--surface-2);
+}
+
+:root[data-theme="eink"] .amgi-backup-row {
+  background: #FFFFFF;
+  border: 2px solid #000000;
+}
+
+.amgi-backup-meta {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.amgi-backup-date {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.amgi-backup-size {
+  font-size: 12px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.amgi-stat-pair-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.amgi-stat-pair-box {
+  padding: 14px;
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--border);
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+:root[data-theme="eink"] .amgi-stat-pair-box {
+  background: #FFFFFF;
+  border: 2px solid #000000;
+}
+
+.amgi-stat-pair-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.amgi-stat-pair-val {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.amgi-file-sample-list {
+  margin: 0;
+  padding: 10px 12px 10px 26px;
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--border);
+  background: var(--surface-2);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-2);
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+:root[data-theme="eink"] .amgi-file-sample-list {
+  background: #FFFFFF;
+  border: 2px solid #000000;
+  color: #000000;
+}
+
+.amgi-info-kv-list {
+  display: flex;
+  flex-direction: column;
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.amgi-info-kv-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+
+:root[data-theme="eink"] .amgi-info-kv-row {
+  border-bottom: 2px solid #000000;
+}
+
+.amgi-info-kv-row:last-child,
+:root[data-theme="eink"] .amgi-info-kv-row:last-child {
+  border-bottom: none;
+}
+
+.amgi-info-kv-key {
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.amgi-info-kv-val {
+  color: var(--text);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  word-break: break-all;
+}
+
+/* Custom rollover hour grid */
+.amgi-rollover-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.amgi-rollover-btn {
+  min-height: 48px;
+  padding: 8px 6px;
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.amgi-rollover-btn.active {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--primary);
+  font-weight: 700;
+}
+
+:root[data-theme="eink"] .amgi-rollover-btn {
+  min-height: 52px;
+  background: #FFFFFF;
+  color: #000000;
+  border: 2px solid #000000;
+}
+
+:root[data-theme="eink"] .amgi-rollover-btn.active {
+  background: #000000;
+  color: #FFFFFF;
+}
+
+@media (max-width: 390px) {
+  .amgi-settings-page {
+    gap: 20px;
+  }
+
+  .amgi-backup-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .amgi-scale-val {
+    min-width: 42px;
+  }
+
+  .amgi-rollover-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}

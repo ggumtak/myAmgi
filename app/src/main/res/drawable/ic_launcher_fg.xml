@@ -1,13 +1,116 @@
 <?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M30,28 L78,28 C81.3,28 84,30.7 84,34 L84,74 C84,77.3 81.3,80 78,80 L30,80 C26.7,80 24,77.3 24,74 L24,34 C24,30.7 26.7,28 30,28 Z" />
-    <path
-        android:fillColor="#2563EB"
-        android:pathData="M32,42 L76,42 L76,47 L32,47 Z M32,53 L66,53 L66,58 L32,58 Z M32,64 L58,64 L58,69 L32,69 Z" />
+
+    <!-- Outer optical framing: scale 0.88 around (54,54), shifted (+0.5, +1.1) so max_r = 26.46 <= 26.5 -->
+    <group
+        android:translateX="0.5"
+        android:translateY="1.1"
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="0.88"
+        android:scaleY="0.88">
+
+        <!-- Back flashcard: rotated -9 deg around (54,54), translated (-4.5, -1.0) -->
+        <!-- Card box centered at (54,54): 33 x 43 => [37.5, 32.5] to [70.5, 75.5], r=5.5 -->
+        <group
+            android:translateX="-4.5"
+            android:translateY="-1.0"
+            android:pivotX="54"
+            android:pivotY="54"
+            android:rotation="-9">
+            <path android:pathData="M43,32.5 H65 C68.04,32.5 70.5,34.96 70.5,38 V70 C70.5,73.04 68.04,75.5 65,75.5 H43 C39.96,75.5 37.5,73.04 37.5,70 V38 C37.5,34.96 39.96,32.5 43,32.5 Z">
+                <aapt:attr name="android:fillColor">
+                    <gradient
+                        android:type="linear"
+                        android:startX="37.5"
+                        android:startY="32.5"
+                        android:endX="70.5"
+                        android:endY="75.5">
+                        <item android:offset="0.0" android:color="#FF5BA4FC" />
+                        <item android:offset="1.0" android:color="#FF3B82F6" />
+                    </gradient>
+                </aapt:attr>
+            </path>
+        </group>
+
+        <!-- Subtle cast shadow beneath front card -->
+        <group
+            android:translateX="1.8"
+            android:translateY="2.4"
+            android:pivotX="54"
+            android:pivotY="54"
+            android:rotation="6.5">
+            <path
+                android:fillColor="#050A18"
+                android:fillAlpha="0.24"
+                android:pathData="M42.3,31.5 H65.7 C68.90,31.5 71.5,34.10 71.5,37.3 V70.7 C71.5,73.90 68.90,76.5 65.7,76.5 H42.3 C39.10,76.5 36.5,73.90 36.5,70.7 V37.3 C36.5,34.10 39.10,31.5 42.3,31.5 Z" />
+        </group>
+
+        <!-- Front flashcard: rotated +6.5 deg around (54,54), translated (+3.2, +1.0) -->
+        <!-- Card box centered at (54,54): 35 x 45 => [36.5, 31.5] to [71.5, 76.5], r=5.8 -->
+        <group
+            android:translateX="3.2"
+            android:translateY="1.0"
+            android:pivotX="54"
+            android:pivotY="54"
+            android:rotation="6.5">
+
+            <!-- Crisp white card base with cool-ice subtle tint -->
+            <path android:pathData="M42.3,31.5 H65.7 C68.90,31.5 71.5,34.10 71.5,37.3 V70.7 C71.5,73.90 68.90,76.5 65.7,76.5 H42.3 C39.10,76.5 36.5,73.90 36.5,70.7 V37.3 C36.5,34.10 39.10,31.5 42.3,31.5 Z">
+                <aapt:attr name="android:fillColor">
+                    <gradient
+                        android:type="linear"
+                        android:startX="36.5"
+                        android:startY="31.5"
+                        android:endX="71.5"
+                        android:endY="76.5">
+                        <item android:offset="0.0" android:color="#FFFFFFFF" />
+                        <item android:offset="1.0" android:color="#FFF5F8FF" />
+                    </gradient>
+                </aapt:attr>
+            </path>
+
+            <!-- Symmetric 4-pointed memory spark centered at (54, 49.5) with gracefully rounded tips -->
+            <path android:pathData="M 54,40.4
+                                  C 54.45,40.4 54.65,41.2 55.15,43.0
+                                  C 56.15,46.6 56.9,47.35 60.5,48.35
+                                  C 62.3,48.85 63.1,49.05 63.1,49.5
+                                  C 63.1,49.95 62.3,50.15 60.5,50.65
+                                  C 56.9,51.65 56.15,52.4 55.15,56.0
+                                  C 54.65,57.8 54.45,58.6 54,58.6
+                                  C 53.55,58.6 53.35,57.8 52.85,56.0
+                                  C 51.85,52.4 51.1,51.65 47.5,50.65
+                                  C 45.7,50.15 44.9,49.95 44.9,49.5
+                                  C 44.9,49.05 45.7,48.85 47.5,48.35
+                                  C 51.1,47.35 51.85,46.6 52.85,43.0
+                                  C 53.35,41.2 53.55,40.4 54,40.4 Z">
+                <aapt:attr name="android:fillColor">
+                    <gradient
+                        android:type="linear"
+                        android:startX="44.9"
+                        android:startY="40.4"
+                        android:endX="63.1"
+                        android:endY="58.6">
+                        <item android:offset="0.0" android:color="#FF1D4ED8" />
+                        <item android:offset="1.0" android:color="#FF2563EB" />
+                    </gradient>
+                </aapt:attr>
+            </path>
+
+            <!-- Progress bar track near bottom of front card: x in [42.5, 65.5] (width 23), y in [65.3, 68.7] (height 3.4, r=1.7), crisp #BFD7FF -->
+            <path
+                android:fillColor="#BFD7FF"
+                android:pathData="M44.2,65.3 H63.8 C64.74,65.3 65.5,66.06 65.5,67.0 C65.5,67.94 64.74,68.7 63.8,68.7 H44.2 C43.26,68.7 42.5,67.94 42.5,67.0 C42.5,66.06 43.26,65.3 44.2,65.3 Z" />
+
+            <!-- 68% filled royal-blue progress bar: width = 23 * 0.68 = 15.64 => x in [42.5, 58.14], #1D4ED8 -->
+            <path
+                android:fillColor="#1D4ED8"
+                android:pathData="M44.2,65.3 H56.44 C57.38,65.3 58.14,66.06 58.14,67.0 C58.14,67.94 57.38,68.7 56.44,68.7 H44.2 C43.26,68.7 42.5,67.94 42.5,67.0 C42.5,66.06 43.26,65.3 44.2,65.3 Z" />
+        </group>
+    </group>
 </vector>

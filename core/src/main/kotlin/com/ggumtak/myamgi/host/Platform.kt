@@ -30,6 +30,7 @@ interface Platform {
     /** Called after the HTTP response has been sent. */
     fun exit(): Unit = throw HostError.unsupported("앱 종료")
     fun hanjaLookup(text: String, sentence: String?): Unit = throw HostError.unsupported("한자 사전")
+    fun hanjaTapScript(): String = ""
 
     fun updateStatus(): JsonObject = throw HostError.unsupported("업데이트")
     fun updateCheck(): JsonObject = throw HostError.unsupported("업데이트")

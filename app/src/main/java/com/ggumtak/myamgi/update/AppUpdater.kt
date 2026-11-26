@@ -31,7 +31,7 @@ object AppUpdater {
 
     fun check(done: (UpdateInfo.Latest?) -> Unit) {
         Thread {
-            val latest = runCatching { fetchLatest() }.getOrNull()
+            val latest = runCatching { fetchLatestBlocking() }.getOrNull()
             main.post { done(latest) }
         }.start()
     }
@@ -40,7 +40,7 @@ object AppUpdater {
      * Reads the full APK from release `latest`. Only when it is newer, also reads release
      * `update-files` for delta patches; if that fails, the full APK is used.
      */
-    private fun fetchLatest(): UpdateInfo.Latest? {
+    fun fetchLatestBlocking(): UpdateInfo.Latest? {
         val latestJson = getText(UpdateInfo.LATEST_URL) ?: return null
         val apkOnly = UpdateInfo.parse(latestJson, BuildConfig.APK_PREFIX) ?: return null
         if (!UpdateInfo.isNewer(apkOnly, current)) return apkOnly
@@ -54,20 +54,26 @@ object AppUpdater {
         latest: UpdateInfo.Latest,
         progress: (Int) -> Unit,
         failed: (String) -> Unit
+    ): Boolean = installWithContext(activity, latest, progress, failed)
+
+    fun installWithContext(
+        context: Context,
+        latest: UpdateInfo.Latest,
+        progress: (Int) -> Unit,
+        failed: (String) -> Unit
     ): Boolean {
-        if (!activity.packageManager.canRequestPackageInstalls()) {
-            runCatching {
-                activity.startActivity(
-                    Intent(
-                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                        Uri.parse("package:" + activity.packageName)
-                    )
-                )
+        if (!context.packageManager.canRequestPackageInstalls()) {
+            val settingsIntent = Intent(
+                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:" + context.packageName)
+            ).apply {
+                if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
+            runCatching { context.startActivity(settingsIntent) }
             return false
         }
 
-        val app = activity.applicationContext
+        val app = context.applicationContext
         Thread {
             val report: (Int) -> Unit = { p -> main.post { progress(p) } }
             val file = runCatching { fromPatch(app, latest, report) }.getOrNull()

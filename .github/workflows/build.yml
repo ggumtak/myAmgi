@@ -97,6 +97,21 @@ jobs:
           path: ~/.myamgi-signing
           key: myamgi-signing-v1
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build web UI bundle
+        working-directory: web
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          npm ci
+          npm test
+          npm run build
+
       - name: Run unit tests (engine host, Pro & Comet)
         run: ./gradlew --stacktrace :core:test :desktop:installDist testProDebugUnitTest testCometDebugUnitTest
 
@@ -143,7 +158,10 @@ jobs:
                       raise SystemExit(f"{apk_path} is missing {required}; lib entries: {lib_entries}")
                   if zf.getinfo(required).file_size == 0:
                       raise SystemExit(f"{apk_path} has an empty {required}")
-                  print(f"{apk_path}: verified ({len(lib_entries)} lib/arm64-v8a entries incl. librsdroid.so, no forbidden ABIs)")
+                  for req_asset in ("assets/ui/index.html", "assets/ui/ui-version.json", "assets/ui/card-frame.html"):
+                      if req_asset not in zf.namelist():
+                          raise SystemExit(f"{apk_path} is missing bundled web UI asset: {req_asset}")
+                  print(f"{apk_path}: verified ({len(lib_entries)} lib/arm64-v8a entries incl. librsdroid.so, web UI bundled, no forbidden ABIs)")
           PY
 
       - name: Generate OTA hot-patch manifest and assets
@@ -154,6 +172,8 @@ jobs:
             --version "${GITHUB_RUN_NUMBER}" \
             --repo "${GITHUB_REPOSITORY}" \
             --tag update-files
+          cp web/dist/ui-version.json dist/ui-version.json
+          (cd web/dist && zip -qr "../../dist/ui-bundle.zip" .)
           ls -lh dist
 
       - name: Make flavor-specific binary delta patches
@@ -211,7 +231,7 @@ jobs:
           # and which assets may stay there; every other asset is deleted at the very end.
           # When the PC package ships, add its pattern here, e.g. "myAmgi-PC-${n}.zip".
           LATEST_KEEP=("${pro_apk}" "${comet_apk}")
-          UPDATE_KEEP=("myAmgi-Pro-${n}.from-*.patch" "myAmgi-Comet-${n}.from-*.patch" "ota-manifest.json" "ota__*")
+          UPDATE_KEEP=("myAmgi-Pro-${n}.from-*.patch" "myAmgi-Comet-${n}.from-*.patch" "ota-manifest.json" "ota__*" "ui-version.json" "ui-bundle.zip")
 
           matches() { # name pattern...
             local name="$1" pat; shift

@@ -1,0 +1,785 @@
+/* ==========================================================================
+   Native Korean Statistics Styles (Max-width 960px, 2-col tablet grid, E-Ink)
+   ========================================================================== */
+
+.amgi-stats-page {
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* Scope Filter Bar (sleek borderless row above summary) */
+.amgi-stats-scope-bar {
+  position: static;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.amgi-stats-scope-seg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.amgi-stats-scope-btn {
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 14px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.amgi-stats-scope-btn.active {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.amgi-stats-scope-btn-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:root[data-theme="eink"] .amgi-stats-scope-btn {
+  min-height: 48px;
+  background: #FFFFFF;
+  color: #000000;
+  border: 2px solid #000000;
+}
+
+:root[data-theme="eink"] .amgi-stats-scope-btn.active {
+  background: #000000;
+  color: #FFFFFF;
+}
+
+.amgi-stats-filter-chip,
+.amgi-stats-study-btn {
+  min-height: 44px;
+}
+
+:root[data-theme="eink"] .amgi-stats-filter-chip,
+:root[data-theme="eink"] .amgi-stats-study-btn {
+  min-height: 48px;
+}
+
+.amgi-stats-loading {
+  padding: 48px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text-2);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Grid for Cards */
+.amgi-stats-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+}
+
+@media (min-width: 768px) {
+  .amgi-stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .amgi-stats-span-2 {
+    grid-column: 1 / -1;
+  }
+}
+
+.amgi-stats-card {
+  background: var(--surface);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+:root[data-theme="eink"] .amgi-stats-card {
+  border: 2px solid #000000;
+}
+
+.amgi-stats-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.amgi-stats-card-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.amgi-stats-card-sub {
+  margin: 3px 0 0;
+  font-size: 13px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.amgi-stats-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+:root[data-theme="eink"] .amgi-stats-badge {
+  background: #FFFFFF;
+  color: #000000;
+  border: 2px solid #000000;
+}
+
+/* Card 1: Today's Summary */
+.amgi-stats-summary-sentence {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.amgi-stats-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (min-width: 768px) {
+  .amgi-stats-metric-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.amgi-stats-metric-box {
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--border);
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+:root[data-theme="eink"] .amgi-stats-metric-box {
+  background: #FFFFFF;
+  border: 2px solid #000000;
+}
+
+.amgi-stats-metric-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.amgi-stats-metric-val {
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.amgi-stats-metric-sub {
+  font-size: 12px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.amgi-stats-empty-box {
+  padding: 16px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.amgi-stats-empty-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.amgi-stats-empty-sub {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+/* Card 2: 1-Year Heatmap */
+.amgi-heat-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.amgi-heat-chip {
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: var(--border-w) solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 64px;
+}
+
+:root[data-theme="eink"] .amgi-heat-chip {
+  background: #FFFFFF;
+  border: 2px solid #000000;
+}
+
+.amgi-heat-chip-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.amgi-heat-chip-val {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.amgi-heat-scroll {
+  overflow-x: auto;
+  padding-inline: 6px;
+  padding-bottom: 6px;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+}
+
+.amgi-heat-inner {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.amgi-heat-months {
+  display: flex;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
+  height: 16px;
+}
+
+.amgi-heat-month-cell {
+  width: 12px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: visible;
+}
+
+.amgi-heat-grid {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.amgi-heat-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  scroll-snap-align: end;
+}
+
+.amgi-heat-cell {
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: var(--heat-0);
+  cursor: pointer;
+  display: block;
+}
+
+@media (max-width: 420px) {
+  .amgi-heat-month-cell {
+    width: 11px;
+  }
+
+  .amgi-heat-cell {
+    width: 11px;
+    height: 11px;
+  }
+}
+
+@media (min-width: 768px) {
+  .amgi-heat-month-cell {
+    width: 14px;
+  }
+
+  .amgi-heat-cell {
+    width: 14px;
+    height: 14px;
+  }
+}
+
+.amgi-heat-cell.is-pad {
+  background: transparent;
+  cursor: default;
+  pointer-events: none;
+}
+
+.amgi-heat-cell.level-0 { background: var(--heat-0); }
+.amgi-heat-cell.level-1 { background: var(--heat-1); }
+.amgi-heat-cell.level-2 { background: var(--heat-2); }
+.amgi-heat-cell.level-3 { background: var(--heat-3); }
+.amgi-heat-cell.level-4 { background: var(--heat-4); }
+
+.amgi-heat-cell.is-selected {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+
+:root[data-theme="eink"] .amgi-heat-cell {
+  border-radius: 2px;
+}
+
+:root[data-theme="eink"] .amgi-heat-cell.level-0,
+:root[data-theme="eink"] .amgi-heat-cell[data-level="0"] {
+  background: #FFFFFF;
+  border: 1px solid #666666;
+}
+
+:root[data-theme="eink"] .amgi-heat-cell.level-1 {
+  background: #D4D4D4;
+  border: 1px solid #000000;
+}
+
+:root[data-theme="eink"] .amgi-heat-cell.level-2 {
+  background: #8C8C8C;
+  border: 1px solid #000000;
+}
+
+:root[data-theme="eink"] .amgi-heat-cell.level-3 {
+  background: #444444;
+  border: 1px solid #000000;
+}
+
+:root[data-theme="eink"] .amgi-heat-cell.level-4 {
+  background: #000000;
+  border: 1px solid #000000;
+}
+
+.amgi-heat-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.amgi-heat-inspect {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.amgi-heat-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.amgi-heat-legend-box {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.amgi-heat-legend-box.level-0 { background: var(--heat-0); }
+.amgi-heat-legend-box.level-1 { background: var(--heat-1); }
+.amgi-heat-legend-box.level-2 { background: var(--heat-2); }
+.amgi-heat-legend-box.level-3 { background: var(--heat-3); }
+.amgi-heat-legend-box.level-4 { background: var(--heat-4); }
+
+:root[data-theme="eink"] .amgi-heat-legend-box.level-0 {
+  background: #FFFFFF;
+  border: 1px solid #666666;
+}
+
+:root[data-theme="eink"] .amgi-heat-legend-box.level-1 {
+  background: #D4D4D4;
+  border: 1px solid #000000;
+}
+
+:root[data-theme="eink"] .amgi-heat-legend-box.level-2 {
+  background: #8C8C8C;
+  border: 1px solid #000000;
+}
+
+:root[data-theme="eink"] .amgi-heat-legend-box.level-3 {
+  background: #444444;
+  border: 1px solid #000000;
+}
+
+:root[data-theme="eink"] .amgi-heat-legend-box.level-4 {
+  background: #000000;
+  border: 1px solid #000000;
+}
+
+/* Card 3: 30-Day Future Due */
+.amgi-future-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.amgi-future-warn-chip {
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+:root[data-theme="eink"] .amgi-future-warn-chip {
+  background: #FFFFFF;
+  color: #000000;
+  border: 2px solid #000000;
+}
+
+.amgi-future-svg-wrap {
+  width: 100%;
+}
+
+.amgi-future-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+
+.amgi-future-bar {
+  fill: var(--primary);
+  cursor: pointer;
+}
+
+.amgi-future-bar.is-selected {
+  fill: var(--primary-hover);
+  stroke: var(--text);
+  stroke-width: 1.5;
+}
+
+:root[data-theme="eink"] .amgi-future-bar {
+  fill: #000000;
+}
+
+:root[data-theme="eink"] .amgi-future-bar.is-today {
+  fill: #FFFFFF;
+  stroke: #000000;
+  stroke-width: 2;
+}
+
+:root[data-theme="eink"] .amgi-future-bar.is-selected {
+  fill: #FFFFFF;
+  stroke: #000000;
+  stroke-width: 2;
+}
+
+.amgi-future-guide {
+  stroke: var(--text-2);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+
+:root[data-theme="eink"] .amgi-future-guide {
+  stroke: #000000;
+}
+
+.amgi-future-axis-text {
+  font-size: 10px;
+  font-weight: 600;
+  fill: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+:root[data-theme="eink"] .amgi-future-axis-text {
+  fill: #000000;
+}
+
+.amgi-future-empty {
+  min-height: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+:root[data-theme="eink"] .amgi-future-empty {
+  background: #FFFFFF;
+  border: 2px solid #000000;
+  color: #000000;
+}
+
+/* Card 4: Card Maturity Distribution */
+.amgi-maturity-bar {
+  width: 100%;
+  height: 20px;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  display: flex;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+:root[data-theme="eink"] .amgi-maturity-bar {
+  border-radius: 4px;
+  border: 2px solid #000000;
+  background: #FFFFFF;
+}
+
+.amgi-maturity-seg {
+  height: 100%;
+  min-width: 2px;
+}
+
+.amgi-maturity-seg--new { background: var(--count-new); }
+.amgi-maturity-seg--learning { background: var(--count-learn); }
+.amgi-maturity-seg--young { background: var(--warn); }
+.amgi-maturity-seg--mature { background: var(--count-review); }
+
+:root[data-theme="eink"] .amgi-maturity-seg {
+  border-right: 1.5px solid #000000;
+}
+
+:root[data-theme="eink"] .amgi-maturity-seg:last-child {
+  border-right: none;
+}
+
+:root[data-theme="eink"] .amgi-maturity-seg--new {
+  background: #FFFFFF;
+}
+
+:root[data-theme="eink"] .amgi-maturity-seg--learning {
+  background: repeating-linear-gradient(
+    -45deg,
+    #FFFFFF,
+    #FFFFFF 3px,
+    #000000 3px,
+    #000000 5px
+  );
+}
+
+:root[data-theme="eink"] .amgi-maturity-seg--young {
+  background-color: #FFFFFF;
+  background-image: repeating-conic-gradient(#000000 0% 25%, #FFFFFF 0% 50%);
+  background-size: 6px 6px;
+}
+
+:root[data-theme="eink"] .amgi-maturity-seg--mature {
+  background: #000000;
+}
+
+.amgi-maturity-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.amgi-maturity-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 14px;
+}
+
+.amgi-maturity-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.amgi-maturity-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.amgi-maturity-swatch--new { background: var(--count-new); }
+.amgi-maturity-swatch--learning { background: var(--count-learn); }
+.amgi-maturity-swatch--young { background: var(--warn); }
+.amgi-maturity-swatch--mature { background: var(--count-review); }
+
+:root[data-theme="eink"] .amgi-maturity-swatch {
+  border: 1.5px solid #000000;
+  border-radius: 2px;
+}
+
+:root[data-theme="eink"] .amgi-maturity-swatch--new { background: #FFFFFF; }
+:root[data-theme="eink"] .amgi-maturity-swatch--learning {
+  background: repeating-linear-gradient(
+    -45deg,
+    #FFFFFF,
+    #FFFFFF 2px,
+    #000000 2px,
+    #000000 4px
+  );
+}
+:root[data-theme="eink"] .amgi-maturity-swatch--young {
+  background-color: #FFFFFF;
+  background-image: repeating-conic-gradient(#000000 0% 25%, #FFFFFF 0% 50%);
+  background-size: 4px 4px;
+}
+:root[data-theme="eink"] .amgi-maturity-swatch--mature { background: #000000; }
+
+.amgi-maturity-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.amgi-maturity-hint {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.amgi-maturity-count {
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.amgi-maturity-inactive {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+:root[data-theme="eink"] .amgi-maturity-inactive {
+  border-top: 2px solid #000000;
+}
+
+/* Retention Strip */
+.amgi-retention-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.amgi-retention-cell {
+  padding: 10px 8px;
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--border);
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+:root[data-theme="eink"] .amgi-retention-cell {
+  background: #FFFFFF;
+  border: 2px solid #000000;
+}
+
+.amgi-retention-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.amgi-retention-val {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Bottom Official Stats Card */
+.amgi-stats-official-card {
+  background: var(--surface);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+:root[data-theme="eink"] .amgi-stats-official-card {
+  border: 2px solid #000000;
+}
+
+@media (max-width: 390px) {
+  .amgi-stats-card {
+    padding: 16px;
+  }
+
+  .amgi-stats-metric-val {
+    font-size: 20px;
+  }
+}

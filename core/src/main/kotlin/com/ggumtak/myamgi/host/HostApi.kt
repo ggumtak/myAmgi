@@ -158,7 +158,16 @@ class HostApi(
                     jsonOf("kind" to "colpkg", "path" to file.absolutePath, "imported" to true, "safetyBackup" to safety.name, "route" to null)
                 }
             }
-            "txt", "csv", "tsv" -> jsonOf("kind" to "csv", "path" to file.absolutePath, "route" to "/import-csv/$encoded")
+            "txt", "csv", "tsv" -> {
+                val detectedEncoding = CsvEncoding.ensureUtf8(file)
+                log.info("csv normalized: $name ($detectedEncoding -> UTF-8)")
+                jsonOf(
+                    "kind" to "csv",
+                    "path" to file.absolutePath,
+                    "route" to "/import-csv/$encoded",
+                    "detectedEncoding" to detectedEncoding
+                )
+            }
             else -> throw HostError.badRequest("가져올 수 없는 파일 형식입니다: $name (.apkg, .colpkg, .txt, .csv, .tsv)", "unsupported-type")
         }
     }

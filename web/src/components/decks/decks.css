@@ -1,0 +1,740 @@
+/* ==========================================================================
+   myAmgi Decks Browser, Overview, Custom Study & Add Sheet Styles
+   ========================================================================== */
+
+.amgi-decks-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  padding-bottom: 68px; /* Clear floating +추가 FAB on mobile */
+}
+
+/* Tablet Portrait (840px–1023px): centered single column */
+@media (min-width: 840px) and (max-width: 1023px) {
+  .amgi-decks-page {
+    max-width: 720px;
+    margin: 0 auto;
+    padding-bottom: 12px;
+  }
+}
+
+/* Wide Split View (>= 1024px): Deck tree left, DeckOverviewPane right */
+@media (min-width: 1024px) {
+  .amgi-decks-page {
+    padding-bottom: 0;
+  }
+
+  .amgi-deck-split {
+    display: grid;
+    grid-template-columns: minmax(400px, 42%) minmax(0, 58%);
+    gap: 24px;
+    align-items: start;
+    max-width: 1180px;
+    width: 100%;
+    margin: 0 auto;
+  }
+
+  .amgi-deck-split-left {
+    position: sticky;
+    top: calc(var(--topbar-h) + var(--safe-top) + 16px);
+    max-height: calc(100dvh - var(--topbar-h) - var(--safe-top) - 40px);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .amgi-deck-split-right {
+    min-width: 0;
+  }
+
+  .amgi-deck-split-right .amgi-overview {
+    max-width: 640px;
+  }
+}
+
+/* Today's Study Summary Card */
+.amgi-summary-card {
+  background: var(--surface);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.amgi-summary-body {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.amgi-summary-eyebrow {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.amgi-summary-primary {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.amgi-summary-secondary {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-2);
+}
+
+.amgi-summary-refresh {
+  flex-shrink: 0;
+}
+
+/* Pull-to-refresh indicator */
+.amgi-ptr-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+/* Deck Tree Card */
+.amgi-deck-tree-card {
+  background: var(--surface);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.amgi-deck-header-row,
+.amgi-deck-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 40px 40px 40px 44px;
+  gap: 4px;
+  align-items: center;
+  padding: 6px 4px 6px 8px;
+}
+
+:root[data-theme="eink"] .amgi-deck-header-row,
+:root[data-theme="eink"] .amgi-deck-row {
+  grid-template-columns: minmax(0, 1fr) 40px 40px 40px 48px;
+}
+
+@media (min-width: 480px) {
+  .amgi-deck-header-row,
+  .amgi-deck-row {
+    grid-template-columns: minmax(0, 1fr) 48px 48px 48px 48px;
+    gap: 6px;
+    padding: 6px 8px 6px 12px;
+  }
+
+  :root[data-theme="eink"] .amgi-deck-header-row,
+  :root[data-theme="eink"] .amgi-deck-row {
+    grid-template-columns: minmax(0, 1fr) 48px 48px 48px 48px;
+  }
+}
+
+.amgi-deck-header-row {
+  min-height: 36px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  background: var(--surface-2);
+  border-bottom: var(--border-w) solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-2);
+}
+
+:root[data-theme="eink"] .amgi-deck-header-row {
+  color: #000000;
+  background: #FFFFFF;
+}
+
+.amgi-deck-header-col {
+  text-align: center;
+  white-space: nowrap;
+}
+
+.amgi-deck-header-col:first-child {
+  text-align: left;
+  padding-left: 8px;
+}
+
+.amgi-deck-row {
+  min-height: 56px;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.amgi-deck-row:last-child {
+  border-bottom: none;
+}
+
+.amgi-deck-row:hover {
+  background: var(--surface-2);
+}
+
+:root[data-theme="eink"] .amgi-deck-row {
+  min-height: 60px;
+  border-bottom: 2px solid #000000;
+}
+
+:root[data-theme="eink"] .amgi-deck-row:last-child {
+  border-bottom: none;
+}
+
+:root[data-theme="eink"] .amgi-deck-row:hover {
+  background: #FFFFFF;
+}
+
+.amgi-deck-row-selected {
+  border-left: var(--selected-bar);
+  background: var(--surface-2);
+}
+
+:root[data-theme="eink"] .amgi-deck-row-selected {
+  background: #FFFFFF;
+  border-left: 4px solid #000000;
+}
+
+.amgi-deck-name-cell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 2px;
+}
+
+.amgi-deck-chevron {
+  width: 28px;
+  min-width: 28px;
+  height: 44px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.amgi-deck-chevron:hover {
+  background: var(--surface-active);
+  color: var(--text);
+}
+
+:root[data-theme="eink"] .amgi-deck-chevron {
+  width: 30px;
+  min-width: 30px;
+  height: 46px;
+  color: #000000;
+}
+
+.amgi-deck-chevron-spacer {
+  width: 28px;
+  min-width: 28px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 479px) {
+  .amgi-deck-chevron,
+  :root[data-theme="eink"] .amgi-deck-chevron,
+  .amgi-deck-chevron-spacer,
+  :root[data-theme="eink"] .amgi-deck-chevron-spacer {
+    width: 24px;
+    min-width: 24px;
+  }
+}
+
+.amgi-deck-title-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 2px;
+}
+
+.amgi-deck-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.amgi-deck-title-filtered {
+  color: var(--primary);
+}
+
+:root[data-theme="eink"] .amgi-deck-title-filtered {
+  color: #000000;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.amgi-filtered-pill {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 4px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  border: 1px solid var(--primary);
+  white-space: nowrap;
+}
+
+:root[data-theme="eink"] .amgi-filtered-pill {
+  background: #FFFFFF;
+  color: #000000;
+  border: 1.5px solid #000000;
+}
+
+.amgi-deck-num {
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 3px 2px;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+}
+
+.amgi-deck-num-new {
+  color: var(--count-new);
+}
+
+.amgi-deck-num-learn {
+  color: var(--count-learn);
+}
+
+.amgi-deck-num-review {
+  color: var(--count-review);
+}
+
+.amgi-deck-num-zero {
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+:root[data-theme="eink"] .amgi-deck-num {
+  color: #000000;
+  font-weight: 800;
+}
+
+:root[data-theme="eink"] .amgi-deck-num-zero {
+  color: #000000;
+  font-weight: 400;
+  opacity: 0.45;
+}
+
+.amgi-deck-more-btn {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  margin: 0 auto;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.amgi-deck-more-btn:hover {
+  background: var(--surface-active);
+  color: var(--text);
+}
+
+:root[data-theme="eink"] .amgi-deck-more-btn {
+  width: 46px;
+  min-width: 46px;
+  height: 46px;
+  color: #000000;
+}
+
+/* Empty State Card */
+.amgi-empty-card {
+  background: var(--surface);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  padding: 36px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+}
+
+.amgi-empty-icon-wrap {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: var(--border-w) solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
+}
+
+:root[data-theme="eink"] .amgi-empty-icon-wrap {
+  background: #FFFFFF;
+  border: 2px solid #000000;
+  color: #000000;
+}
+
+.amgi-empty-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.amgi-empty-desc {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-2);
+  max-width: 340px;
+  line-height: 1.55;
+}
+
+.amgi-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 360px;
+  margin-top: 6px;
+}
+
+@media (max-width: 420px) {
+  .amgi-empty-actions {
+    flex-direction: column;
+  }
+
+  .amgi-empty-actions .amgi-btn {
+    width: 100%;
+  }
+}
+
+/* Onboarding Banner when only empty default deck exists */
+.amgi-onboarding-banner {
+  background: var(--surface);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ==========================================================================
+   Deck Overview Pane (#/deck/:id & Wide Right Pane)
+   ========================================================================== */
+
+.amgi-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+}
+
+.amgi-overview-standalone {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.amgi-overview-card {
+  background: var(--surface);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  padding: 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.amgi-overview-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.amgi-overview-title-block {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.amgi-overview-name {
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.3;
+  color: var(--text);
+}
+
+.amgi-overview-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.amgi-overview-desc {
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+:root[data-theme="eink"] .amgi-overview-desc {
+  background: #FFFFFF;
+  border: 2px solid #000000;
+}
+
+.amgi-overview-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.amgi-stat-tile {
+  background: var(--surface-2);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  text-align: center;
+}
+
+:root[data-theme="eink"] .amgi-stat-tile {
+  background: #FFFFFF;
+  border: 2px solid #000000;
+}
+
+.amgi-stat-tile-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-2);
+}
+
+.amgi-stat-tile-value {
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.amgi-stat-tile-new .amgi-stat-tile-value {
+  color: var(--count-new);
+}
+
+.amgi-stat-tile-learn .amgi-stat-tile-value {
+  color: var(--count-learn);
+}
+
+.amgi-stat-tile-review .amgi-stat-tile-value {
+  color: var(--count-review);
+}
+
+:root[data-theme="eink"] .amgi-stat-tile-value {
+  color: #000000 !important;
+}
+
+.amgi-overview-cta {
+  width: 100%;
+  min-height: 56px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.amgi-congrats-box {
+  background: var(--surface-2);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+:root[data-theme="eink"] .amgi-congrats-box {
+  background: #FFFFFF;
+  border: 2px solid #000000;
+}
+
+.amgi-congrats-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.amgi-congrats-sub {
+  font-size: 14px;
+  color: var(--text-2);
+  margin: 0;
+}
+
+.amgi-overview .amgi-btn {
+  min-height: 44px;
+}
+
+:root[data-theme="eink"] .amgi-overview .amgi-btn {
+  min-height: 48px;
+}
+
+.amgi-overview-tools {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.amgi-overview-tools .amgi-btn {
+  padding: 0 10px;
+  font-size: 14px;
+  gap: 6px;
+}
+
+@media (max-width: 339px) {
+  .amgi-overview-tools {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Form helpers for Modals / Custom Study / Filtered Deck */
+.amgi-modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.amgi-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.amgi-field-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.amgi-field-hint {
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.45;
+}
+
+.amgi-radio-card {
+  width: 100%;
+  min-height: 54px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.amgi-radio-card.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+:root[data-theme="eink"] .amgi-radio-card.active {
+  background: #FFFFFF;
+  border: 2px solid #000000;
+  border-left: 5px solid #000000;
+}
+
+.amgi-radio-card-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.amgi-radio-card-desc {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.amgi-inline-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.amgi-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 50px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.amgi-switch-row:last-child {
+  border-bottom: none;
+}
+
+.amgi-tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}

@@ -1,10 +1,81 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#2563eb"/>
-      <stop offset="100%" stop-color="#4f46e5"/>
+    <!-- Deep Midnight to Royal Cobalt diagonal gradient -->
+    <linearGradient id="bgLinear" x1="8%" y1="6%" x2="94%" y2="94%">
+      <stop offset="0%" stop-color="#081024" />
+      <stop offset="52%" stop-color="#132968" />
+      <stop offset="100%" stop-color="#1D4ED8" />
+    </linearGradient>
+
+    <!-- Subtle soft radial cobalt glow near bottom-right -->
+    <radialGradient id="bgGlow" cx="76%" cy="80%" r="63%">
+      <stop offset="0%" stop-color="#3B82F6" stop-opacity="0.30" />
+      <stop offset="55%" stop-color="#2563EB" stop-opacity="0.10" />
+      <stop offset="100%" stop-color="#1D4ED8" stop-opacity="0" />
+    </radialGradient>
+
+    <!-- Back flashcard gradient -->
+    <linearGradient id="backCardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#5BA4FC" />
+      <stop offset="100%" stop-color="#3B82F6" />
+    </linearGradient>
+
+    <!-- Front flashcard cool-ice white gradient -->
+    <linearGradient id="frontCardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="100%" stop-color="#F5F8FF" />
+    </linearGradient>
+
+    <!-- 4-pointed memory spark royal blue gradient -->
+    <linearGradient id="sparkGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1D4ED8" />
+      <stop offset="100%" stop-color="#2563EB" />
     </linearGradient>
   </defs>
-  <rect width="128" height="128" rx="28" fill="url(#g)"/>
-  <text x="64" y="84" font-size="68" font-weight="800" font-family="sans-serif" text-anchor="middle" fill="#ffffff">암</text>
+
+  <!-- Squircle background -->
+  <rect x="0" y="0" width="512" height="512" rx="112" ry="112" fill="url(#bgLinear)" />
+  <rect x="0" y="0" width="512" height="512" rx="112" ry="112" fill="url(#bgGlow)" />
+
+  <!-- Adaptive-icon 72dp inner viewport scaled to 512px (scale = 512/72 = 7.1111, origin at 18,18) -->
+  <g transform="scale(7.1111111) translate(-18, -18)">
+    <!-- Outer optical framing: scale 0.88 around (54,54), shifted (+0.5, +1.1) -->
+    <g transform="translate(0.5, 1.1) translate(54, 54) scale(0.88) translate(-54, -54)">
+      <!-- Back flashcard: rotated -9 deg around (54,54), translated (-4.5, -1.0) -->
+      <g transform="translate(-4.5, -1.0) rotate(-9 54 54)">
+        <rect x="37.5" y="32.5" width="33" height="43" rx="5.5" ry="5.5" fill="url(#backCardGrad)" />
+      </g>
+
+      <!-- Subtle cast shadow beneath front card -->
+      <g transform="translate(1.8, 2.4) rotate(6.5 54 54)">
+        <rect x="36.5" y="31.5" width="35" height="45" rx="5.8" ry="5.8" fill="#050A18" fill-opacity="0.24" />
+      </g>
+
+      <!-- Front flashcard: rotated +6.5 deg around (54,54), translated (+3.2, +1.0) -->
+      <g transform="translate(3.2, 1.0) rotate(6.5 54 54)">
+        <rect x="36.5" y="31.5" width="35" height="45" rx="5.8" ry="5.8" fill="url(#frontCardGrad)" />
+
+        <!-- Symmetric 4-pointed memory spark centered at (54, 49.5) -->
+        <path d="M 54,40.4
+                 C 54.45,40.4 54.65,41.2 55.15,43.0
+                 C 56.15,46.6 56.9,47.35 60.5,48.35
+                 C 62.3,48.85 63.1,49.05 63.1,49.5
+                 C 63.1,49.95 62.3,50.15 60.5,50.65
+                 C 56.9,51.65 56.15,52.4 55.15,56.0
+                 C 54.65,57.8 54.45,58.6 54,58.6
+                 C 53.55,58.6 53.35,57.8 52.85,56.0
+                 C 51.85,52.4 51.1,51.65 47.5,50.65
+                 C 45.7,50.15 44.9,49.95 44.9,49.5
+                 C 44.9,49.05 45.7,48.85 47.5,48.35
+                 C 51.1,47.35 51.85,46.6 52.85,43.0
+                 C 53.35,41.2 53.55,40.4 54,40.4 Z"
+              fill="url(#sparkGrad)" />
+
+        <!-- Progress bar track: height 3.4, r=1.7, crisp #BFD7FF -->
+        <rect x="42.5" y="65.3" width="23.0" height="3.4" rx="1.7" ry="1.7" fill="#BFD7FF" />
+        <!-- 68% filled royal-blue progress bar: #1D4ED8 -->
+        <rect x="42.5" y="65.3" width="15.64" height="3.4" rx="1.7" ry="1.7" fill="#1D4ED8" />
+      </g>
+    </g>
+  </g>
 </svg>
