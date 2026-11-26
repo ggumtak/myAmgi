@@ -192,7 +192,7 @@ class HostActivity : ComponentActivity(), ShellCallbacks {
             showError("Android 시스템 WebView를 사용할 수 없습니다. Play 스토어에서 'Android System WebView'를 업데이트한 뒤 다시 시도하세요.", t)
             return false
         }
-        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
+        WebView.setWebContentsDebuggingEnabled(BuildConfig.WEBVIEW_DEBUGGING)
         wv.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true

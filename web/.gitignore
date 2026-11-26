@@ -3,3 +3,4 @@ dist/
 *.tsbuildinfo
 e2e/screenshots/
 e2e/.results/
+e2e-device/out/

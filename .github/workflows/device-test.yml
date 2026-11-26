@@ -1,0 +1,163 @@
+name: Device test (Android emulator)
+
+# Runs the app on a real Android system (x86_64 emulator with KVM, API 34, Pixel Tablet) before anything
+# reaches main: web/e2e-device/run.sh installs the debug APKs and drives the WebView over Chrome DevTools
+# (Playwright) plus adb. Run it by hand from the Actions tab ("Run workflow") on any branch.
+on:
+  push:
+    branches-ignore:
+      - main
+    paths:
+      - 'app/**'
+      - 'core/**'
+      - 'web/**'
+      - '*.gradle.kts'
+      - 'gradle/**'
+      - 'gradle.properties'
+      - '.github/workflows/device-test.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: device-test-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  API_LEVEL: 34
+  TARGET: google_apis
+  ARCH: x86_64
+  PROFILE: pixel_tablet
+  EMULATOR_OPTIONS: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
+
+jobs:
+  device:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      AMGI_DEVICE_OUT: ${{ github.workspace }}/device-out
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build the web UI
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APKs with x86_64 (Pro & Comet)
+        run: ./gradlew --stacktrace -PskipWebBuild -PemulatorAbi assembleProDebug assembleCometDebug
+
+      - name: Check the debug APKs carry the x86_64 engine
+        run: |
+          for apk in app/build/outputs/apk/pro/debug/*.apk app/build/outputs/apk/comet/debug/*.apk; do
+            unzip -l "$apk" | grep -E "lib/(x86_64|arm64-v8a)/librsdroid.so|assets/ui/index.html"
+            unzip -l "$apk" | grep -q "lib/x86_64/librsdroid.so" || { echo "::error::$apk has no lib/x86_64/librsdroid.so"; exit 1; }
+          done
+
+      - name: AVD cache
+        uses: actions/cache@v4
+        id: avd-cache
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: avd-${{ env.API_LEVEL }}-${{ env.TARGET }}-${{ env.ARCH }}-${{ env.PROFILE }}-v1
+
+      - name: Create AVD and snapshot for caching
+        if: steps.avd-cache.outputs.cache-hit != 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ env.API_LEVEL }}
+          target: ${{ env.TARGET }}
+          arch: ${{ env.ARCH }}
+          profile: ${{ env.PROFILE }}
+          cores: 4
+          ram-size: 4096M
+          disk-size: 4096M
+          force-avd-creation: false
+          emulator-options: ${{ env.EMULATOR_OPTIONS }}
+          disable-animations: false
+          script: echo "Generated AVD snapshot for caching."
+
+      - name: Device test
+        id: run1
+        continue-on-error: true
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ env.API_LEVEL }}
+          target: ${{ env.TARGET }}
+          arch: ${{ env.ARCH }}
+          profile: ${{ env.PROFILE }}
+          cores: 4
+          ram-size: 4096M
+          disk-size: 4096M
+          force-avd-creation: false
+          emulator-options: -no-snapshot-save ${{ env.EMULATOR_OPTIONS }}
+          disable-animations: true
+          script: bash web/e2e-device/run.sh
+
+      # Only a boot that never reached the tests is retried (run.sh writes "started" once the device is up).
+      - name: Device test (retry after a failed emulator boot)
+        id: run2
+        if: steps.run1.outcome == 'failure' && hashFiles('device-out/started') == ''
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ env.API_LEVEL }}
+          target: ${{ env.TARGET }}
+          arch: ${{ env.ARCH }}
+          profile: ${{ env.PROFILE }}
+          cores: 4
+          ram-size: 4096M
+          disk-size: 4096M
+          force-avd-creation: true
+          emulator-options: -no-snapshot ${{ env.EMULATOR_OPTIONS }}
+          disable-animations: true
+          emulator-boot-timeout: 900
+          script: bash web/e2e-device/run.sh
+
+      - name: Key screenshots (base64, 360 px; full size in the artifact)
+        if: always()
+        run: |
+          python3 -m pip install --quiet --disable-pip-version-check pillow || exit 0
+          python3 web/e2e-device/print_shots.py device-out/shots cold-start study-image-question rotated dark-mode import-view-done picker FAILED comet-cold-start || true
+
+      - name: Upload screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: device-test-${{ github.run_number }}
+          path: device-out/
+          if-no-files-found: warn
+
+      - name: Verdict
+        if: always()
+        run: |
+          echo "first run: ${{ steps.run1.outcome }}, boot retry: ${{ steps.run2.outcome }}"
+          if [ "${{ steps.run1.outcome }}" = "success" ] || [ "${{ steps.run2.outcome }}" = "success" ]; then
+            echo "device test passed"
+          else
+            echo "::error::device test failed (see the Device test step and the device-test artifact)"
+            exit 1
+          fi

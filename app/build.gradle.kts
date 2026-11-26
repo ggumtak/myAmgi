@@ -9,6 +9,11 @@ plugins {
 
 val buildNumber = (System.getenv("BUILD_NUMBER") ?: "1").toIntOrNull() ?: 1
 
+// -PemulatorAbi: debug builds also carry x86_64 (the backend AAR ships jni/x86_64/librsdroid.so) so they run on
+// the x86_64 emulator of the device-test workflow (.github/workflows/device-test.yml). Release builds stay
+// arm64-v8a only whatever the property says (build.yml checks the APKs).
+val emulatorAbi: Boolean = providers.gradleProperty("emulatorAbi").isPresent
+
 android {
     namespace = "com.ggumtak.myamgi"
     compileSdk = 36
@@ -70,6 +75,7 @@ android {
 
     buildTypes {
         release {
+            buildConfigField("boolean", "WEBVIEW_DEBUGGING", "false")
             isMinifyEnabled = false
             isShrinkResources = false
             val relKey = signingConfigs.getByName("release")
@@ -81,6 +87,9 @@ android {
         }
         debug {
             isDebuggable = true
+            // Chrome DevTools on the WebView (the device test drives the UI over CDP). Never in release.
+            buildConfigField("boolean", "WEBVIEW_DEBUGGING", "true")
+            if (emulatorAbi) ndk { abiFilters += listOf("x86_64") }
         }
     }
 
@@ -97,10 +106,11 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = false
-            excludes += listOf(
+            // With -PemulatorAbi x86_64 libs may be packaged; only the debug ABI filter asks for them.
+            excludes += listOfNotNull(
                 "lib/armeabi-v7a/**",
                 "lib/x86/**",
-                "lib/x86_64/**",
+                if (emulatorAbi) null else "lib/x86_64/**",
                 "lib/armeabi/**"
             )
         }
