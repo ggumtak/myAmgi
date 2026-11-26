@@ -157,10 +157,11 @@ export function useSyncState(): SyncState {
 
 /** The sync button's state per UI_SPEC: idle, syncing, needs sync (dot), error (!). */
 export function syncButtonState(s: SyncState): 'idle' | 'syncing' | 'needed' | 'error' | 'logged-out' {
-  if (s.unreachable || s.status?.lastError) return 'error';
+  if (s.unreachable) return 'error';
   if (!s.status) return 'idle';
   if (s.status.running) return 'syncing';
   if (!s.status.loggedIn) return 'logged-out';
+  if (s.status.lastError) return 'error';
   if (s.status.needsFullSync || s.required !== 'none') return 'needed';
   return 'idle';
 }

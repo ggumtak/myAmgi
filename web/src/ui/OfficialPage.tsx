@@ -4,7 +4,7 @@
 // Theme handoff: the pages style themselves from Anki's `night-mode` class and
 // Bootstrap's `data-bs-theme` on their <html>. The iframe is same-origin, so after
 // every load (and whenever the app theme changes) both are set on the page's
-// documentElement. `eink` = the light theme plus an injected stylesheet that turns
+// documentElement, together with the app's UI font. `eink` = the light theme plus an injected stylesheet that turns
 // Anki's colour variables black/white and removes shadows and animation.
 //
 // Closing: when the page makes a frontend-service call the host emits `anki-page`
@@ -35,7 +35,19 @@ a { color: #000 !important; text-decoration: underline !important; }
 *, *::before, *::after { transition: none !important; animation: none !important; box-shadow: none !important; text-shadow: none !important; }
 `;
 
+/** Anki desktop gives its pages the system UI font; without it they fall back to a serif font. */
+const BASE_CSS = `
+body { font-family: system-ui, 'Noto Sans KR', sans-serif; }
+input, select, button, textarea { font-family: inherit; }
+`;
+
 export function applyThemeToDocument(doc: Document, theme: Theme): void {
+  if (!doc.getElementById('amgi-base')) {
+    const base = doc.createElement('style');
+    base.id = 'amgi-base';
+    base.textContent = BASE_CSS;
+    (doc.head ?? doc.documentElement).appendChild(base);
+  }
   const root = doc.documentElement;
   const dark = theme === 'dark';
   root.setAttribute('data-bs-theme', dark ? 'dark' : 'light');

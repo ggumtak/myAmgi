@@ -9,6 +9,8 @@ import { startHost, WEB } from './host.mjs';
 
 let host = null;
 const env = { ...process.env };
+// Chromium drops non-ASCII download names (e.g. 일본어_한자.apkg) under a non-UTF-8 locale.
+if (!/utf-?8/i.test(env.LC_ALL || env.LANG || '')) env.LC_ALL = env.LANG = 'C.UTF-8';
 if (!env.AMGI_HOST_URL) {
   try {
     host = await startHost({ seed: true, log: env.AMGI_HOST_VERBOSE ? (s) => process.stderr.write(s) : undefined });

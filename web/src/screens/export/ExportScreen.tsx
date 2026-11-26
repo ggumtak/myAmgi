@@ -25,10 +25,11 @@ export async function deliverExport(r: ExportResult): Promise<void> {
     await host.platform.share(r.path, r.name);
     return;
   }
+  // A real request to the download URL (Content-Disposition: attachment), never a blob: URL:
+  // browsers save it, and the Android shell intercepts it and opens the system save dialog.
+  // The file name comes from the host's Content-Disposition.
   const a = document.createElement('a');
   a.href = host.downloadUrl(r.path, r.name);
-  a.download = r.name;
-  a.rel = 'noopener';
   document.body.appendChild(a);
   a.click();
   a.remove();

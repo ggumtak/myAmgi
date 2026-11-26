@@ -1,8 +1,8 @@
 // 정보: app version, build, UI bundle version, engine version, last sync,
 // update check (`update.*`; "이 기기에서는 지원하지 않습니다" where the shell has
 // no updater, e.g. PC), copy error log (`log.get`).
-import { useState } from 'react';
-import { host, HostError, hostInfoStore, type UpdateStatus } from '../../host';
+import { useEffect, useState } from 'react';
+import { host, HostError, hostInfoStore, onHostEvent, type UpdateStatus } from '../../host';
 import { describeError } from '../../lib/errors';
 import { formatDateTimeMs } from '../../lib/format';
 import { useAsync } from '../../lib/hooks';
@@ -20,6 +20,12 @@ export function AboutSection() {
   const info = useAsync(() => (hostInfoStore.get() ? Promise.resolve(hostInfoStore.get()!) : hostInfoStore.load()), []);
   const sync = useSyncState();
   const [update, setUpdate] = useState<Update>({ state: 'idle' });
+  // Shell update state (Android: APK + OTA UI bundle); null where unsupported (PC).
+  const [shell, setShell] = useState<UpdateStatus | null>(null);
+  useEffect(() => {
+    host.update.status().then((s) => setShell(s.supported === false ? null : s), () => setShell(null));
+    return onHostEvent('update', setShell);
+  }, []);
   const i = info.data;
   const flavor = i ? ({ comet: 'Comet (전자잉크)', pro: 'Pro', desktop: 'PC' } as Record<string, string>)[i.flavor] ?? i.flavor : '';
   const lastSync = sync.status?.lastSync ? formatDateTimeMs(sync.status.lastSync) : '없음';
@@ -33,9 +39,10 @@ export function AboutSection() {
         return;
       }
       const u = await host.update.check();
+      setShell(u);
       setUpdate(
         u.available
-          ? { state: 'done', message: `새 버전이 있습니다${u.latestVersion ? `: ${u.latestVersion}` : ''}`, status: u }
+          ? { state: 'done', message: `${u.kind === 'ota' ? '새 화면' : '새 버전'}이 있습니다${u.latest ? `: ${u.latest}` : ''}`, status: u }
           : { state: 'done', message: '최신 버전입니다' },
       );
     } catch (err) {
@@ -44,9 +51,10 @@ export function AboutSection() {
   };
 
   const apply = async () => {
+    if (update.state !== 'done') return;
     setUpdate({ state: 'applying' });
     try {
-      await host.update.apply();
+      await host.update.apply(update.state === 'done' && update.status?.kind ? update.status.kind : undefined);
       setUpdate({ state: 'done', message: '업데이트를 시작했습니다' });
     } catch (err) {
       toast(`업데이트하지 못했습니다: ${describeError(err).message}`, { kind: 'error' });
@@ -63,6 +71,32 @@ export function AboutSection() {
         <ListRow title="엔진 버전" trailing={<span data-testid="about-engine">{i?.backendVersion ?? '…'}</span>} />
         <ListRow title="기기" trailing={i ? `${i.device} (${i.platform === 'android' ? 'Android' : 'PC'})` : '…'} />
         <ListRow title="마지막 동기화" trailing={<span data-testid="about-last-sync">{lastSync}</span>} />
+        {shell && (
+          <>
+            <ListRow
+              title="앱 업데이트 (APK)"
+              trailing={
+                <span data-testid="about-update-apk">
+                  {shell.apk?.available ? `새 버전 빌드 ${shell.apk.latestBuild ?? ''}` : shell.lastCheck ? '최신' : '확인 전'}
+                </span>
+              }
+            />
+            <ListRow
+              title="화면 업데이트 (UI 번들)"
+              trailing={
+                <span data-testid="about-update-ota">
+                  {shell.ui?.reloadNeeded
+                    ? `새 화면 ${shell.ui.downloaded ?? ''} · 다시 열면 적용`
+                    : shell.ui?.source === 'ota'
+                      ? `받은 화면 ${shell.ui.version ?? ''}`
+                      : '기본 화면'}
+                </span>
+              }
+            />
+            {shell.running && <ListRow title="업데이트 진행" trailing={`${shell.phase ?? ''}${shell.percent != null ? ` ${shell.percent}%` : ''}`} />}
+            {shell.lastError && <p className="settings__error settings__note">{shell.lastError}</p>}
+          </>
+        )}
         {update.state === 'done' && (
           <p className="settings__note" role="status" data-testid="update-result">
             {update.message}

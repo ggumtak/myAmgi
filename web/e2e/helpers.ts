@@ -193,3 +193,29 @@ export function officialFrame(page: Page) {
 }
 
 export const isPhone = (info: TestInfo) => info.project.name === 'phone';
+
+/**
+ * Replaces the host's event stream (`/api/host/events`) with one the test controls, for states the
+ * real host cannot produce here (AnkiWeb sync progress). Each response carries the queued events and
+ * `retry: 50`, so EventSource reconnects and picks up new ones within ~50 ms. Call before `openApp`.
+ * For events the real host can deliver, prefer `emitHostEvent` (no interception).
+ */
+export async function fakeEventStream(page: Page) {
+  const queue: string[] = [];
+  await page.route('**/api/host/events', async (route) => {
+    const body = 'retry: 50\n\n' + queue.splice(0).join('');
+    await route.fulfill({ status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' }, body });
+  });
+  return {
+    emit(event: string, data: unknown) {
+      queue.push(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    },
+  };
+}
+
+/** A promise with its resolve function exposed (to hold an intercepted request open). */
+export function deferred<T = void>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
+}

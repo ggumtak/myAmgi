@@ -206,7 +206,8 @@ object SampleCollection {
                 b.setDeckCollapsed(id, false, SetDeckCollapsedRequest.Scope.BROWSER)
             }
         }
-        AnkiEngine.setCurrentDeck(1L)
+        // Current deck (used by the statistics page's "deck" scope and the wide deck list's default selection).
+        AnkiEngine.setCurrentDeck(DECK_IDS.getValue("일본어"))
     }
 
     private fun deckId(name: String): Long? = AnkiEngine.getDeckNames().firstOrNull { it.name == name }?.id

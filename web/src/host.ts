@@ -109,16 +109,47 @@ export interface ExportResult {
 }
 
 /**
- * `update.status` / `update.check` / `update.apply`. The shape is platform defined; the desktop
- * host answers `update.status` with `{supported: false, currentVersion}` and the others with 501.
+ * `update.status` / `update.check` / `update.apply`, and the `update` event (same JSON). Android
+ * (app/.../update/UpdateCenter.kt) fills all of it; the desktop host answers `update.status` with
+ * `{supported: false, currentVersion}` and the others with 501.
  */
 export interface UpdateStatus {
+  /** false = this shell has no updater (PC). */
   supported?: boolean;
+  /** An APK to install or a downloaded UI bundle to reload into. */
   available?: boolean;
+  kind?: 'apk' | 'ota' | null;
+  current?: string;
   currentVersion?: string;
-  latestVersion?: string;
-  kind?: 'apk' | 'ota' | string;
+  latest?: string | null;
+  running?: boolean;
+  phase?: string | null;
+  percent?: number | null;
+  lastError?: string | null;
+  /** Epoch ms. */
+  lastCheck?: number | null;
+  apk?: { build?: number; latestBuild?: number | null; available?: boolean; size?: number | null; patch?: boolean };
+  ui?: {
+    version?: string | null;
+    builtInVersion?: string | null;
+    /** `ota` = a downloaded UI bundle is being served. */
+    source?: 'ota' | 'builtin';
+    downloaded?: string | null;
+    /** A UI bundle was installed after this page loaded: `update.apply {kind: "ota"}` reloads into it. */
+    reloadNeeded?: boolean;
+    note?: string | null;
+    lastRollback?: unknown;
+  };
   [key: string]: unknown;
+}
+
+/** `ui.state`: what the shell needs to paint system bars and handle keys. Every field optional. */
+export interface UiShellState {
+  theme?: 'light' | 'dark' | 'eink';
+  /** `#RRGGBB` page background. */
+  background?: string;
+  keepScreenOn?: boolean;
+  captureKeys?: boolean;
 }
 
 /** `log.get`. */
@@ -184,6 +215,19 @@ export async function hostCall<T = unknown>(name: string, body: unknown = {}): P
 
 type Ok = { ok: true };
 
+/**
+ * A shell hook that older hosts may not have (404 unknown function / 501 unsupported): those
+ * answers, and an unreachable host, are a silent no-op. Resolves to null then.
+ */
+export async function optionalHostCall<T = unknown>(name: string, body: unknown = {}): Promise<T | null> {
+  try {
+    return await hostCall<T>(name, body);
+  } catch (err) {
+    if (err instanceof HostError && (err.status === 404 || err.status === 501 || err.status === 0)) return null;
+    throw err;
+  }
+}
+
 export const host = {
   info: () => hostCall<HostInfo>('info'),
   prefs: {
@@ -225,8 +269,19 @@ export const host = {
   update: {
     status: () => hostCall<UpdateStatus>('update.status'),
     check: () => hostCall<UpdateStatus>('update.check'),
-    apply: () => hostCall<UpdateStatus>('update.apply'),
+    /** `apk` installs the newer APK, `ota` reloads into a downloaded UI bundle; omitted = whatever is pending. */
+    apply: (kind?: 'apk' | 'ota') => hostCall<UpdateStatus>('update.apply', kind ? { kind } : {}),
   },
+  /** Shell protocol (Android). Missing on older/desktop hosts: silently ignored. */
+  ui: {
+    /** After the first successful render. An OTA bundle that never says so is rolled back after 30 s. */
+    ready: (uiVersion: string | null, features: string[]) => optionalHostCall<Ok>('ui.ready', { uiVersion, features }),
+    state: (state: UiShellState) => optionalHostCall<Ok>('ui.state', state),
+    /** The UI consumed the `back {id}` event. */
+    backHandled: (id: number) => optionalHostCall<Ok>('ui.backHandled', { id }),
+  },
+  /** Android: `{version, js}` of the Hanja app's card tap script. */
+  hanjaScript: () => optionalHostCall<{ version: number | null; js: string }>('hanja.script'),
   logGet: () => hostCall<HostLogSnapshot>('log.get'),
 
   /**
@@ -300,13 +355,17 @@ export interface AnkiPageEvent {
 
 export interface HostEvents {
   progress: ProgressEvent;
-  back: Record<string, unknown>;
-  'open-file': { path?: string; name?: string; [key: string]: unknown };
+  /** Android back button. `id` (when present) must be acknowledged with `ui.backHandled`. */
+  back: { id?: number };
+  /** A file opened with the app (already on the host, like an upload). */
+  'open-file': { path?: string; name?: string };
   'sync-state': SyncStatus;
   'anki-page': AnkiPageEvent;
+  /** Same JSON as `update.status`. */
+  update: UpdateStatus;
 }
 
-export const HOST_EVENT_TYPES = ['progress', 'back', 'open-file', 'sync-state', 'anki-page'] as const;
+export const HOST_EVENT_TYPES = ['progress', 'back', 'open-file', 'sync-state', 'anki-page', 'update'] as const;
 
 type Handler<K extends keyof HostEvents> = (data: HostEvents[K]) => void;
 const handlers: { [K in keyof HostEvents]?: Set<Handler<K>> } = {};
@@ -358,7 +417,7 @@ export interface UiPrefs {
   twoButtons?: boolean;
   /** Reviewer: tap on the card shows the answer. */
   tapToShowAnswer?: boolean;
-  /** Reviewer: volume keys / Bluetooth remotes answer cards. */
+  /** Reviewer: volume keys / Bluetooth remotes answer cards. Default: on for e-ink devices (`info.eink`). */
   volumeKeys?: boolean;
   /** Card text scale in percent. */
   cardFontScale?: number;

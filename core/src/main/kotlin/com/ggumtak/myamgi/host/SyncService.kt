@@ -201,6 +201,7 @@ class SyncService(
     fun logout(): JsonObject {
         saveState(mapOf("hkey" to null, "endpoint" to null))
         needsFullSync = false
+        lastError = null
         publishState()
         return status()
     }

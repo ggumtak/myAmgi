@@ -1,5 +1,5 @@
 // 설정: 학습 · 화면 · 동기화 · 백업 · 정보. UI preferences live on the host.
-import { usePrefs, type ThemePref } from '../../host';
+import { hostInfoStore, usePrefs, type ThemePref } from '../../host';
 import { describeError } from '../../lib/errors';
 import { AppBar } from '../../ui/AppBar';
 import { IconChevronRight } from '../../ui/icons';
@@ -30,7 +30,7 @@ export function SettingsScreen() {
         <ListSection title="학습">
           <Toggle label="2버튼 모드" hint="모름 · 암기 완료 두 개만 표시" checked={!!prefs.twoButtons} onChange={(v) => save({ twoButtons: v })} testId="pref-two-buttons" />
           <Toggle label="탭해서 정답 보기" hint="카드를 누르면 정답이 보입니다" checked={prefs.tapToShowAnswer ?? true} onChange={(v) => save({ tapToShowAnswer: v })} />
-          <Toggle label="볼륨키/리모컨으로 답하기" checked={!!prefs.volumeKeys} onChange={(v) => save({ volumeKeys: v })} />
+          <Toggle label="볼륨키/리모컨으로 답하기" checked={prefs.volumeKeys ?? !!hostInfoStore.get()?.eink} onChange={(v) => save({ volumeKeys: v })} testId="pref-volume-keys" />
         </ListSection>
 
         <ListSection title="화면">
