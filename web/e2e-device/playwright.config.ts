@@ -18,7 +18,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 0,
-  timeout: 240_000,
+  timeout: 150_000,
   expect: { timeout: 20_000 },
   reporter: [['list'], ['json', { outputFile: path.join(out, `report-${process.env.AMGI_FLAVOR ?? 'pro'}.json`) }]],
   use: { trace: 'off' },

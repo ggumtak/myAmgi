@@ -7,7 +7,6 @@ import android.os.Build
 import android.provider.OpenableColumns
 import com.ggumtak.myamgi.host.HostApi
 import java.io.File
-import java.util.Locale
 import java.util.UUID
 
 /** Files handed to the app ("다른 앱으로 열기" / 공유): copied into the host's upload dir for `import.file`. */
@@ -29,17 +28,21 @@ object IncomingFiles {
         }
     }
 
-    /** Copies [uri] into [uploadDir] (same naming as `/api/host/upload`). Blocking. */
+    /**
+     * Copies [uri] into its own directory under [uploadDir], keeping the display name (as `/api/host/upload`
+     * does): the official import page shows the file's name, so `upload-1a2b3c.apkg` would confuse the owner.
+     * Blocking.
+     */
     fun copy(resolver: ContentResolver, uri: Uri, uploadDir: File): OpenFileQueue.Item {
         val name = HostApi.safeFileName(displayName(resolver, uri) ?: uri.lastPathSegment?.substringAfterLast('/') ?: "file")
-        val ext = name.substringAfterLast('.', "").lowercase(Locale.ROOT).filter { it in 'a'..'z' || it in '0'..'9' }.take(10)
-        uploadDir.mkdirs()
-        val target = File(uploadDir, "upload-${UUID.randomUUID().toString().take(12)}" + if (ext.isEmpty()) "" else ".$ext")
+        val dir = File(uploadDir, "upload-${UUID.randomUUID().toString().take(12)}")
+        dir.mkdirs()
+        val target = File(dir, name)
         try {
             val input = resolver.openInputStream(uri) ?: throw java.io.IOException("cannot open $uri")
             input.use { i -> target.outputStream().use { o -> i.copyTo(o, 64 * 1024) } }
         } catch (t: Throwable) {
-            target.delete()
+            dir.deleteRecursively()
             throw t
         }
         return OpenFileQueue.Item(target.absolutePath, name)

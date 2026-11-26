@@ -37,6 +37,8 @@ jobs:
     timeout-minutes: 45
     env:
       AMGI_DEVICE_OUT: ${{ github.workspace }}/device-out
+      BUILD_NUMBER: ${{ github.run_number }}
+      AMGI_UI_VERSION: 1.0.${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
 
@@ -142,6 +144,18 @@ jobs:
         run: |
           python3 -m pip install --quiet --disable-pip-version-check pillow || exit 0
           python3 web/e2e-device/print_shots.py device-out/shots cold-start study-image-question rotated dark-mode import-view-done picker FAILED comet-cold-start || true
+
+      - name: Diagnostics (host log, app errors in logcat, layout)
+        if: always()
+        run: |
+          cd device-out/logs 2>/dev/null || exit 0
+          for f in device-test-*.log; do echo "::group::$f"; cat "$f"; echo "::endgroup::"; done
+          for f in host-*.txt; do [ -f "$f" ] || continue; echo "::group::$f (tail)"; tail -n 25 "$f"; echo "::endgroup::"; done
+          echo "::group::app logcat: warnings and errors"
+          grep -E " [EWF] " logcat-app.txt 2>/dev/null | grep -vE "eglCodecCommon|EGL_emulation|goldfish" | tail -n 150 || true
+          echo "::endgroup::"
+          echo "::group::crashes"; cat app-crashes.txt 2>/dev/null; head -n 60 logcat-crash.txt 2>/dev/null; echo "::endgroup::"
+          grep -iE "Current WebView package|versionName" webview.txt 2>/dev/null | head -4 || true
 
       - name: Upload screenshots and logs
         if: always()

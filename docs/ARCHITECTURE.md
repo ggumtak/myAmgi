@@ -97,6 +97,11 @@ Engine-backed, own UI: deck list with counts, deck create/rename/delete/move/col
 - `./gradlew :desktop:run --args="--port 40001 --dir <tmp>"` — development host.
 - `web`: `npm run test` (unit) and `npm run e2e` (Playwright against the development host with a seeded collection). Screenshots of each screen in `light`, `dark`, `eink`, phone and tablet sizes are reviewed before shipping.
 - CI builds both APK flavors, runs all of the above, and publishes.
+- Device test (`.github/workflows/device-test.yml`, every push to a non-`main` branch that touches the app, or "Run workflow"):
+  debug APKs built with `-PemulatorAbi` (adds x86_64) run on an API 34 Pixel Tablet emulator; `web/e2e-device/run.sh`
+  drives the real WebView over Chrome DevTools (Playwright `connectOverCDP`) plus adb: cold start, reviewer with audio/images,
+  imports from Downloads and the document picker, back, rotation, dark mode, volume keys, share sheet, clipboard, provider,
+  process death; fails on any app crash or ANR in logcat. Screenshots and logs are the `device-test-<n>` artifact.
 
 ## Releases
 

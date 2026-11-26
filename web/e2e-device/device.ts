@@ -115,11 +115,12 @@ export function log(msg: string) {
   fs.appendFileSync(path.join(OUT, 'logs', `device-test-${FLAVOR}.log`), line + '\n');
 }
 
-let shotCounter = 0;
 /** Screenshot of the whole display (system bars included) to out/shots/<flavor>-<name>.png. */
 export function shot(name: string): string {
   const r = spawnSync('adb', ['exec-out', 'screencap', '-p'], { timeout: 30_000, maxBuffer: 64 * 1024 * 1024 });
-  const file = path.join(OUT, 'shots', `${FLAVOR}-${String(++shotCounter).padStart(2, '0')}-${name}.png`);
+  // Numbered across worker restarts (a failed step starts a new worker process).
+  const n = fs.readdirSync(path.join(OUT, 'shots')).filter((f) => f.startsWith(`${FLAVOR}-`)).length + 1;
+  const file = path.join(OUT, 'shots', `${FLAVOR}-${String(n).padStart(2, '0')}-${name}.png`);
   if (r.status === 0 && r.stdout?.length) fs.writeFileSync(file, r.stdout);
   else log(`screenshot ${name} failed: ${r.stderr?.toString()}`);
   return file;
@@ -324,8 +325,19 @@ export function tapRect(r: Rect) {
   sh(`input tap ${Math.round((r.left + r.right) / 2)} ${Math.round((r.top + r.bottom) / 2)}`);
 }
 
-/** Visible status/navigation bar frames from `dumpsys window` (InsetsSource lines). */
-export function systemBars(): { type: string; frame: Rect }[] {
+/** Rotation-aware display size in device px. */
+export function displaySize(): { width: number; height: number } {
+  const out = sh('wm size');
+  const m = /Override size: (\d+)x(\d+)/.exec(out) ?? /Physical size: (\d+)x(\d+)/.exec(out);
+  const w = Number(m![1]);
+  const h = Number(m![2]);
+  const rot = /mCurrentRotation=(?:ROTATION_)?(\d+)/.exec(sh('dumpsys window displays'))?.[1] ?? '0';
+  const quarter = rot === '1' || rot === '3' || rot === '90' || rot === '270';
+  return quarter ? { width: h, height: w } : { width: w, height: h };
+}
+
+/** Visible status/navigation bar frames for the current orientation (`dumpsys window` InsetsSource lines). */
+export function systemBars(disp = displaySize()): { type: string; frame: Rect }[] {
   const out = sh('dumpsys window');
   const seen = new Set<string>();
   const bars: { type: string; frame: Rect }[] = [];
@@ -333,6 +345,9 @@ export function systemBars(): { type: string; frame: Rect }[] {
     if (m[3] !== 'true') continue;
     const frame = rectOf(m[2]);
     if (frame.right <= frame.left || frame.bottom <= frame.top) continue;
+    // dumpsys also lists frames computed for the other orientation.
+    if (frame.right > disp.width || frame.bottom > disp.height) continue;
+    if (frame.right - frame.left !== disp.width && frame.bottom - frame.top !== disp.height) continue;
     const key = `${m[1]}${m[2]}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -341,15 +356,9 @@ export function systemBars(): { type: string; frame: Rect }[] {
   return bars;
 }
 
-export function displaySize(): { width: number; height: number } {
-  const out = sh('wm size');
-  const m = /Override size: (\d+)x(\d+)/.exec(out) ?? /Physical size: (\d+)x(\d+)/.exec(out);
-  return { width: Number(m![1]), height: Number(m![2]) };
-}
-
 /**
  * Asserts the WebView is not under a system bar, matches the page viewport, and the page has no
- * horizontal scroll and nothing outside the viewport horizontally. Returns the measurements.
+ * horizontal scroll and no app chrome outside the viewport. Returns the measurements.
  */
 export async function checkLayout(page: Page, label: string) {
   const m = await page.evaluate(() => {
@@ -360,11 +369,12 @@ export async function checkLayout(page: Page, label: string) {
     });
     return { w: innerWidth, h: innerHeight, dpr: devicePixelRatio, scrollW: d.scrollWidth, bodyScrollW: document.body.scrollWidth, chrome };
   });
-  const xml = uiDump();
-  const wv = xml ? nodeBounds(xml, 'class', 'android.webkit.WebView') : null;
-  const bars = systemBars();
   const disp = displaySize();
-  const report = { label, page: m, webView: wv, bars, display: disp, rotation: sh('settings get system user_rotation').trim() };
+  const bars = systemBars(disp);
+  const xml = uiDump();
+  writeLog(`layout-${FLAVOR}-${label}.xml`, xml);
+  const wv = xml ? nodeBounds(xml, 'class', /WebView$/) : null;
+  const report = { label, page: m, webView: wv, bars, display: disp, top: topActivity() };
   log(`layout ${label}: ${JSON.stringify(report)}`);
   writeLog(`layout-${FLAVOR}-${label}.json`, JSON.stringify(report, null, 2));
 
@@ -376,17 +386,41 @@ export async function checkLayout(page: Page, label: string) {
     expect(c.bottom, `${label}: .${c.cls} ends below the viewport`).toBeLessThanOrEqual(m.h + 1);
     expect(c.right, `${label}: .${c.cls} ends right of the viewport`).toBeLessThanOrEqual(m.w + 1);
   }
-  expect(wv, `${label}: WebView not found in the uiautomator dump`).not.toBeNull();
+  const vw = m.w * m.dpr;
+  const vh = m.h * m.dpr;
+  const status = bars.filter((b) => b.type === 'statusBars');
+  const nav = bars.filter((b) => b.type === 'navigationBars');
+  // The room the system bars leave (status bar at the top, navigation/task bar at the bottom or a side).
+  const top = Math.max(0, ...status.map((b) => b.frame.bottom));
+  const bottom = Math.min(disp.height, ...nav.filter((b) => b.frame.top > 0).map((b) => b.frame.top));
+  const left = Math.max(0, ...nav.filter((b) => b.frame.left === 0 && b.frame.right < disp.width).map((b) => b.frame.right));
+  const right = Math.min(disp.width, ...nav.filter((b) => b.frame.left > 0).map((b) => b.frame.left));
+  expect(status.length, `${label}: no status bar found in dumpsys window`).toBeGreaterThan(0);
   if (wv) {
     for (const b of bars) {
       expect(intersects(wv, b.frame), `${label}: WebView ${JSON.stringify(wv)} overlaps ${b.type} ${JSON.stringify(b.frame)}`).toBe(false);
     }
-    // The page viewport is the WebView (CSS px × devicePixelRatio = device px).
-    expect(Math.abs(m.w * m.dpr - (wv.right - wv.left)), `${label}: viewport width vs WebView`).toBeLessThanOrEqual(m.dpr * 2);
-    expect(Math.abs(m.h * m.dpr - (wv.bottom - wv.top)), `${label}: viewport height vs WebView`).toBeLessThanOrEqual(m.dpr * 2);
-    expect(wv.right).toBeLessThanOrEqual(Math.max(disp.width, disp.height));
+    expect(Math.abs(vw - (wv.right - wv.left)), `${label}: viewport width vs WebView`).toBeLessThanOrEqual(m.dpr * 2);
+    expect(Math.abs(vh - (wv.bottom - wv.top)), `${label}: viewport height vs WebView`).toBeLessThanOrEqual(m.dpr * 2);
+  } else {
+    log(`layout ${label}: WebView node not in the uiautomator dump; checking the viewport against the bar-free area`);
   }
+  // The page gets exactly the area between the bars: not behind them (too big) and no gap (too small).
+  expect(Math.abs(vh - (bottom - top)), `${label}: viewport height ${vh} vs space between bars ${bottom - top}`).toBeLessThanOrEqual(m.dpr * 2);
+  expect(Math.abs(vw - (right - left)), `${label}: viewport width ${vw} vs space between bars ${right - left}`).toBeLessThanOrEqual(m.dpr * 2);
   return report;
+}
+
+/** Closes system dialogs ("… isn't responding") and leaves the app on top if it was running. */
+export function dismissSystemDialogs() {
+  const focus = adbRaw(['shell', 'dumpsys window | grep -E "mCurrentFocus|mFocusedApp"']).out;
+  if (/Application Not Responding|Application Error|isn't responding/i.test(focus)) {
+    log(`system dialog in focus: ${focus.replace(/\s+/g, ' ')}`);
+    const xml = uiDump();
+    const wait = nodeBounds(xml, 'text', /^(Wait|대기)$/) ?? nodeBounds(xml, 'text', /^(Close app|앱 닫기)$/);
+    if (wait) tapRect(wait);
+    else keyevent('KEYCODE_BACK');
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------

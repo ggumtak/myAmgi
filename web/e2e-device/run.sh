@@ -25,6 +25,10 @@ adb wait-for-device
 adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 1; done'
 # The device is up: from here on a failure is a test result, not a boot problem (see device-test.yml).
 date -u +%FT%TZ > "$OUT/started"
+# The emulator's launcher is slow under software rendering and its "isn't responding" dialog would take
+# every key and tap. Error dialogs stay hidden; app crashes/ANRs are still found in logcat below.
+adb shell settings put global hide_error_dialogs 1 || true
+adb shell settings put global anr_show_background 0 || true
 adb shell input keyevent KEYCODE_WAKEUP || true
 adb shell wm dismiss-keyguard || true
 adb shell settings put global window_animation_scale 0 || true
