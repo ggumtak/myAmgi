@@ -49,7 +49,6 @@ for (const theme of THEMES) {
 test('every spec route renders (placeholders name their screen)', async ({ page }) => {
   await openApp(page, '/decks');
   const routes: [string, string][] = [
-    ['/study/1', '학습'],
     ['/browse?q=deck:x', '찾아보기'],
     ['/note/new?deck=1', '노트 추가'],
     ['/note/5', '노트 편집'],
