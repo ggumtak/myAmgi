@@ -47,14 +47,21 @@ export const DEFAULT_REMOTE_MAP: Readonly<Record<string, RemoteAction>> = {
   ArrowRight: 'positive',
   ArrowLeft: 'negative',
   MediaPlayPause: 'positive',
+  MediaPlay: 'positive',
+  MediaPause: 'positive',
   MediaTrackNext: 'positive',
+  MediaFastForward: 'positive',
   MediaTrackPrevious: 'negative',
+  MediaRewind: 'negative',
+  MediaStop: 'replay',
   ArrowDown: 'scrollDown',
   ArrowUp: 'scrollUp',
 };
 
 /** Keys that only reach the app when the shell forwards them; gated by `study.volumeKeys`. */
 const VOLUME_KEYS = new Set(['AudioVolumeDown', 'AudioVolumeUp', 'VolumeDown', 'VolumeUp']);
+/** Keys the shell delivers as synthetic events; `repeat` is true while held. */
+export const HARDWARE_KEYS = new Set([...VOLUME_KEYS, 'MediaPlayPause', 'MediaPlay', 'MediaPause', 'MediaStop', 'MediaTrackNext', 'MediaTrackPrevious', 'MediaFastForward', 'MediaRewind']);
 
 export interface KeyLike {
   key: string;
@@ -109,9 +116,9 @@ export const SHORTCUTS: readonly Shortcut[] = [
 export interface KeyContext {
   side: Side;
   twoButton: boolean;
-  /** Handle volume keys (pref `study.volumeKeys`). */
+  /** Handle volume keys (pref `volumeKeys`). */
   volumeKeys: boolean;
-  /** Pref `study.keyMap`: overrides for the remote table. */
+  /** Pref `study.keyMap`: overrides for the remote table (pref `volumeKeys` gates volume keys). */
   remoteMap?: Record<string, RemoteAction> | null;
 }
 

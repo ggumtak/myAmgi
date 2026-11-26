@@ -54,7 +54,7 @@
         A tap on the card background that is NOT on a link, button, input,
         select, textarea, label, audio/video control, [onclick], an element
         (or ancestor) with class/attribute "tappable", and not while text is
-        selected. Coordinates are relative to the frame viewport.
+        selected (or when the tap only dismissed a selection). Coordinates are relative to the frame viewport.
     {type: "amgi:bridge", cmd: string, typed: string|null}
         pycmd(cmd) / bridgeCommand(cmd) from reviewer.js or the card: "ans",
         "ease1".."ease4", "play:q:0", ... plus the AnkiDroid shims' commands
@@ -82,10 +82,10 @@
   /* The app draws the flag stripe and mark star around the frame. */
   #_flag, #_mark { display: none !important; }
   /* App palette in dark mode so the card blends with the reviewer chrome. */
-  html.night-mode { --canvas: #121316; --fg: #e6e7ea; }
+  :root.night-mode { --canvas: #121316; --fg: #e6e7ea; }
   body.eink, body.eink * { transition: none !important; animation: none !important; }
   body.eink { background: #fff; color: #000; }
-  #typeans { padding: 6px 8px; border: 1px solid #888; border-radius: 6px; }
+  input#typeans { padding: 6px 8px; border: 1px solid #888; border-radius: 6px; }
   .replay-button svg { width: 40px; height: 40px; }
   body.eink .replay-button svg circle { fill: #fff; stroke: #000; stroke-width: 3px; }
   body.eink .replay-button svg path { fill: #000; }
@@ -384,8 +384,17 @@
 
   // Taps: never on interactive elements or deck-marked ".tappable", never while text is selected.
   var INTERACTIVE = 'a, button, input, select, textarea, label, audio, video, summary, details, object, embed, [onclick], [contenteditable], [role=button], .tappable, [tappable]';
+  // A tap that dismisses a selection (the owner selected a word to look it up) is not a flip:
+  // the selection collapses on pointerdown, so remember it from there.
+  var selectionAtDown = false;
+  function hasSelection() {
+    var s = window.getSelection && window.getSelection();
+    return !!(s && !s.isCollapsed && String(s).length);
+  }
+  document.addEventListener('pointerdown', function () { selectionAtDown = hasSelection(); }, true);
   document.addEventListener('click', function (ev) {
     if (ev.defaultPrevented) return;
+    if (selectionAtDown) { selectionAtDown = false; return; }
     var t = ev.target;
     if (t && t.nodeType !== 1) t = t.parentElement;
     if (t && t.closest && t.closest(INTERACTIVE)) return;

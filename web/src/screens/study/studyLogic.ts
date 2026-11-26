@@ -104,15 +104,16 @@ export interface StudyPrefs {
 
 const bool = (...vals: unknown[]): boolean | undefined => vals.find((v) => typeof v === 'boolean') as boolean | undefined;
 
-/** Reads the `study.*` prefs (falls back to the older settings-screen keys). */
+/** Reads the reviewer prefs: `twoButtons`, `tapToShowAnswer`, `volumeKeys` (shared with Settings and the shell) and `study.*`. */
 export function readStudyPrefs(prefs: Record<string, unknown>, eink: boolean): StudyPrefs {
   const scaleRaw = [prefs['study.fontScale'], prefs.cardFontScale].find((v) => typeof v === 'number' && v > 0) as number | undefined;
   const fontScale = scaleRaw === undefined ? 100 : scaleRaw <= 4 ? Math.round(scaleRaw * 100) : Math.round(scaleRaw);
   const keyMap = prefs['study.keyMap'];
   return {
-    twoButton: bool(prefs['study.twoButton'], prefs.twoButtons) ?? eink,
-    tapToFlip: bool(prefs['study.tapToFlip'], prefs.tapToShowAnswer) ?? true,
-    volumeKeys: bool(prefs['study.volumeKeys'], prefs.volumeKeys) ?? true,
+    twoButton: bool(prefs.twoButtons) ?? eink,
+    tapToFlip: bool(prefs.tapToShowAnswer) ?? true,
+    // The Android shell only forwards hardware keys while `volumeKeys` is on; elsewhere they are plain keys.
+    volumeKeys: bool(prefs.volumeKeys) ?? true,
     fontScale: Math.min(300, Math.max(50, fontScale)),
     showRemaining: bool(prefs['study.showRemaining']) ?? null,
     showIntervals: bool(prefs['study.showIntervals']) ?? null,

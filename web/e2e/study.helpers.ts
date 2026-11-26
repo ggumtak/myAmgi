@@ -139,7 +139,7 @@ export async function installPlaySpy(page: Page, ms = 150) {
     }
     HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
       try {
-        (window.top as unknown as { __plays: string[] }).__plays.push(decodeURIComponent(this.currentSrc || this.src).split('/').pop() || '');
+        (window.top as unknown as { __plays: string[] }).__plays.push(decodeURIComponent(this.src || this.currentSrc).split('/').pop() || '');
       } catch {
         // ignore
       }

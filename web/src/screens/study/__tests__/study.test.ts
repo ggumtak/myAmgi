@@ -55,6 +55,9 @@ describe('key mapping', () => {
     expect(actionForKey({ key: 'PageDown' }, { ...a, volumeKeys: false })).toBe('good');
     expect(actionForKey({ key: 'AudioVolumeDown' }, { ...a, remoteMap: { AudioVolumeDown: 'negative' } })).toBe('again');
     expect(actionForKey({ key: 'MediaPlayPause' }, { ...a, remoteMap: { MediaPlayPause: 'replay' } })).toBe('replay');
+    expect(actionForKey({ key: 'MediaTrackPrevious' }, a)).toBe('again');
+    expect(actionForKey({ key: 'MediaFastForward' }, a)).toBe('good');
+    expect(actionForKey({ key: 'MediaStop' }, a)).toBe('replay');
   });
 });
 
@@ -144,8 +147,9 @@ describe('scheduling helpers', () => {
   it('reads study prefs with defaults and legacy keys', () => {
     expect(readStudyPrefs({}, true).twoButton).toBe(true);
     expect(readStudyPrefs({}, false)).toMatchObject({ twoButton: false, tapToFlip: true, volumeKeys: true, fontScale: 100, hanja: true });
-    expect(readStudyPrefs({ 'study.twoButton': false }, true).twoButton).toBe(false);
+    expect(readStudyPrefs({ twoButtons: false }, true).twoButton).toBe(false);
     expect(readStudyPrefs({ twoButtons: true }, false).twoButton).toBe(true);
+    expect(readStudyPrefs({ tapToShowAnswer: false, volumeKeys: false }, false)).toMatchObject({ tapToFlip: false, volumeKeys: false });
     expect(readStudyPrefs({ 'study.fontScale': 1.25 }, false).fontScale).toBe(125);
     expect(readStudyPrefs({ 'study.fontScale': 130 }, false).fontScale).toBe(130);
   });

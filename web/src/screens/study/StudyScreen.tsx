@@ -20,6 +20,7 @@ import { FRAME_URL } from './frameBridge';
 import { actionForKey, type RemoteAction } from './keymap';
 import { Reviewer, type ReviewerView } from './reviewer';
 import { formatTimer, readStudyPrefs, type StudyPrefs } from './studyLogic';
+import { setReviewerUiState } from './uiState';
 import './Study.css';
 
 export const FLAG_NAMES = ['', '빨강', '주황', '초록', '파랑', '분홍', '청록', '보라'];
@@ -61,7 +62,11 @@ export function StudyScreen({ deckId }: { deckId: number }) {
     });
     setReviewer(r);
     void r.start();
-    return () => r.dispose();
+    setReviewerUiState(true);
+    return () => {
+      setReviewerUiState(false);
+      r.dispose();
+    };
   }, [deckId]);
 
   if (!reviewer) return <div className="study" data-testid="study" data-phase="loading" />;
