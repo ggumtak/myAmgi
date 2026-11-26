@@ -174,7 +174,7 @@ export function ToolsScreen() {
                 <input type="checkbox" checked={keepNotes} onChange={(e) => setKeepNotes(e.target.checked)} />
                 <span>카드가 모두 빈 노트도 지우지 않기 (첫 카드를 남김)</span>
               </label>
-              {empty.report && <div className="settings__pre" dangerouslySetInnerHTML={{ __html: sanitizeHtml(empty.report) }} />}
+              {empty.report && <div className="settings__pre" dangerouslySetInnerHTML={{ __html: sanitizeHtml(empty.report.replace(/\[anki:nid:\d+\]\s*/g, '')) }} />}
             </>
           )
         }

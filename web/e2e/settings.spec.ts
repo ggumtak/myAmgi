@@ -74,3 +74,16 @@ test('every spec route renders (placeholders name their screen)', async ({ page 
   await page.goto('/ui/#/nope');
   await expect(page.getByText('화면을 찾을 수 없습니다')).toBeVisible();
 });
+
+test('정보: update check is unsupported on PC; error log copy uses the host log', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await openApp(page, '/settings/about');
+  await page.getByTestId('update-check').click();
+  await expect(page.getByTestId('update-result')).toHaveText('이 기기에서는 지원하지 않습니다');
+  await page.getByRole('button', { name: '오류 로그 복사' }).click();
+  await expect(page.locator('.toast').filter({ hasText: '오류 로그를 복사했습니다' })).toBeVisible();
+  const text = await page.evaluate(() => navigator.clipboard.readText());
+  expect(text).toContain('myAmgi 오류 로그');
+  expect(text).toContain('--- 호스트 로그 ---');
+  expect(text).toContain('host listening on 127.0.0.1');
+});

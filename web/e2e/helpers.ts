@@ -169,22 +169,24 @@ export async function shot(page: Page, name: string) {
 }
 
 /**
- * Screenshots the current screen in every theme: `<name>-<theme>-<project>.png`. `prepare` runs after
- * each theme change (reload) to bring the screen back into the state to capture.
+ * Screenshots the current screen in every theme: `<name>-<theme>-<project>.png`, then switches back to
+ * `light`. Each theme change reloads the page; it waits for loading states to finish, then `prepare`
+ * brings the screen back into the state to capture (e.g. reopen a dialog).
  */
 export async function shotAllThemes(
   page: Page,
   request: APIRequestContext,
   info: TestInfo,
   name: string,
-  prepare: () => Promise<void> = async () => {},
+  prepare: () => Promise<unknown> = async () => {},
 ) {
   for (const theme of THEMES) {
     await setTheme(page, request, theme);
+    await expect(page.getByTestId('loading-state')).toHaveCount(0);
     await prepare();
     await shot(page, `${name}-${theme}-${info.project.name}`);
   }
-  await setPrefs(request, { theme: 'light' });
+  await setTheme(page, request, 'light');
 }
 
 /** The frame of the embedded official Anki page (`OfficialPage`). */

@@ -299,6 +299,8 @@ class HostServerTest {
         val up = http.post("/api/host/upload?name=" + URLEncoder.encode("받은 덱.apkg", "UTF-8"), dl.body)
         assertEquals(200, up.status)
         val upPath = Json.parseToJsonElement(up.text).jsonObject.s("path")
+        // The official import page shows the file name: it keeps the original one (UTF-8 JVM).
+        assertEquals("받은 덱.apkg", File(upPath).name)
         val (cs, classified) = api("import.file", """{"path":${JsonPrimitive(upPath).toString()},"name":"받은 덱.apkg"}""")
         assertEquals(200, cs)
         assertEquals("apkg", classified.s("kind"))

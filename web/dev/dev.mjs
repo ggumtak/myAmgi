@@ -20,7 +20,7 @@ if (!env.AMGI_HOST_URL) {
       // The card frame (/media/__amgi_frame.html) comes from the UI bundle; in dev
       // the app itself is served by Vite, so web/public is enough.
       uiDir: fs.existsSync(path.join(WEB, 'dist', 'index.html')) ? path.join(WEB, 'dist') : path.join(WEB, 'public'),
-      token: 'dev',
+      token: 'devtoken',
       log: env.AMGI_HOST_VERBOSE ? (s) => process.stderr.write(s) : undefined,
     });
   } catch (err) {

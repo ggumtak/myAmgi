@@ -37,7 +37,7 @@ test('apkg: export a deck, delete it, import it back through the official page',
   await resetHost(request);
   await openApp(page, `/export?deck=${SEED.deck.kanji}`);
   await expect(page.getByTestId('export-deck')).toHaveValue(String(SEED.deck.kanji));
-  await shotAllThemes(page, request, info, 'export');
+  await shotAllThemes(page, request, info, 'export', () => expect(page.getByTestId('export-deck')).toBeVisible());
   const notesBefore = (await searchNotes(request, `"deck:일본어::한자"`)).length;
   const file = await exportFile(page, info);
   expect(path.basename(file)).toBe('일본어_한자.apkg');
@@ -50,6 +50,7 @@ test('apkg: export a deck, delete it, import it back through the official page',
   await pickImport(page, info, file);
   await expect(page.locator('.route')).toHaveAttribute('data-route', 'import');
   await expect(page.locator('.app-bar__title')).toHaveText('덱 가져오기');
+  await expect(officialFrame(page).locator('body')).toContainText('일본어_한자.apkg');
   const frame = officialFrame(page);
   await expect(frame.locator('body')).toContainText('가져오기 옵션');
   await shot(page, `import-apkg-options-${info.project.name}`);

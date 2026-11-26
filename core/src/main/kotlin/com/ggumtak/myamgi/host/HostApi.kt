@@ -220,7 +220,7 @@ class HostApi(
     fun cleanTemp(maxAgeMillis: Long = 24 * 60 * 60 * 1000L) {
         val cutoff = System.currentTimeMillis() - maxAgeMillis
         for (d in listOf(uploadDir, exportDir)) {
-            d.listFiles()?.filter { it.isFile && it.lastModified() < cutoff }?.forEach { it.delete() }
+            d.listFiles()?.filter { it.lastModified() < cutoff }?.forEach { it.deleteRecursively() }
         }
     }
 

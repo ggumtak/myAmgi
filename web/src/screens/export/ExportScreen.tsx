@@ -126,6 +126,7 @@ export function ExportScreen({ deckId }: { deckId: number }) {
           <Toggle label="이전 Anki 버전 호환" hint="Anki 2.1.50 이전 버전에서 열 때만 켜세요" checked={legacy} onChange={setLegacy} testId="export-legacy" />
         </ListSection>
 
+        {format === 'apkg' && deckName && <p className="settings__note">'{deckName}' 덱을 내보냅니다.</p>}
         <div className="settings__buttons">
           <Button variant="primary" loading={busy} onClick={run} data-testid="export-run">
             {android ? '내보내고 공유' : '내보내기'}
@@ -144,7 +145,6 @@ export function ExportScreen({ deckId }: { deckId: number }) {
             </div>
           </div>
         )}
-        {format === 'apkg' && deckName && <p className="settings__note">'{deckName}' 덱을 내보냅니다.</p>}
       </>
     );
   }
