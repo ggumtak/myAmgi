@@ -91,7 +91,8 @@ class ShellKeysTest {
     @Test
     fun captureFollowsPrefAndUi() {
         val v = KeyEvent.KEYCODE_VOLUME_DOWN
-        assertTrue(ShellKeys.shouldCapture(v, prefEnabled = true, uiCaptureKeys = null, pageAlive = true))
+        // A page that never asked (cold start, deck list) leaves the volume keys to the system.
+        assertFalse(ShellKeys.shouldCapture(v, prefEnabled = true, uiCaptureKeys = null, pageAlive = true))
         assertTrue(ShellKeys.shouldCapture(v, true, true, true))
         assertFalse(ShellKeys.shouldCapture(v, false, true, true))
         assertFalse(ShellKeys.shouldCapture(v, true, false, true))

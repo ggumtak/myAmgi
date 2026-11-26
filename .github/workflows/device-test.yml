@@ -139,11 +139,11 @@ jobs:
           emulator-boot-timeout: 900
           script: bash web/e2e-device/run.sh
 
-      - name: Key screenshots (base64, 360 px; full size in the artifact)
+      - name: Key screenshots (base64, 720 px; full size in the artifact)
         if: always()
         run: |
           python3 -m pip install --quiet --disable-pip-version-check pillow || exit 0
-          python3 web/e2e-device/print_shots.py device-out/shots cold-start study-image-question rotated dark-mode import-view-done picker FAILED comet-cold-start || true
+          python3 web/e2e-device/print_shots.py device-out/shots cold-start study-image-question rotated dark-mode import-view-done picker-file-listed picker-import-done FAILED comet-cold-start comet-study-answer || true
 
       - name: Diagnostics (host log, app errors in logcat, layout)
         if: always()

@@ -492,6 +492,9 @@ test.describe('pro @pro', () => {
     shot('import-view-options');
     await frame.getByRole('button', { name: /^(가져오기|Import)$/ }).first().click();
     await expect(page.locator('.toast').filter({ hasText: '가져오기 완료' })).toBeVisible({ timeout: 30_000 });
+    // The official page then shows its import log (like the desktop e2e: the note count appears).
+    await expect(frame.locator('body')).toContainText('3', { timeout: 30_000 });
+    log(`import log: ${(await frame.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 300)}`);
     shot('import-view-done');
     await expect.poll(() => searchNotes(page, '"deck:기기 가져오기::열기"')).toHaveLength(3);
   });
@@ -512,6 +515,7 @@ test.describe('pro @pro', () => {
       writeLog(`picker-${attempt}.xml`, xml);
       const file = nodeBounds(xml, 'text', 'device-pick.apkg');
       if (file) {
+        shot('picker-file-listed');
         tapRect(file);
         picked = true;
         break;
@@ -540,6 +544,8 @@ test.describe('pro @pro', () => {
     await expect(frame.locator('body')).toContainText('device-pick.apkg', { timeout: 30_000 });
     await frame.getByRole('button', { name: /^(가져오기|Import)$/ }).first().click();
     await expect(p2.locator('.toast').filter({ hasText: '가져오기 완료' })).toBeVisible({ timeout: 30_000 });
+    await expect(frame.locator('body')).toContainText('2', { timeout: 30_000 });
+    log(`import log: ${(await frame.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 300)}`);
     shot('picker-import-done');
     await expect.poll(() => searchNotes(p2, '"deck:기기 가져오기::선택"')).toHaveLength(2);
   });

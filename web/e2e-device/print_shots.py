@@ -16,7 +16,7 @@ wanted = sys.argv[2:]
 for want in wanted:
     for f in [s for s in shots if want in s.name][:2]:
         img = Image.open(f).convert("RGB")
-        w = 360
+        w = 720
         img = img.resize((w, max(1, round(img.height * w / img.width))), Image.LANCZOS)
         buf = io.BytesIO()
         img.save(buf, "JPEG", quality=60, optimize=True)

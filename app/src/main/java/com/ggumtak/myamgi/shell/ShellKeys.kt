@@ -2,8 +2,8 @@ package com.ggumtak.myamgi.shell
 
 /**
  * Hardware keys the WebView does not turn into DOM events by itself (volume and media keys from the device,
- * a Bluetooth remote or headset). While the owner's `volumeKeys` pref is on (and the UI has not said
- * `ui.state {captureKeys: false}`), the shell swallows them and dispatches synthetic `keydown`/`keyup`
+ * a Bluetooth remote or headset). While the owner's `volumeKeys` pref is on and the UI has said
+ * `ui.state {captureKeys: true}` (the reviewer, until it closes), the shell swallows them and dispatches synthetic `keydown`/`keyup`
  * events with these `KeyboardEvent.key`/`code` values (the standard UI Events names) on the focused element
  * of the top document (bubbling to `document` and `window`). Otherwise volume keys change the volume as usual.
  *
@@ -43,9 +43,13 @@ object ShellKeys {
 
     fun domKeyFor(keyCode: Int): DomKey? = TABLE[keyCode]
 
-    /** Whether the key should be captured right now. */
+    /**
+     * Whether the key should be captured right now: only while the page asked for keys (`captureKeys: true`, the
+     * reviewer). A page that has said nothing (`null`: cold start, reload, the deck list) leaves volume and media
+     * keys to the system, so the owner can change the volume outside the reviewer even with the pref on.
+     */
     fun shouldCapture(keyCode: Int, prefEnabled: Boolean, uiCaptureKeys: Boolean?, pageAlive: Boolean): Boolean =
-        TABLE.containsKey(keyCode) && prefEnabled && uiCaptureKeys != false && pageAlive
+        TABLE.containsKey(keyCode) && prefEnabled && uiCaptureKeys == true && pageAlive
 
     /** JavaScript that dispatches the event; [type] is `keydown` or `keyup`. */
     fun script(dom: DomKey, type: String, repeat: Boolean): String {
