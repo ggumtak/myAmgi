@@ -1,7 +1,11 @@
 import { expect, test } from '@playwright/test';
-import { getPrefs, openApp, setPrefs, shot, THEMES } from './helpers';
+import { getPrefs, hostFn, openApp, resetHost, setPrefs, shot, THEMES } from './helpers';
 
 test.describe.configure({ mode: 'serial' });
+
+test.beforeAll(async ({ request }) => {
+  await resetHost(request);
+});
 
 test.afterAll(async ({ request }) => {
   await setPrefs(request, { theme: 'auto' });
@@ -31,8 +35,11 @@ for (const theme of THEMES) {
   test(`settings and about show host info (${theme})`, async ({ page, request }, info) => {
     await setPrefs(request, { theme });
     await openApp(page, '/settings');
-    await expect(page.getByTestId('about-ui')).not.toHaveText('…');
-    await expect(page.getByTestId('about-engine')).toContainText('26.9.4');
+    const host = await hostFn<{ uiVersion: string; backendVersion: string }>(request, 'info');
+    expect(host.uiVersion).toMatch(/^\d+(\.\d+)*$/);
+    await expect(page.getByTestId('about-ui')).toHaveText(host.uiVersion);
+    await expect(page.getByTestId('about-engine')).toHaveText(host.backendVersion);
+    expect(host.backendVersion).toContain('26.09.4');
     await shot(page, `settings-${theme}-${info.project.name}`);
     await page.getByTestId('about').scrollIntoViewIfNeeded();
     await shot(page, `settings-about-${theme}-${info.project.name}`);
@@ -51,33 +58,32 @@ test('every spec route renders (placeholders name their screen)', async ({ page 
     ['/settings/sync', '동기화'],
     ['/settings/backup', '백업'],
     ['/settings/about', '정보'],
+    ['/settings/tools', '도구'],
     ['/custom-study/1', '맞춤 학습'],
     ['/filtered-deck/new', '필터 덱 만들기'],
     ['/export', '내보내기'],
+    ['/stats', '통계'],
+    ['/deck-options/1', '덱 옵션'],
+    ['/card-info/1', '카드 정보'],
+    ['/congrats', '축하합니다'],
   ];
   for (const [hash, title] of routes) {
     await page.goto(`/ui/#${hash}`);
     await expect(page.locator('.app-bar__title')).toHaveText(title);
   }
-  for (const [hash, title, page_] of [
-    ['/stats', '통계', 'graphs'],
-    ['/deck-options/1', '덱 옵션', 'deck-options'],
-    ['/card-info/1', '카드 정보', 'card-info'],
-  ] as const) {
-    await page.goto(`/ui/#${hash}`);
-    await expect(page.locator('.app-bar__title')).toHaveText(title);
-    const frame = page.frameLocator('[data-testid="official-frame"]');
-    if (!process.env.AMGI_HOST_URL) await expect(frame.locator('#official-page')).toHaveAttribute('data-page', page_);
-  }
   await page.goto('/ui/#/nope');
   await expect(page.getByText('화면을 찾을 수 없습니다')).toBeVisible();
 });
 
-test('official pages adopt the theme', async ({ page, request }) => {
-  test.skip(!!process.env.AMGI_HOST_URL, 'checks the fake page stand-in');
-  await setPrefs(request, { theme: 'dark' });
-  await openApp(page, '/deck-options/1');
-  const html = page.frameLocator('[data-testid="official-frame"]').locator('html');
-  await expect(html).toHaveAttribute('data-bs-theme', 'dark');
-  await expect(html).toHaveClass(/night-mode/);
+test('정보: update check is unsupported on PC; error log copy uses the host log', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await openApp(page, '/settings/about');
+  await page.getByTestId('update-check').click();
+  await expect(page.getByTestId('update-result')).toHaveText('이 기기에서는 지원하지 않습니다');
+  await page.getByRole('button', { name: '오류 로그 복사' }).click();
+  await expect(page.locator('.toast').filter({ hasText: '오류 로그를 복사했습니다' })).toBeVisible();
+  const text = await page.evaluate(() => navigator.clipboard.readText());
+  expect(text).toContain('myAmgi 오류 로그');
+  expect(text).toContain('--- 호스트 로그 ---');
+  expect(text).toContain('host listening on 127.0.0.1');
 });

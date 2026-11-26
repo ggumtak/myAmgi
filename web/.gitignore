@@ -1,4 +1,5 @@
 node_modules/
 dist/
-dev/fake-host/.venv/
 *.tsbuildinfo
+e2e/screenshots/
+e2e/.results/

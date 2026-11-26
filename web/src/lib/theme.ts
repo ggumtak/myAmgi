@@ -9,7 +9,8 @@ export function resolveTheme(pref: ThemePref | undefined, info: Pick<HostInfo, '
   return p;
 }
 
-const THEME_COLOR: Record<Theme, string> = { light: '#FFFFFF', dark: '#121316', eink: '#FFFFFF' };
+/** Page background per theme (`--bg`), also sent to the shell for the system bars. */
+export const THEME_COLOR: Record<Theme, string> = { light: '#FFFFFF', dark: '#121316', eink: '#FFFFFF' };
 
 export function applyTheme(theme: Theme): void {
   const root = document.documentElement;

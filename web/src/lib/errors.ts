@@ -59,7 +59,7 @@ export async function buildErrorLog(err?: unknown): Promise<string> {
   if (info) parts.push(`앱: ${JSON.stringify(info)}`);
   try {
     const log = await host.logGet();
-    parts.push('--- 호스트 로그 ---', log.log);
+    parts.push('--- 호스트 로그 ---', log.text);
     if (log.errors?.length) parts.push('--- 최근 오류 ---', ...log.errors);
   } catch (e) {
     parts.push(`(호스트 로그를 가져오지 못했습니다: ${String(e)})`);

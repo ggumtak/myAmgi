@@ -1,72 +1,163 @@
 // Typed client for the host functions (`POST /api/host/<name>`, JSON in/out),
 // uploads/downloads and the server-sent events stream (`GET /api/host/events`).
-// See docs/ARCHITECTURE.md "Host functions".
+//
+// The Kotlin host is the source of truth for every shape here:
+// core/src/main/kotlin/com/ggumtak/myamgi/host/{HostApi,HostServer,SyncService,BackupService,
+// ProgressPump,EventBus}.kt (see also docs/ARCHITECTURE.md "Host functions").
 
 import { useSyncExternalStore } from 'react';
 
+/** `info` (HostApi.info + Platform.info). */
 export interface HostInfo {
   appVersion: string;
-  build: number | string;
-  flavor: 'pro' | 'comet' | string;
+  build: number;
+  /** `pro` | `comet` on Android, `desktop` on PC. */
+  flavor: string;
   platform: 'android' | 'desktop';
   eink: boolean;
   device: string;
-  uiVersion: string;
+  /** `ui-version.json` of the bundle being served; null when the bundle has none. */
+  uiVersion: string | null;
+  /** e.g. "Anki 26.09.4 (anki-backend 0.1.77)". */
   backendVersion: string;
 }
 
+/** `collection.status`. */
 export interface CollectionStatus {
   open: boolean;
-  path?: string;
-  size?: number;
-  lastError?: string | null;
+  path: string | null;
+  /** Bytes (collection + WAL). */
+  size: number;
+  mediaDir: string | null;
+  lastError: string | null;
 }
 
-/**
- * Shape assumed for `sync.status` (the contract lists the call but not its fields;
- * see the report's recommended doc change).
- */
+export type SyncPhase = 'idle' | 'collection' | 'backup' | 'upload' | 'download' | 'media';
+
+/** `sync.status`, also the payload of the `sync-state` event (SyncService.status). */
 export interface SyncStatus {
   loggedIn: boolean;
-  user?: string | null;
-  /** What the engine says is needed: nothing, a normal sync, or a full sync. */
-  required: 'none' | 'normal' | 'full';
-  syncing: boolean;
-  lastSync?: number | null;
-  error?: string | null;
+  user: string | null;
+  /** Custom sync server, or null for AnkiWeb. */
+  endpoint: string | null;
+  running: boolean;
+  phase: SyncPhase | string;
+  /** The last normal sync answered "full sync required"; the UI must ask for a direction. */
+  needsFullSync: boolean;
+  /** Epoch milliseconds of the last successful sync. */
+  lastSync: number | null;
+  lastError: string | null;
 }
 
+export type SyncMode = 'normal' | 'upload' | 'download';
+
+/** `sync.run`. `ok: false, needsFullSync: true` = ask the owner for a direction, then run again. */
 export interface SyncRunResult {
-  needsFullSync?: boolean;
+  ok: boolean;
+  needsFullSync: boolean;
+  serverMessage?: string;
+  lastSync?: number;
 }
 
+/** `sync.check`: what a sync would do now (may contact AnkiWeb). */
+export interface SyncCheck {
+  loggedIn: boolean;
+  required: 'none' | 'normal' | 'full';
+}
+
+/** One `.colpkg` in `dataDir/backups` (BackupService.Entry). `time` = epoch ms. */
 export interface BackupEntry {
   name: string;
-  size?: number;
-  time?: number;
+  size: number;
+  time: number;
 }
 
-export interface ImportClassification {
-  kind: 'apkg' | 'colpkg' | 'csv' | string;
-  /** UI route (hash path, without '#') to continue the import on. */
-  route: string;
+export interface BackupList {
+  /** Pref `backup.keep` (default 20). */
+  keep: number;
+  /** Newest first. */
+  backups: BackupEntry[];
 }
 
+/** `/api/host/upload` answer. `path` is a host temp path for `import.file`. */
+export interface UploadResult {
+  path: string;
+  name: string;
+  size: number;
+}
+
+/** `import.file`. */
+export interface ImportResult {
+  kind: 'apkg' | 'colpkg' | 'csv';
+  path: string;
+  /** Official page to continue with (`/import-anki-package/<enc>` or `/import-csv/<enc>`), null for colpkg. */
+  route: string | null;
+  /** colpkg without `replace: true`: confirm first. */
+  needsConfirm?: boolean;
+  /** colpkg with `replace: true`: the collection was replaced. */
+  imported?: boolean;
+  safetyBackup?: string;
+}
+
+/** `export.package` / `export.collection`. `name` is the display file name for downloads. */
 export interface ExportResult {
   path: string;
   name: string;
+  size: number;
+  /** export.package only. */
+  notes?: number;
 }
 
+/**
+ * `update.status` / `update.check` / `update.apply`, and the `update` event (same JSON). Android
+ * (app/.../update/UpdateCenter.kt) fills all of it; the desktop host answers `update.status` with
+ * `{supported: false, currentVersion}` and the others with 501.
+ */
 export interface UpdateStatus {
-  available: boolean;
+  /** false = this shell has no updater (PC). */
+  supported?: boolean;
+  /** An APK to install or a downloaded UI bundle to reload into. */
+  available?: boolean;
+  kind?: 'apk' | 'ota' | null;
   current?: string;
-  latest?: string;
-  kind?: 'apk' | 'ota';
+  currentVersion?: string;
+  latest?: string | null;
+  running?: boolean;
+  phase?: string | null;
+  percent?: number | null;
+  lastError?: string | null;
+  /** Epoch ms. */
+  lastCheck?: number | null;
+  apk?: { build?: number; latestBuild?: number | null; available?: boolean; size?: number | null; patch?: boolean };
+  ui?: {
+    version?: string | null;
+    builtInVersion?: string | null;
+    /** `ota` = a downloaded UI bundle is being served. */
+    source?: 'ota' | 'builtin';
+    downloaded?: string | null;
+    /** A UI bundle was installed after this page loaded: `update.apply {kind: "ota"}` reloads into it. */
+    reloadNeeded?: boolean;
+    note?: string | null;
+    lastRollback?: unknown;
+  };
+  [key: string]: unknown;
 }
 
-export interface HostLog {
-  log: string;
-  errors?: string[];
+/** `ui.state`: what the shell needs to paint system bars and handle keys. Every field optional. */
+export interface UiShellState {
+  theme?: 'light' | 'dark' | 'eink';
+  /** `#RRGGBB` page background. */
+  background?: string;
+  keepScreenOn?: boolean;
+  captureKeys?: boolean;
+}
+
+/** `log.get`. */
+export interface HostLogSnapshot {
+  lines: string[];
+  errors: string[];
+  /** `lines` joined with newlines. */
+  text: string;
 }
 
 export class HostError extends Error {
@@ -80,11 +171,25 @@ export class HostError extends Error {
     this.status = status;
     this.detail = detail;
   }
+  /** HostError.unsupported (501): "이 기기에서는 지원하지 않습니다". */
+  get unsupported(): boolean {
+    return this.status === 501;
+  }
 }
 
 let baseUrl = '';
 export function configureHost(opts: { baseUrl?: string }): void {
   if (opts.baseUrl !== undefined) baseUrl = opts.baseUrl.replace(/\/$/, '');
+}
+
+function parseError(fn: string, status: number, text: string): HostError {
+  let json: { error?: string; detail?: string } = {};
+  try {
+    json = text ? JSON.parse(text) : {};
+  } catch {
+    // non-JSON body
+  }
+  return new HostError(fn, status, json.error || `호스트 오류 (${status})`, json.detail ?? text);
 }
 
 export async function hostCall<T = unknown>(name: string, body: unknown = {}): Promise<T> {
@@ -100,79 +205,115 @@ export async function hostCall<T = unknown>(name: string, body: unknown = {}): P
     throw new HostError(name, 0, '앱 엔진에 연결할 수 없습니다', String(err));
   }
   const text = await res.text();
-  let json: unknown = undefined;
+  if (!res.ok) throw parseError(name, res.status, text);
   try {
-    json = text ? JSON.parse(text) : {};
+    return (text ? JSON.parse(text) : {}) as T;
   } catch {
-    // non-JSON body
+    throw new HostError(name, res.status, '호스트의 응답을 읽지 못했습니다', text);
   }
-  if (!res.ok) {
-    const e = (json ?? {}) as { error?: string; detail?: string };
-    throw new HostError(name, res.status, e.error || `호스트 오류 (${res.status})`, e.detail ?? text);
+}
+
+type Ok = { ok: true };
+
+/**
+ * A shell hook that older hosts may not have (404 unknown function / 501 unsupported): those
+ * answers, and an unreachable host, are a silent no-op. Resolves to null then.
+ */
+export async function optionalHostCall<T = unknown>(name: string, body: unknown = {}): Promise<T | null> {
+  try {
+    return await hostCall<T>(name, body);
+  } catch (err) {
+    if (err instanceof HostError && (err.status === 404 || err.status === 501 || err.status === 0)) return null;
+    throw err;
   }
-  return json as T;
 }
 
 export const host = {
   info: () => hostCall<HostInfo>('info'),
   prefs: {
     get: () => hostCall<Record<string, unknown>>('prefs.get'),
+    /** Merged on the host; a `null` value deletes the key. Returns all prefs. */
     set: (patch: Record<string, unknown>) => hostCall<Record<string, unknown>>('prefs.set', patch),
   },
   collectionStatus: () => hostCall<CollectionStatus>('collection.status'),
   sync: {
     status: () => hostCall<SyncStatus>('sync.status'),
-    login: (user: string, password: string, endpoint?: string) =>
-      hostCall<Record<string, never>>('sync.login', { user, password, endpoint }),
-    logout: () => hostCall('sync.logout'),
-    run: (mode: 'normal' | 'upload' | 'download' = 'normal') => hostCall<SyncRunResult>('sync.run', { mode }),
-    abort: () => hostCall('sync.abort'),
+    /** 401 wrong id/password, 502 network. Returns the new status. */
+    login: (user: string, password: string, endpoint?: string | null) =>
+      hostCall<SyncStatus>('sync.login', { user, password, endpoint: endpoint || null }),
+    logout: () => hostCall<SyncStatus>('sync.logout'),
+    /** 401 not logged in / login expired, 409 busy or cancelled, 502 network. */
+    run: (mode: SyncMode = 'normal') => hostCall<SyncRunResult>('sync.run', { mode }),
+    abort: () => hostCall<SyncStatus>('sync.abort'),
+    check: () => hostCall<SyncCheck>('sync.check'),
   },
   backup: {
     create: () => hostCall<BackupEntry>('backup.create'),
-    list: () => hostCall<{ backups: BackupEntry[] }>('backup.list'),
-    restore: (name: string) => hostCall('backup.restore', { name }),
+    list: () => hostCall<BackupList>('backup.list'),
+    /** Takes a safety backup of the current collection first; returns its name. */
+    restore: (name: string) => hostCall<{ ok: true; safetyBackup: string }>('backup.restore', { name }),
   },
-  importFile: (path: string, name: string) => hostCall<ImportClassification>('import.file', { path, name }),
+  importFile: (path: string, name: string, replace = false) => hostCall<ImportResult>('import.file', { path, name, replace }),
   exportPackage: (opts: { deckId?: number; withScheduling: boolean; withMedia: boolean; legacy: boolean }) =>
     hostCall<ExportResult>('export.package', opts),
-  exportCollection: (withMedia: boolean) => hostCall<ExportResult>('export.collection', { withMedia }),
+  exportCollection: (opts: { withMedia: boolean; legacy?: boolean }) => hostCall<ExportResult>('export.collection', opts),
   platform: {
-    share: (path: string, name: string) => hostCall('platform.share', { path, name }),
-    openExternal: (url: string) => hostCall('platform.openExternal', { url }),
-    tts: (text: string, lang: string, rate = 1) => hostCall('platform.tts', { text, lang, rate }),
-    ttsStop: () => hostCall('platform.ttsStop'),
-    clipboardWrite: (text: string) => hostCall('platform.clipboardWrite', { text }),
-    exit: () => hostCall('platform.exit'),
+    share: (path: string, name: string) => hostCall<Ok>('platform.share', { path, name }),
+    openExternal: (url: string) => hostCall<Ok>('platform.openExternal', { url }),
+    tts: (text: string, lang?: string, rate?: number) => hostCall<Ok>('platform.tts', { text, lang, rate }),
+    ttsStop: () => hostCall<Ok>('platform.ttsStop'),
+    clipboardWrite: (text: string) => hostCall<Ok>('platform.clipboardWrite', { text }),
+    exit: () => hostCall<Ok>('platform.exit'),
   },
-  hanjaLookup: (text: string, sentence?: string) => hostCall('hanja.lookup', { text, sentence }),
+  hanjaLookup: (text: string, sentence?: string) => hostCall<Ok>('hanja.lookup', { text, sentence }),
   update: {
     status: () => hostCall<UpdateStatus>('update.status'),
     check: () => hostCall<UpdateStatus>('update.check'),
-    apply: () => hostCall('update.apply'),
+    /** `apk` installs the newer APK, `ota` reloads into a downloaded UI bundle; omitted = whatever is pending. */
+    apply: (kind?: 'apk' | 'ota') => hostCall<UpdateStatus>('update.apply', kind ? { kind } : {}),
   },
-  logGet: () => hostCall<HostLog>('log.get'),
+  /** Shell protocol (Android). Missing on older/desktop hosts: silently ignored. */
+  ui: {
+    /** After the first successful render. An OTA bundle that never says so is rolled back after 30 s. */
+    ready: (uiVersion: string | null, features: string[]) => optionalHostCall<Ok>('ui.ready', { uiVersion, features }),
+    state: (state: UiShellState) => optionalHostCall<Ok>('ui.state', state),
+    /** The UI consumed the `back {id}` event. */
+    backHandled: (id: number) => optionalHostCall<Ok>('ui.backHandled', { id }),
+  },
+  /** Android: `{version, js}` of the Hanja app's card tap script. */
+  hanjaScript: () => optionalHostCall<{ version: number | null; js: string }>('hanja.script'),
+  logGet: () => hostCall<HostLogSnapshot>('log.get'),
 
-  /** Streams `file` to the host; returns the temp path for `import.file`. */
-  async upload(file: Blob, name: string): Promise<string> {
-    const res = await fetch(`${baseUrl}/api/host/upload?name=${encodeURIComponent(name)}`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/octet-stream' },
-      body: file,
+  /**
+   * Streams `file` to the host (`POST /api/host/upload?name=`). `onProgress` gets 0..1.
+   * Uses XMLHttpRequest because fetch() cannot report upload progress.
+   */
+  upload(file: Blob, name: string, onProgress?: (fraction: number) => void): Promise<UploadResult> {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${baseUrl}/api/host/upload?name=${encodeURIComponent(name)}`);
+      xhr.withCredentials = true;
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && e.total > 0) onProgress?.(e.loaded / e.total);
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve(JSON.parse(xhr.responseText) as UploadResult);
+          } catch {
+            reject(new HostError('upload', xhr.status, '호스트의 응답을 읽지 못했습니다', xhr.responseText));
+          }
+        } else {
+          reject(parseError('upload', xhr.status, xhr.responseText));
+        }
+      };
+      xhr.onerror = () => reject(new HostError('upload', 0, '앱 엔진에 연결할 수 없습니다'));
+      xhr.send(file);
     });
-    if (!res.ok) {
-      let msg = `업로드 실패 (${res.status})`;
-      try {
-        msg = ((await res.json()) as { error?: string }).error || msg;
-      } catch {
-        // keep default
-      }
-      throw new HostError('upload', res.status, msg);
-    }
-    return ((await res.json()) as { path: string }).path;
   },
 
+  /** `GET /api/host/download` for a file from `export.*`. */
   downloadUrl(path: string, name: string): string {
     return `${baseUrl}/api/host/download?path=${encodeURIComponent(path)}&name=${encodeURIComponent(name)}`;
   },
@@ -182,38 +323,72 @@ export const host = {
 // Events (SSE)
 // ---------------------------------------------------------------------------
 
+/**
+ * `progress` (ProgressPump): `{op, phase}` plus backend details while running.
+ * `op`: sync | backup | restore | import | export. `kind` (running only): normalSync, fullSync,
+ * mediaSync, importing, exporting, mediaCheck, databaseCheck, note.
+ */
 export interface ProgressEvent {
-  kind: 'sync' | 'media-sync' | 'import' | 'export' | string;
-  label?: string;
-  value?: number;
-  max?: number;
-  done?: boolean;
+  op: string;
+  phase: 'start' | 'running' | 'done' | 'error';
+  kind?: string;
+  /** importing/exporting/mediaCheck/databaseCheck/note text from the backend. */
+  text?: string;
+  /** fullSync: bytes. */
+  transferred?: number;
+  total?: number;
+  /** normalSync stage, mediaSync / normalSync counts (strings from the backend). */
+  stage?: string;
+  added?: string;
+  removed?: string;
+  checked?: string;
+  current?: number;
+  error?: string;
+}
+
+/** `anki-page`: an embedded official page made a frontend-service call. */
+export interface AnkiPageEvent {
+  method: string;
+  /** The page asks to be closed (e.g. deck options saved). */
+  close: boolean;
 }
 
 export interface HostEvents {
   progress: ProgressEvent;
-  back: Record<string, never>;
-  'open-file': { path: string; name: string };
-  'sync-state': Partial<SyncStatus>;
+  /** Android back button. `id` (when present) must be acknowledged with `ui.backHandled`. */
+  back: { id?: number };
+  /** A file opened with the app (already on the host, like an upload). */
+  'open-file': { path?: string; name?: string };
+  'sync-state': SyncStatus;
+  'anki-page': AnkiPageEvent;
+  /** Same JSON as `update.status`. */
+  update: UpdateStatus;
 }
+
+export const HOST_EVENT_TYPES = ['progress', 'back', 'open-file', 'sync-state', 'anki-page', 'update'] as const;
 
 type Handler<K extends keyof HostEvents> = (data: HostEvents[K]) => void;
 const handlers: { [K in keyof HostEvents]?: Set<Handler<K>> } = {};
 let source: EventSource | null = null;
 
+/** Delivers an event to subscribers (used by the SSE stream; also handy in unit tests). */
+export function dispatchHostEvent<K extends keyof HostEvents>(type: K, data: HostEvents[K]): void {
+  const set = handlers[type] as Set<Handler<K>> | undefined;
+  set?.forEach((h) => h(data));
+}
+
 function ensureSource(): void {
   if (source || typeof EventSource === 'undefined') return;
   source = new EventSource(`${baseUrl}/api/host/events`, { withCredentials: true });
-  for (const type of ['progress', 'back', 'open-file', 'sync-state'] as const) {
+  for (const type of HOST_EVENT_TYPES) {
     source.addEventListener(type, (ev) => {
       let data: unknown = {};
       try {
         data = JSON.parse((ev as MessageEvent<string>).data || '{}');
       } catch {
-        // ignore malformed event
+        return; // ignore malformed event
       }
-      const set = handlers[type] as Set<(d: unknown) => void> | undefined;
-      set?.forEach((h) => h(data));
+      dispatchHostEvent(type, data as never);
     });
   }
   // EventSource reconnects by itself after errors.
@@ -242,10 +417,14 @@ export interface UiPrefs {
   twoButtons?: boolean;
   /** Reviewer: tap on the card shows the answer. */
   tapToShowAnswer?: boolean;
-  /** Reviewer: volume keys / Bluetooth remotes answer cards. */
+  /** Reviewer: volume keys / Bluetooth remotes answer cards. Default: on for e-ink devices (`info.eink`). */
   volumeKeys?: boolean;
   /** Card text scale in percent. */
   cardFontScale?: number;
+  /** Host: sync media after the collection (default true). */
+  'sync.media'?: boolean;
+  /** Host: backups to keep (default 20). */
+  'backup.keep'?: number;
   [key: string]: unknown;
 }
 

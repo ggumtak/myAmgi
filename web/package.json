@@ -6,13 +6,13 @@
   "scripts": {
     "dev": "node dev/dev.mjs",
     "dev:vite": "vite",
-    "fake-host": "node dev/fake-host/server.mjs",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "e2e": "vite build && playwright test --trace off"
+    "e2e": "vite build && node dev/e2e.mjs",
+    "host": "node dev/host.mjs"
   },
   "dependencies": {
     "protobufjs": "8.8.1",

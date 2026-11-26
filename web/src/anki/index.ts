@@ -7,5 +7,6 @@ export * as notetypes from './notetypes';
 export * as search from './search';
 export * as config from './config';
 export * as stats from './stats';
+export * as tools from './tools';
 export { call, invoke, configureRpc, AnkiError, HostUnreachableError } from './rpc';
 export { anki } from './proto';

@@ -36,6 +36,9 @@ interface SyncTransport {
     fun startMediaSync(creds: SyncCredentials)
     fun mediaSyncActive(): Boolean
     fun abort()
+
+    /** What a sync would do now, without changing anything (may contact the server). */
+    fun syncStatus(creds: SyncCredentials): SyncRequired = SyncRequired.NO_CHANGES
 }
 
 /** Real AnkiWeb protocol through the official backend. */
@@ -82,6 +85,14 @@ class EngineSyncTransport : SyncTransport {
     override fun mediaSyncActive(): Boolean = AnkiEngine.mediaSyncStatus()?.active ?: false
 
     override fun abort() = AnkiEngine.abortAll()
+
+    override fun syncStatus(creds: SyncCredentials): SyncRequired = mapped {
+        when (AnkiEngine.ankiWebSyncStatus(auth(creds)).required) {
+            anki.sync.SyncStatusResponse.Required.NO_CHANGES -> SyncRequired.NO_CHANGES
+            anki.sync.SyncStatusResponse.Required.FULL_SYNC -> SyncRequired.FULL_SYNC
+            else -> SyncRequired.NORMAL_SYNC
+        }
+    }
 }
 
 /**
@@ -165,9 +176,32 @@ class SyncService(
         return status()
     }
 
+    /**
+     * `sync.check`: `{loggedIn, required: "none"|"normal"|"full"}` for the sync button's "needs sync"
+     * dot. Local changes answer without network; otherwise the backend asks the server (cached briefly).
+     */
+    fun check(): JsonObject {
+        val creds = credentials() ?: return jsonOf("loggedIn" to false, "required" to "none")
+        if (running.get()) return jsonOf("loggedIn" to true, "required" to "none")
+        val required = try {
+            transport.syncStatus(creds)
+        } catch (e: SyncAuthFailed) {
+            throw HostError(401, "AnkiWeb 로그인이 만료되었습니다. 다시 로그인하세요.", e.message, e)
+        } catch (e: Exception) {
+            throw networkError("동기화 상태를 확인하지 못했습니다", e)
+        }
+        val name = when (required) {
+            SyncRequired.NO_CHANGES -> "none"
+            SyncRequired.FULL_SYNC, SyncRequired.FULL_DOWNLOAD, SyncRequired.FULL_UPLOAD -> "full"
+            SyncRequired.NORMAL_SYNC -> "normal"
+        }
+        return jsonOf("loggedIn" to true, "required" to name)
+    }
+
     fun logout(): JsonObject {
         saveState(mapOf("hkey" to null, "endpoint" to null))
         needsFullSync = false
+        lastError = null
         publishState()
         return status()
     }

@@ -39,6 +39,21 @@ export function goBack(): void {
   else navigate(ROOT_PATH, { replace: true });
 }
 
+/**
+ * The shell's `back {id}` event (Android back button). In-app back, then `ui.backHandled {id}`
+ * (the "back-ack" feature announced in `ui.ready`); on the root screen with nothing open, ask the
+ * shell to exit instead (no acknowledgement: the shell closes).
+ */
+export function handleShellBack(id?: number): void {
+  const loc = currentLocation();
+  if (!hasOverlay() && (loc.path === ROOT_PATH || loc.path === '/')) {
+    host.platform.exit().catch(() => {});
+    return;
+  }
+  goBack();
+  if (typeof id === 'number') host.ui.backHandled(id).catch(() => {});
+}
+
 export function hasOverlay(): boolean {
   return stack.length > 0;
 }

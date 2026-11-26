@@ -1,11 +1,11 @@
 import { expect, test } from '@playwright/test';
 import { flattenDeckTree } from '../src/lib/deckTree';
-import { deckNames, deckTree, isFake, openApp, resetFake, setPrefs, shot, THEMES } from './helpers';
+import { deckNames, deckTree, openApp, resetHost, SEED, setPrefs, shot, THEMES } from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async ({ request }) => {
-  await resetFake(request);
+  await resetHost(request);
 });
 
 test.afterAll(async ({ request }) => {
@@ -28,15 +28,13 @@ for (const theme of THEMES) {
       await expect(el.locator('[data-count="learn"]')).toHaveText(String(row.learnCount));
       await expect(el.locator('[data-count="review"]')).toHaveText(String(row.reviewCount));
     }
-    if (isFake) {
-      // The seeded collection: nested decks, a filtered deck, every count kind non-zero.
-      expect(expected.map((r) => r.fullName)).toEqual(['영어', '일본어', '일본어::어휘', '일본어::한자', '집중 복습']);
-      const total = (k: 'newCount' | 'learnCount' | 'reviewCount') => expected.reduce((n, r) => n + (r.depth === 0 ? r[k] : 0), 0);
-      expect(total('newCount')).toBeGreaterThan(0);
-      expect(total('learnCount')).toBeGreaterThan(0);
-      expect(total('reviewCount')).toBeGreaterThan(0);
-      await expect(page.locator('[data-deck-name="집중 복습"]')).toHaveClass(/deck-row--filtered/);
-    }
+    // The seeded collection: nested decks (expanded), a filtered deck, every count kind non-zero.
+    expect(expected.map((r) => r.fullName)).toEqual(SEED.deckNames);
+    const japanese = expected.find((r) => r.fullName === '일본어')!;
+    expect(japanese.newCount).toBeGreaterThan(0);
+    expect(japanese.learnCount).toBeGreaterThan(0);
+    expect(japanese.reviewCount).toBeGreaterThan(0);
+    await expect(page.locator(`[data-deck-name="${SEED.filteredDeck}"]`)).toHaveClass(/deck-row--filtered/);
     await expect(page.getByTestId('studied-today')).not.toBeEmpty();
 
     // Indentation: children start 20px further right than their parent.
@@ -64,15 +62,13 @@ for (const theme of THEMES) {
 
 test('deck overview (phone route) and description sanitizing', async ({ page }, info) => {
   await openApp(page, '/decks');
-  const id = await page.locator('[data-deck-name="일본어::한자"]').getAttribute('data-deck-id');
-  await page.goto(`/ui/#/deck/${id}`);
+  await expect(page.locator('[data-deck-name="일본어::한자"]')).toHaveAttribute('data-deck-id', String(SEED.deck.kanji));
+  await page.goto(`/ui/#/deck/${SEED.deck.kanji}`);
   await expect(page.getByTestId('deck-overview')).toBeVisible();
   await expect(page.locator('.overview__count--new .overview__count-value')).not.toHaveText('');
-  if (isFake) {
-    await expect(page.getByTestId('deck-description')).toContainText('JLPT N3');
-    expect(await page.evaluate(() => (window as unknown as { __xss?: number }).__xss)).toBeUndefined();
-    await expect(page.getByTestId('deck-description').locator('script, [onclick]')).toHaveCount(0);
-  }
+  await expect(page.getByTestId('deck-description')).toContainText('JLPT N3');
+  expect(await page.evaluate(() => (window as unknown as { __xss?: number }).__xss)).toBeUndefined();
+  await expect(page.getByTestId('deck-description').locator('script, [onclick]')).toHaveCount(0);
   await expect(page.getByTestId('start-study')).toBeEnabled();
   await shot(page, `overview-${info.project.name}`);
 });

@@ -39,7 +39,7 @@ class HostApi(
         backupBeforeDownload = { backups.create("before-full-download") }
     )
 
-    private val handlers: Map<String, (JsonObject) -> JsonElement> = mapOf(
+    private val handlers: MutableMap<String, (JsonObject) -> JsonElement> = java.util.concurrent.ConcurrentHashMap(mapOf(
         "info" to { _ -> info() },
         "prefs.get" to { _ -> prefs.all() },
         "prefs.set" to { a -> prefs.set(a) },
@@ -49,6 +49,7 @@ class HostApi(
         "sync.logout" to { _ -> sync.logout() },
         "sync.run" to { a -> sync.run(a.str("mode") ?: "normal") },
         "sync.abort" to { _ -> sync.abort() },
+        "sync.check" to { _ -> sync.check() },
         "backup.create" to { _ -> entryJson(progress.run("backup") { backups.create("manual") }) },
         "backup.list" to { _ -> jsonOf("keep" to backups.keep(), "backups" to backups.list().map { entryJson(it) }) },
         "backup.restore" to { a ->
@@ -86,9 +87,17 @@ class HostApi(
         },
         "ui.backHandled" to { a -> platform.backHandled(a.long("id") ?: 0L); ok() }
         // "platform.exit" is handled by HostServer (it must answer before exiting).
-    )
+    ))
 
     val names: Set<String> get() = handlers.keys + "platform.exit"
+
+    /**
+     * Adds (or replaces) a host function. For shell-specific extras, e.g. the desktop development host's
+     * `test.*` hooks; the documented functions above are the contract every shell gets.
+     */
+    fun register(name: String, handler: (JsonObject) -> JsonElement) {
+        handlers[name] = handler
+    }
 
     fun call(name: String, args: JsonObject): JsonElement {
         val h = handlers[name] ?: throw HostError(404, "알 수 없는 기능입니다: $name", "unknown-function")
@@ -230,7 +239,7 @@ class HostApi(
     fun cleanTemp(maxAgeMillis: Long = 24 * 60 * 60 * 1000L) {
         val cutoff = System.currentTimeMillis() - maxAgeMillis
         for (d in listOf(uploadDir, exportDir)) {
-            d.listFiles()?.filter { it.isFile && it.lastModified() < cutoff }?.forEach { it.delete() }
+            d.listFiles()?.filter { it.lastModified() < cutoff }?.forEach { it.deleteRecursively() }
         }
     }
 

@@ -14,7 +14,7 @@ export function Spinner({ size = 28, inline, label = '불러오는 중' }: { siz
 
 export function LoadingState({ label = '불러오는 중' }: { label?: string }) {
   return (
-    <div className="loading-state">
+    <div className="loading-state" data-testid="loading-state">
       <Spinner label={label} />
     </div>
   );

@@ -1,17 +1,15 @@
 // The "추가" menu (deck list FAB on phones, rail button on wide screens):
 // 노트 추가, 덱 만들기, 필터 덱 만들기, 가져오기.
-import { useCallback, useRef, useState, type ReactElement } from 'react';
+import { useState, type ReactElement } from 'react';
 import { decks } from '../anki';
-import { host } from '../host';
 import { allDeckNames, normalizeDeckName, sameDeckName } from '../lib/deckTree';
 import { describeError } from '../lib/errors';
 import { notifyCollectionChanged } from '../lib/hooks';
+import { useImportPicker } from '../lib/importFlow';
 import { navigate } from '../lib/router';
 import { Menu, type MenuAnchor } from '../ui/Menu';
 import { PromptDialog } from '../ui/Dialogs';
 import { toast } from '../ui/Toast';
-
-export const IMPORT_ACCEPT = '.apkg,.colpkg,.txt,.csv,.tsv';
 
 /** Validates a new full deck name against the current tree. */
 export async function validateNewDeckName(value: string, exceptId?: number): Promise<string | null> {
@@ -27,35 +25,6 @@ export async function validateNewDeckName(value: string, exceptId?: number): Pro
     return '같은 이름의 덱이 이미 있습니다';
   }
   return null;
-}
-
-/** Hidden file input + upload + classification -> continues on the host's route. */
-export function useImportPicker(): { pick: () => void; input: ReactElement } {
-  const ref = useRef<HTMLInputElement>(null);
-  const pick = useCallback(() => ref.current?.click(), []);
-  const input = (
-    <input
-      ref={ref}
-      type="file"
-      accept={IMPORT_ACCEPT}
-      hidden
-      data-testid="import-input"
-      onChange={async (e) => {
-        const file = e.target.files?.[0];
-        e.target.value = '';
-        if (!file) return;
-        try {
-          toast(`'${file.name}' 올리는 중…`);
-          const path = await host.upload(file, file.name);
-          const next = await host.importFile(path, file.name);
-          navigate(next.route);
-        } catch (err) {
-          toast(`가져오기 실패: ${describeError(err).message}`, { kind: 'error' });
-        }
-      }}
-    />
-  );
-  return { pick, input };
 }
 
 export function useCreateDeckDialog(): { open: (prefix?: string) => void; dialog: ReactElement } {

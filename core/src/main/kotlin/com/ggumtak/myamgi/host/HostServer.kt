@@ -385,14 +385,18 @@ class HostServer(
 
     private fun upload(req: Req): NanoHTTPD.Response {
         val name = HostApi.safeFileName(File(req.param("name") ?: "upload.bin").name)
-        api.uploadDir.mkdirs()
-        // ASCII on-disk name (see HostApi.newExportFile); the original name is returned and passed back by the UI.
+        // Each upload gets its own directory and keeps its name there: the official import pages show the
+        // file name. Under a non-UTF-8 JVM (file names would not match what the backend writes) non-ASCII
+        // names fall back to an ASCII one; the original name is returned either way.
         val ext = name.substringAfterLast('.', "").lowercase().filter { it in 'a'..'z' || it in '0'..'9' }.take(10)
-        val target = File(api.uploadDir, "upload-${UUID.randomUUID().toString().take(12)}" + if (ext.isEmpty()) "" else ".$ext")
+        val unicodeNames = System.getProperty("sun.jnu.encoding").orEmpty().equals("UTF-8", ignoreCase = true)
+        val diskName = if (unicodeNames || name.all { it.code < 128 }) name else "upload" + if (ext.isEmpty()) "" else ".$ext"
+        val dir = File(api.uploadDir, "upload-${UUID.randomUUID().toString().take(12)}").apply { mkdirs() }
+        val target = File(dir, diskName)
         try {
             req.copyBodyTo(target)
         } catch (e: Exception) {
-            target.delete()
+            dir.deleteRecursively()
             throw HostError(400, "파일을 받지 못했습니다.", e.message, e)
         }
         log.info("upload received: ${target.name} ${target.length()} bytes")
