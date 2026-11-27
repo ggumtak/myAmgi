@@ -152,18 +152,23 @@ val webDistDir = rootProject.layout.projectDirectory.dir("web/dist")
 val generatedWebUiRoot = layout.buildDirectory.dir("generated/webUi")
 
 val bundleWebUi by tasks.registering(Sync::class) {
-    from(webDistDir)
-    into(generatedWebUiRoot.map { it.dir("ui") })
+    from(webDistDir) {
+        into("ui")
+    }
+    into(generatedWebUiRoot)
 }
 
 android {
     sourceSets.getByName("main") {
-        assets.srcDir(generatedWebUiRoot)
+        assets.srcDir(bundleWebUi)
     }
 }
 
 tasks.matching {
-    it.name.startsWith("merge") && it.name.endsWith("Assets")
+    it.name != "bundleWebUi" && (
+        (it.name.startsWith("merge") && it.name.endsWith("Assets")) ||
+        it.name.contains("lint", ignoreCase = true)
+    )
 }.configureEach {
     dependsOn(bundleWebUi)
 }
