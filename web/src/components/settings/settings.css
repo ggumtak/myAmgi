@@ -45,6 +45,175 @@
   font-weight: 700;
 }
 
+/* Visual 4-Card Theme Picker */
+.amgi-theme-picker-wrap {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+:root[data-theme="eink"] .amgi-theme-picker-wrap {
+  border-bottom: 2px solid #000000;
+}
+
+.amgi-theme-picker-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.amgi-theme-picker-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.amgi-theme-picker-desc {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.amgi-theme-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.amgi-theme-card {
+  min-height: 76px;
+  padding: 8px 6px;
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  cursor: pointer;
+}
+
+.amgi-theme-card:hover {
+  border-color: var(--border-strong);
+}
+
+.amgi-theme-card.active {
+  border: 2px solid var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.amgi-theme-swatch {
+  width: 44px;
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+  position: relative;
+}
+
+.amgi-theme-swatch-bar {
+  width: 60%;
+  height: 5px;
+  border-radius: 3px;
+}
+
+.amgi-theme-swatch-line {
+  width: 85%;
+  height: 4px;
+  border-radius: 2px;
+  opacity: 0.6;
+}
+
+.amgi-theme-swatch--auto {
+  background: linear-gradient(135deg, #F3F5F9 50%, #0A0D13 50%);
+}
+.amgi-theme-swatch--auto .amgi-theme-swatch-bar { background: #1D4ED8; }
+.amgi-theme-swatch--auto .amgi-theme-swatch-line { background: #9CA3AF; }
+
+.amgi-theme-swatch--light {
+  background: #FFFFFF;
+}
+.amgi-theme-swatch--light .amgi-theme-swatch-bar { background: #1D4ED8; }
+.amgi-theme-swatch--light .amgi-theme-swatch-line { background: #CBD5E1; }
+
+.amgi-theme-swatch--dark {
+  background: #131822;
+  border-color: #2A3548;
+}
+.amgi-theme-swatch--dark .amgi-theme-swatch-bar { background: #58A6FF; }
+.amgi-theme-swatch--dark .amgi-theme-swatch-line { background: #334155; }
+
+.amgi-theme-swatch--eink {
+  background: #FFFFFF;
+  border: 2px solid #000000;
+}
+.amgi-theme-swatch--eink .amgi-theme-swatch-bar { background: #000000; }
+.amgi-theme-swatch--eink .amgi-theme-swatch-line { background: #000000; opacity: 1; }
+
+.amgi-theme-card-label {
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* Pure Monochrome E-Ink Override for All Theme Swatches */
+:root[data-theme="eink"] .amgi-theme-card {
+  min-height: 82px;
+  background: #FFFFFF;
+  color: #000000;
+  border: 2px solid #000000;
+}
+
+:root[data-theme="eink"] .amgi-theme-card.active {
+  background: #000000;
+  color: #FFFFFF;
+  border: 2px solid #000000;
+}
+
+:root[data-theme="eink"] .amgi-theme-swatch {
+  border: 2px solid #000000;
+}
+
+:root[data-theme="eink"] .amgi-theme-swatch--auto {
+  background: linear-gradient(135deg, #FFFFFF 50%, #000000 50%);
+}
+:root[data-theme="eink"] .amgi-theme-swatch--light {
+  background: #FFFFFF;
+}
+:root[data-theme="eink"] .amgi-theme-swatch--dark {
+  background: #222222;
+  border-color: #000000;
+}
+:root[data-theme="eink"] .amgi-theme-swatch--eink {
+  background: #FFFFFF;
+}
+:root[data-theme="eink"] .amgi-theme-swatch--auto .amgi-theme-swatch-bar,
+:root[data-theme="eink"] .amgi-theme-swatch--light .amgi-theme-swatch-bar,
+:root[data-theme="eink"] .amgi-theme-swatch--eink .amgi-theme-swatch-bar {
+  background: #000000;
+}
+:root[data-theme="eink"] .amgi-theme-swatch--dark .amgi-theme-swatch-bar {
+  background: #FFFFFF;
+}
+:root[data-theme="eink"] .amgi-theme-swatch--auto .amgi-theme-swatch-line,
+:root[data-theme="eink"] .amgi-theme-swatch--light .amgi-theme-swatch-line,
+:root[data-theme="eink"] .amgi-theme-swatch--eink .amgi-theme-swatch-line {
+  background: #666666;
+  opacity: 1;
+}
+:root[data-theme="eink"] .amgi-theme-swatch--dark .amgi-theme-swatch-line {
+  background: #CCCCCC;
+  opacity: 1;
+}
+
 /* Count / Status Pill inside SettingRow */
 .amgi-setting-pill {
   display: inline-flex;

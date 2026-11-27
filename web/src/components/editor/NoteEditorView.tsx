@@ -109,6 +109,7 @@ export const NoteEditorView: React.FC<{
 
   // Toolbar popovers & file pickers
   const [colorPaletteOpen, setColorPaletteOpen] = useState(false);
+  const [moreToolsOpen, setMoreToolsOpen] = useState(false);
   const [recording, setRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
@@ -546,6 +547,27 @@ export const NoteEditorView: React.FC<{
     }
   };
 
+  const handleSubmitRef = useRef(handleSubmit);
+  handleSubmitRef.current = handleSubmit;
+  const handleInsertClozeRef = useRef(handleInsertCloze);
+  handleInsertClozeRef.current = handleInsertCloze;
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        void handleSubmitRef.current();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'c') {
+        e.preventDefault();
+        handleInsertClozeRef.current(e.altKey);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   const handleOpenChangeNtInEdit = async () => {
     if (!notetype || !note) return;
     const currentId = anki.toNumber(notetype.id);
@@ -823,124 +845,238 @@ export const NoteEditorView: React.FC<{
           </div>
 
           {/* Sticky Formatting Toolbar */}
-          <div className="amgi-rich-toolbar" role="toolbar" aria-label="서식 도구 모음">
-            <button
-              type="button"
-              className="amgi-rich-tool-btn"
-              aria-label="굵게"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                fieldRefs.current[focusedFieldIdx]?.execFormat('bold');
-                setDirty(true);
-              }}
-            >
-              <strong>B</strong>
-            </button>
+          <div className="amgi-rich-toolbar-wrap">
+            <div className="amgi-rich-toolbar" role="toolbar" aria-label="서식 도구 모음">
+              <button
+                type="button"
+                className="amgi-rich-tool-btn"
+                aria-label="굵게"
+                title="굵게 (Ctrl+B)"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  fieldRefs.current[focusedFieldIdx]?.execFormat('bold');
+                  setDirty(true);
+                }}
+              >
+                <strong>B</strong>
+              </button>
 
-            <button
-              type="button"
-              className="amgi-rich-tool-btn"
-              aria-label="기울임"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                fieldRefs.current[focusedFieldIdx]?.execFormat('italic');
-                setDirty(true);
-              }}
-            >
-              <em>I</em>
-            </button>
+              <button
+                type="button"
+                className="amgi-rich-tool-btn"
+                aria-label="기울임"
+                title="기울임 (Ctrl+I)"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  fieldRefs.current[focusedFieldIdx]?.execFormat('italic');
+                  setDirty(true);
+                }}
+              >
+                <em>I</em>
+              </button>
 
-            <button
-              type="button"
-              className="amgi-rich-tool-btn"
-              aria-label="밑줄"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                fieldRefs.current[focusedFieldIdx]?.execFormat('underline');
-                setDirty(true);
-              }}
-            >
-              <u>U</u>
-            </button>
+              <button
+                type="button"
+                className="amgi-rich-tool-btn"
+                aria-label="밑줄"
+                title="밑줄 (Ctrl+U)"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  fieldRefs.current[focusedFieldIdx]?.execFormat('underline');
+                  setDirty(true);
+                }}
+              >
+                <u>U</u>
+              </button>
 
-            <button
-              type="button"
-              className={`amgi-rich-tool-btn ${colorPaletteOpen ? 'active' : ''}`}
-              aria-label="글자 색상"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => setColorPaletteOpen((v) => !v)}
-            >
-              <span>가▾</span>
-            </button>
+              <button
+                type="button"
+                className="amgi-rich-tool-btn"
+                aria-label="빈칸 추가 (새 번호)"
+                title={
+                  isClozeNotetype
+                    ? '새 번호 빈칸 만들기 (Ctrl+Shift+C)'
+                    : '빈칸 문법 {{c1::...}} 삽입 (빈칸 유형에서 동작)'
+                }
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => handleInsertCloze(false)}
+              >
+                <span>[...]</span>
+              </button>
 
-            <button
-              type="button"
-              className="amgi-rich-tool-btn"
-              aria-label="빈칸 추가 (새 번호)"
-              title={
-                isClozeNotetype
-                  ? '새 번호 빈칸 만들기'
-                  : '빈칸 문법 {{c1::...}} 삽입 (빈칸 유형에서 동작)'
-              }
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => handleInsertCloze(false)}
-            >
-              <span>[...]</span>
-            </button>
+              <button
+                type="button"
+                className="amgi-rich-tool-btn"
+                aria-label="이미지 첨부"
+                title="이미지 첨부"
+                onClick={() => imageInputRef.current?.click()}
+              >
+                <IconImage size={18} />
+              </button>
 
-            <button
-              type="button"
-              className="amgi-rich-tool-btn"
-              aria-label="같은 번호 빈칸 추가"
-              title="가장 최근 번호로 빈칸 추가"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => handleInsertCloze(true)}
-            >
-              <span>[...+]</span>
-            </button>
+              <button
+                type="button"
+                className={`amgi-rich-tool-btn ${moreToolsOpen || colorPaletteOpen || recording ? 'active' : ''}`}
+                aria-label="서식 도구 더보기"
+                aria-expanded={moreToolsOpen}
+                title="색상 · 수식 · 오디오 · 추가 서식"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setMoreToolsOpen((v) => !v)}
+              >
+                <span>{moreToolsOpen ? '접기' : '더보기'}</span>
+              </button>
+            </div>
 
-            <button
-              type="button"
-              className="amgi-rich-tool-btn"
-              aria-label="이미지 첨부"
-              onClick={() => imageInputRef.current?.click()}
-            >
-              <IconImage size={18} />
-            </button>
+            {moreToolsOpen && (
+              <div className="amgi-rich-toolbar-extra" role="toolbar" aria-label="추가 서식 도구">
+                <button
+                  type="button"
+                  className="amgi-rich-tool-btn"
+                  aria-label="취소선"
+                  title="취소선"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    fieldRefs.current[focusedFieldIdx]?.execFormat('strikeThrough');
+                    setDirty(true);
+                  }}
+                >
+                  <s>S</s>
+                </button>
 
-            <button
-              type="button"
-              className={`amgi-rich-tool-btn ${recording ? 'active' : ''}`}
-              aria-label={recording ? '녹음 중지' : '오디오 첨부 또는 녹음'}
-              onClick={() => audioInputRef.current?.click()}
-            >
-              <IconVolume size={18} />
-            </button>
+                <button
+                  type="button"
+                  className={`amgi-rich-tool-btn ${colorPaletteOpen ? 'active' : ''}`}
+                  aria-label="글자 색상"
+                  title="글자 색상"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => setColorPaletteOpen((v) => !v)}
+                >
+                  <span>가▾</span>
+                </button>
 
-            <button
-              type="button"
-              className="amgi-rich-tool-btn"
-              aria-label="녹음"
-              onClick={() => void handleToggleRecord()}
-            >
-              <span>{recording ? '녹음 중지' : '녹음'}</span>
-            </button>
+                <button
+                  type="button"
+                  className="amgi-rich-tool-btn"
+                  aria-label="같은 번호 빈칸 추가"
+                  title="같은 번호로 빈칸 추가 (Ctrl+Shift+Alt+C)"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => handleInsertCloze(true)}
+                >
+                  <span>[...+]</span>
+                </button>
 
-            <button
-              type="button"
-              className={`amgi-rich-tool-btn ${
-                htmlModes[focusedFieldIdx] ? 'active' : ''
-              }`}
-              aria-label="HTML 소스 보기 전환"
-              onClick={() =>
-                setHtmlModes((prev) => ({
-                  ...prev,
-                  [focusedFieldIdx]: !prev[focusedFieldIdx],
-                }))
-              }
-            >
-              <IconCode size={17} />
-            </button>
+                <button
+                  type="button"
+                  className="amgi-rich-tool-btn"
+                  aria-label="위 첨자"
+                  title="위 첨자"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    fieldRefs.current[focusedFieldIdx]?.execFormat('superscript');
+                    setDirty(true);
+                  }}
+                >
+                  <span>
+                    x<sup>2</sup>
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  className="amgi-rich-tool-btn"
+                  aria-label="아래 첨자"
+                  title="아래 첨자"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    fieldRefs.current[focusedFieldIdx]?.execFormat('subscript');
+                    setDirty(true);
+                  }}
+                >
+                  <span>
+                    x<sub>2</sub>
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  className="amgi-rich-tool-btn"
+                  aria-label="글머리 기호 목록"
+                  title="글머리 기호 목록"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    fieldRefs.current[focusedFieldIdx]?.execFormat('insertUnorderedList');
+                    setDirty(true);
+                  }}
+                >
+                  <span>• 목록</span>
+                </button>
+
+                <button
+                  type="button"
+                  className="amgi-rich-tool-btn"
+                  aria-label="수식 (MathJax)"
+                  title="인라인 수식 \( ... \) 삽입"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    fieldRefs.current[focusedFieldIdx]?.insertMathJax();
+                    setDirty(true);
+                  }}
+                >
+                  <span>∑</span>
+                </button>
+
+                <button
+                  type="button"
+                  className="amgi-rich-tool-btn"
+                  aria-label="서식 지우기"
+                  title="선택 영역 서식 지우기"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    fieldRefs.current[focusedFieldIdx]?.execFormat('removeFormat');
+                    setDirty(true);
+                  }}
+                >
+                  <span>Tx</span>
+                </button>
+
+                <button
+                  type="button"
+                  className="amgi-rich-tool-btn"
+                  aria-label="오디오 첨부"
+                  title="오디오 파일 첨부"
+                  onClick={() => audioInputRef.current?.click()}
+                >
+                  <IconVolume size={18} />
+                </button>
+
+                <button
+                  type="button"
+                  className={`amgi-rich-tool-btn ${recording ? 'active' : ''}`}
+                  aria-label={recording ? '녹음 중지' : '음성 녹음'}
+                  title={recording ? '녹음 중지' : '음성 녹음'}
+                  onClick={() => void handleToggleRecord()}
+                >
+                  <span>{recording ? '중지' : '녹음'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  className={`amgi-rich-tool-btn ${
+                    htmlModes[focusedFieldIdx] ? 'active' : ''
+                  }`}
+                  aria-label="HTML 소스 보기 전환"
+                  title="HTML 소스 전환"
+                  onClick={() =>
+                    setHtmlModes((prev) => ({
+                      ...prev,
+                      [focusedFieldIdx]: !prev[focusedFieldIdx],
+                    }))
+                  }
+                >
+                  <IconCode size={17} />
+                </button>
+              </div>
+            )}
           </div>
 
           {colorPaletteOpen && (

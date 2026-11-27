@@ -93,10 +93,22 @@ export function sanitizePastedHtml(html: string, stripFormatting: boolean): stri
   return doc.body.innerHTML;
 }
 
+export type RichFormatCmd =
+  | 'bold'
+  | 'italic'
+  | 'underline'
+  | 'strikeThrough'
+  | 'superscript'
+  | 'subscript'
+  | 'insertUnorderedList'
+  | 'removeFormat'
+  | 'foreColor';
+
 export interface RichFieldInputHandle {
   focus: () => void;
-  execFormat: (cmd: 'bold' | 'italic' | 'underline' | 'foreColor', value?: string) => void;
+  execFormat: (cmd: RichFormatCmd, value?: string) => void;
   insertCloze: (clozeNumber: number) => void;
+  insertMathJax: () => void;
   insertMediaHtml: (portableHtml: string) => void;
 }
 
@@ -218,6 +230,11 @@ export const RichFieldInput = forwardRef<RichFieldInputHandle, RichFieldInputPro
             if (cmd === 'bold') wrapped = `<b>${sel}</b>`;
             else if (cmd === 'italic') wrapped = `<i>${sel}</i>`;
             else if (cmd === 'underline') wrapped = `<u>${sel}</u>`;
+            else if (cmd === 'strikeThrough') wrapped = `<s>${sel}</s>`;
+            else if (cmd === 'superscript') wrapped = `<sup>${sel}</sup>`;
+            else if (cmd === 'subscript') wrapped = `<sub>${sel}</sub>`;
+            else if (cmd === 'insertUnorderedList') wrapped = `<ul><li>${sel}</li></ul>`;
+            else if (cmd === 'removeFormat') wrapped = sel.replace(/<[^>]+>/g, '');
             else if (cmd === 'foreColor') {
               wrapped = arg ? `<span style="color:${arg}">${sel}</span>` : sel;
             }
@@ -239,6 +256,63 @@ export const RichFieldInput = forwardRef<RichFieldInputHandle, RichFieldInputPro
         insertCloze(clozeNumber: number) {
           const prefix = `{{c${clozeNumber}::`;
           const suffix = `}}`;
+
+          if (htmlMode && textareaRef.current) {
+            const ta = textareaRef.current;
+            const start = ta.selectionStart ?? ta.value.length;
+            const end = ta.selectionEnd ?? ta.value.length;
+            const selected = ta.value.slice(start, end);
+            const snippet = `${prefix}${selected}${suffix}`;
+            const next = ta.value.slice(0, start) + snippet + ta.value.slice(end);
+            lastSerializedRef.current = next;
+            onChange(next);
+            requestAnimationFrame(() => {
+              ta.focus();
+              const caret = selected ? start + snippet.length : start + prefix.length;
+              ta.setSelectionRange(caret, caret);
+            });
+            return;
+          }
+
+          restoreSelection();
+          const sel = window.getSelection();
+          const el = editableRef.current;
+          if (!el || !sel) return;
+
+          if (sel.rangeCount > 0 && el.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+            const range = sel.getRangeAt(0);
+            const selectedText = range.toString();
+            const snippet = `${prefix}${selectedText}${suffix}`;
+            range.deleteContents();
+            const textNode = document.createTextNode(snippet);
+            range.insertNode(textNode);
+
+            const nextRange = document.createRange();
+            if (selectedText.length === 0) {
+              nextRange.setStart(textNode, prefix.length);
+              nextRange.setEnd(textNode, prefix.length);
+            } else {
+              nextRange.setStartAfter(textNode);
+              nextRange.setEndAfter(textNode);
+            }
+            sel.removeAllRanges();
+            sel.addRange(nextRange);
+            savedRangeRef.current = nextRange.cloneRange();
+          } else {
+            const textNode = document.createTextNode(`${prefix}${suffix}`);
+            el.appendChild(textNode);
+            const nextRange = document.createRange();
+            nextRange.setStart(textNode, prefix.length);
+            nextRange.setEnd(textNode, prefix.length);
+            sel.removeAllRanges();
+            sel.addRange(nextRange);
+            savedRangeRef.current = nextRange.cloneRange();
+          }
+          emitEditableChange();
+        },
+        insertMathJax() {
+          const prefix = '\\(';
+          const suffix = '\\)';
 
           if (htmlMode && textareaRef.current) {
             const ta = textareaRef.current;

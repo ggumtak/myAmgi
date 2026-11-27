@@ -103,20 +103,14 @@
 
 .amgi-editor-pickers {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
-@media (max-width: 440px) {
-  .amgi-editor-pickers {
-    grid-template-columns: 1fr;
-  }
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
 }
 
 .amgi-editor-picker-box {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -129,36 +123,72 @@
 .amgi-editor-nt-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 /* Sticky Formatting Toolbar */
-.amgi-rich-toolbar {
+.amgi-rich-toolbar-wrap {
   position: sticky;
   top: calc(var(--topbar-h) + var(--safe-top));
   z-index: 18;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
   gap: 6px;
-  padding: 8px 10px;
+  padding: 6px 8px;
   background: var(--surface);
   border: var(--border-w) solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);
 }
 
+:root[data-theme="eink"] .amgi-rich-toolbar-wrap {
+  background: #FFFFFF;
+  border: 2px solid #000000;
+  box-shadow: none;
+}
+
+.amgi-rich-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.amgi-rich-toolbar-extra {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+:root[data-theme="eink"] .amgi-rich-toolbar-extra {
+  border-top: 2px solid #000000;
+}
+
 @media (max-width: 440px) {
+  .amgi-editor-form-pane {
+    gap: 10px;
+    padding: 10px 10px calc(28px + var(--safe-bottom));
+  }
+
   .amgi-rich-toolbar {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 6px;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .amgi-rich-toolbar-extra {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
   }
 
   .amgi-rich-tool-btn {
     min-width: 0;
     width: 100%;
-    padding: 0 4px;
+    padding: 0 2px;
     font-size: 13px;
   }
 }
@@ -176,9 +206,14 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 4px;
   cursor: pointer;
   white-space: nowrap;
+}
+
+.amgi-rich-tool-btn:hover {
+  background: var(--surface-active);
+  border-color: var(--border-strong);
 }
 
 .amgi-rich-tool-btn.active {
@@ -217,11 +252,18 @@
 }
 
 .amgi-color-swatch {
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   border: 2px solid var(--border-strong);
   cursor: pointer;
+}
+
+:root[data-theme="eink"] .amgi-color-swatch {
+  width: 48px;
+  height: 48px;
+  filter: grayscale(1);
+  border: 2px solid #000000;
 }
 
 /* Field Cards */

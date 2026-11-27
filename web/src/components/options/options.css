@@ -334,6 +334,18 @@
   border: 2px solid #000000;
 }
 
+.amgi-options-btn-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+@media (max-width: 400px) {
+  .amgi-options-btn-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Bottom Escape Hatch */
 .amgi-options-escape {
   margin-top: 4px;

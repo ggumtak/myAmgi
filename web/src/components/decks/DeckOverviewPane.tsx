@@ -199,6 +199,17 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
   const [exportLegacy, setExportLegacy] = useState(false);
   const [exportResult, setExportResult] = useState<host.ExportResult | null>(null);
 
+  // Deck description editor state
+  const [descEditOpen, setDescEditOpen] = useState(false);
+  const [descDraft, setDescDraft] = useState('');
+  const [maturity, setMaturity] = useState<{
+    newCount: number;
+    learnCount: number;
+    youngCount: number;
+    matureCount: number;
+    total: number;
+  } | null>(null);
+
   const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
@@ -212,6 +223,32 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
         const found = findDeckInTree(tree, deckId);
         setDeckInfo(found);
         setDeckObj(deck);
+
+        const searchName = found?.fullName || deck?.name || '';
+        if (searchName) {
+          anki
+            .graphs(`deck:"${searchName}"`, 1)
+            .then((g) => {
+              if (cancelled || !g?.cardCounts) return;
+              const cc =
+                g.cardCounts.excludingInactive ?? g.cardCounts.includingInactive;
+              if (!cc) return;
+              const n = cc.newCards ?? 0;
+              const l = (cc.learn ?? 0) + (cc.relearn ?? 0);
+              const y = cc.young ?? 0;
+              const m = cc.mature ?? 0;
+              setMaturity({
+                newCount: n,
+                learnCount: l,
+                youngCount: y,
+                matureCount: m,
+                total: n + l + y + m,
+              });
+            })
+            .catch(() => {
+              if (!cancelled) setMaturity(null);
+            });
+        }
 
         const dueCount = found
           ? found.newCount + found.learnCount + found.reviewCount
@@ -240,6 +277,32 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
       cancelled = true;
     };
   }, [deckId, collectionVersion, refreshTick]);
+
+  const handleSaveDescription = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!deckObj || deckObj.filtered) return;
+    setBusyAction('desc');
+    try {
+      await anki.updateDeck({
+        ...deckObj,
+        normal: {
+          ...(deckObj.normal ?? {}),
+          description: descDraft,
+        },
+      });
+      setDescEditOpen(false);
+      showToast('덱 설명을 저장했습니다.', 'success');
+      bumpCollection();
+      setRefreshTick((v) => v + 1);
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : '덱 설명을 저장하지 못했습니다.',
+        'error'
+      );
+    } finally {
+      setBusyAction(null);
+    }
+  };
 
   const handleStartStudy = async () => {
     setBusyAction('study');
@@ -638,6 +701,54 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
             </button>
           </div>
         )}
+        {maturity && maturity.total > 0 && (
+          <div className="amgi-overview-maturity" aria-label="덱 숙련도 분포">
+            <div className="amgi-overview-maturity-bar">
+              {maturity.newCount > 0 && (
+                <div
+                  className="amgi-overview-m-seg new"
+                  style={{ width: `${(maturity.newCount / maturity.total) * 100}%` }}
+                />
+              )}
+              {maturity.learnCount > 0 && (
+                <div
+                  className="amgi-overview-m-seg learn"
+                  style={{ width: `${(maturity.learnCount / maturity.total) * 100}%` }}
+                />
+              )}
+              {maturity.youngCount > 0 && (
+                <div
+                  className="amgi-overview-m-seg young"
+                  style={{ width: `${(maturity.youngCount / maturity.total) * 100}%` }}
+                />
+              )}
+              {maturity.matureCount > 0 && (
+                <div
+                  className="amgi-overview-m-seg mature"
+                  style={{ width: `${(maturity.matureCount / maturity.total) * 100}%` }}
+                />
+              )}
+            </div>
+            <div className="amgi-overview-maturity-legend tabular">
+              <span className="amgi-overview-maturity-item">
+                <span className="amgi-overview-m-dot new" />
+                <span>새 {maturity.newCount}</span>
+              </span>
+              <span className="amgi-overview-maturity-item">
+                <span className="amgi-overview-m-dot learn" />
+                <span>학습 {maturity.learnCount}</span>
+              </span>
+              <span className="amgi-overview-maturity-item">
+                <span className="amgi-overview-m-dot young" />
+                <span>익히는 중 {maturity.youngCount}</span>
+              </span>
+              <span className="amgi-overview-maturity-item">
+                <span className="amgi-overview-m-dot mature" />
+                <span>장기 기억 {maturity.matureCount}</span>
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="amgi-overview-card">
@@ -717,8 +828,72 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
               <span>내보내기 (.apkg)</span>
             </button>
           )}
+
+          {!isFiltered && (
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-secondary"
+              onClick={() => {
+                setDescDraft(rawDescription);
+                setDescEditOpen(true);
+              }}
+            >
+              <IconEdit size={16} />
+              <span>설명 편집</span>
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Deck Description Editor Modal */}
+      <SheetOrDialog
+        open={descEditOpen}
+        onClose={() => {
+          if (busyAction !== 'desc') setDescEditOpen(false);
+        }}
+        title="덱 설명 편집"
+        subtitle={displayName}
+        footer={
+          <>
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-secondary"
+              disabled={busyAction === 'desc'}
+              onClick={() => setDescEditOpen(false)}
+            >
+              취소
+            </button>
+            <button
+              type="submit"
+              form="amgi-deck-desc-form"
+              className="amgi-btn amgi-btn-primary"
+              disabled={busyAction === 'desc'}
+            >
+              {busyAction === 'desc' ? '저장 중...' : '저장'}
+            </button>
+          </>
+        }
+      >
+        <form
+          id="amgi-deck-desc-form"
+          className="amgi-modal-form"
+          onSubmit={(e) => void handleSaveDescription(e)}
+        >
+          <div className="amgi-field-group">
+            <label className="amgi-field-label" htmlFor="deck-desc-textarea">
+              덱 메모 / 설명
+            </label>
+            <textarea
+              id="deck-desc-textarea"
+              className="amgi-textarea"
+              rows={5}
+              value={descDraft}
+              onChange={(e) => setDescDraft(e.target.value)}
+              placeholder="학습 목표, 출처, 암기 팁 등을 자유롭게 적어두세요..."
+            />
+          </div>
+        </form>
+      </SheetOrDialog>
 
       {/* Custom Study Sheet */}
       <SheetOrDialog

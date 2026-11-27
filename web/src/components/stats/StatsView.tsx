@@ -103,6 +103,8 @@ export const StatsView: React.FC = () => {
 
   const [selectedHeatCell, setSelectedHeatCell] = useState<HeatCell | null>(null);
   const [selectedDueDay, setSelectedDueDay] = useState<number | null>(null);
+  const [selectedReviewDay, setSelectedReviewDay] = useState<number | null>(null);
+  const [selectedHour, setSelectedHour] = useState<number | null>(null);
   const [includeInactive, setIncludeInactive] = useState(false);
   const [showOfficialIframe, setShowOfficialIframe] = useState(false);
 
@@ -123,6 +125,8 @@ export const StatsView: React.FC = () => {
       setGraphsData(statsRes);
       setSelectedHeatCell(null);
       setSelectedDueDay(null);
+      setSelectedReviewDay(null);
+      setSelectedHour(null);
     } catch (err) {
       setLoadError(
         err instanceof Error ? err.message : '통계 데이터를 불러오는 중 오류가 발생했습니다.'
@@ -244,6 +248,95 @@ export const StatsView: React.FC = () => {
       todayTotal,
       currentStreak,
       longestStreak,
+    };
+  }, [graphsData]);
+
+  // Past 30-day Review Trend (offsets -29..0 stacked: learning / young / mature)
+  const past30Reviews = useMemo(() => {
+    const countMap = graphsData?.reviews?.count ?? {};
+    const today = new Date();
+    const days = Array.from({ length: 30 }, (_, i) => {
+      const offset = i - 29;
+      const entry = countMap[String(offset)];
+      const learning = (entry?.learn ?? 0) + (entry?.relearn ?? 0) + (entry?.filtered ?? 0);
+      const young = entry?.young ?? 0;
+      const mature = entry?.mature ?? 0;
+      const total = learning + young + mature;
+      return {
+        idx: i,
+        offset,
+        date: addDaysToDate(today, offset),
+        learning,
+        young,
+        mature,
+        total,
+      };
+    });
+    const sum30 = days.reduce((acc, d) => acc + d.total, 0);
+    const activeDays30 = days.filter((d) => d.total > 0).length;
+    const avg30 = Math.round(sum30 / 30);
+    const maxVal = Math.max(...days.map((d) => d.total), 1);
+    return {
+      days,
+      sum30,
+      activeDays30,
+      avg30,
+      maxVal,
+      hasAny: sum30 > 0,
+    };
+  }, [graphsData]);
+
+  // Answer Button Distribution (1-year or all-time fallback)
+  const buttonStats = useMemo(() => {
+    const src =
+      graphsData?.buttons?.oneYear ??
+      graphsData?.buttons?.allTime ??
+      graphsData?.buttons?.oneMonth;
+    const buildRow = (label: string, arr: number[] | null | undefined) => {
+      const again = arr?.[0] ?? 0;
+      const hard = arr?.[1] ?? 0;
+      const good = arr?.[2] ?? 0;
+      const easy = arr?.[3] ?? 0;
+      const total = again + hard + good + easy;
+      const passRate = total > 0 ? Math.round(((hard + good + easy) / total) * 100) : 0;
+      return { label, again, hard, good, easy, total, passRate };
+    };
+    const rows = [
+      buildRow('배우는 중', src?.learning),
+      buildRow('익히는 중', src?.young),
+      buildRow('장기 기억', src?.mature),
+    ];
+    const grandTotal = rows.reduce((acc, r) => acc + r.total, 0);
+    return { rows, grandTotal };
+  }, [graphsData]);
+
+  // Hourly Breakdown (24 hours accuracy & volume)
+  const hourlyStats = useMemo(() => {
+    const raw =
+      graphsData?.hours?.oneYear ??
+      graphsData?.hours?.allTime ??
+      graphsData?.hours?.oneMonth ??
+      [];
+    const hours = Array.from({ length: 24 }, (_, h) => {
+      const entry = raw[h];
+      const total = entry?.total ?? 0;
+      const correct = entry?.correct ?? 0;
+      const pct = total > 0 ? Math.round((correct / total) * 100) : 0;
+      return { hour: h, total, correct, pct };
+    });
+    const activeHours = hours.filter((h) => h.total > 0);
+    const maxTotal = Math.max(...hours.map((h) => h.total), 1);
+    let bestHour: { hour: number; pct: number; total: number } | null = null;
+    for (const h of activeHours) {
+      if (h.total >= 3 && (!bestHour || h.pct > bestHour.pct || (h.pct === bestHour.pct && h.total > bestHour.total))) {
+        bestHour = h;
+      }
+    }
+    return {
+      hours,
+      hasAny: activeHours.length > 0,
+      maxTotal,
+      bestHour,
     };
   }, [graphsData]);
 
@@ -795,7 +888,302 @@ export const StatsView: React.FC = () => {
               )}
             </section>
 
-            {/* Card 5 (Optional): 최근 기억 유지율 */}
+            {/* Card 5: 최근 30일 학습량 추이 */}
+            <section className="amgi-stats-card amgi-stats-span-2">
+              <div className="amgi-stats-card-head">
+                <div>
+                  <h2 className="amgi-stats-card-title">최근 30일 학습량 추이</h2>
+                  <p className="amgi-stats-card-sub">
+                    총 {past30Reviews.sum30.toLocaleString('ko-KR')}회 복습 · {past30Reviews.activeDays30}일 활동
+                  </p>
+                </div>
+                <span className="amgi-stats-badge">
+                  일 평균 {past30Reviews.avg30.toLocaleString('ko-KR')}회
+                </span>
+              </div>
+
+              {!past30Reviews.hasAny ? (
+                <div className="amgi-future-empty">최근 30일간 복습 기록이 없습니다.</div>
+              ) : (
+                <>
+                  <div className="amgi-future-svg-wrap">
+                    <svg
+                      className="amgi-future-svg"
+                      viewBox="0 0 360 138"
+                      role="img"
+                      aria-label="최근 30일 학습량 막대 그래프"
+                    >
+                      {(() => {
+                        const plotLeft = 8;
+                        const plotRight = 352;
+                        const plotTop = 12;
+                        const plotBottom = 112;
+                        const plotH = plotBottom - plotTop;
+                        const plotW = plotRight - plotLeft;
+                        const slotW = plotW / 30;
+                        const barW = Math.max(5, slotW - 3);
+
+                        return (
+                          <>
+                            {past30Reviews.days.map((d) => {
+                              const x = plotLeft + d.idx * slotW + 1.5;
+                              const matureH = (d.mature / past30Reviews.maxVal) * plotH;
+                              const youngH = (d.young / past30Reviews.maxVal) * plotH;
+                              const learnH = (d.learning / past30Reviews.maxVal) * plotH;
+                              const yMature = plotBottom - matureH;
+                              const yYoung = yMature - youngH;
+                              const yLearn = yYoung - learnH;
+                              const isSel = selectedReviewDay === d.idx;
+                              return (
+                                <g key={d.offset}>
+                                  {matureH > 0 && (
+                                    <rect
+                                      x={x}
+                                      y={yMature}
+                                      width={barW}
+                                      height={Math.max(2, matureH)}
+                                      className={`amgi-rev-bar amgi-rev-bar--mature ${isSel ? 'is-selected' : ''}`}
+                                    />
+                                  )}
+                                  {youngH > 0 && (
+                                    <rect
+                                      x={x}
+                                      y={yYoung}
+                                      width={barW}
+                                      height={Math.max(2, youngH)}
+                                      className={`amgi-rev-bar amgi-rev-bar--young ${isSel ? 'is-selected' : ''}`}
+                                    />
+                                  )}
+                                  {learnH > 0 && (
+                                    <rect
+                                      x={x}
+                                      y={yLearn}
+                                      width={barW}
+                                      height={Math.max(2, learnH)}
+                                      className={`amgi-rev-bar amgi-rev-bar--learn ${isSel ? 'is-selected' : ''}`}
+                                    />
+                                  )}
+                                  <rect
+                                    x={plotLeft + d.idx * slotW}
+                                    y={plotTop}
+                                    width={slotW}
+                                    height={plotH + 10}
+                                    fill="transparent"
+                                    style={{ cursor: 'pointer' }}
+                                    onClick={() => setSelectedReviewDay(d.idx)}
+                                  />
+                                </g>
+                              );
+                            })}
+                            {[
+                              { idx: 0, label: '30일 전' },
+                              { idx: 14, label: '15일 전' },
+                              { idx: 29, label: '오늘' },
+                            ].map((tick) => (
+                              <text
+                                key={tick.idx}
+                                x={plotLeft + tick.idx * slotW + slotW / 2}
+                                y={130}
+                                textAnchor={
+                                  tick.idx === 0 ? 'start' : tick.idx === 29 ? 'end' : 'middle'
+                                }
+                                className="amgi-future-axis-text"
+                              >
+                                {tick.label}
+                              </text>
+                            ))}
+                          </>
+                        );
+                      })()}
+                    </svg>
+                  </div>
+
+                  <div className="amgi-heat-footer">
+                    <span className="amgi-heat-inspect">
+                      {selectedReviewDay !== null && past30Reviews.days[selectedReviewDay]
+                        ? (() => {
+                            const d = past30Reviews.days[selectedReviewDay];
+                            return `${formatKoShortDate(d.date)} · 총 ${d.total}회 (학습 ${d.learning} · 익힘 ${d.young} · 장기 ${d.mature})`;
+                          })()
+                        : '막대를 누르면 날짜별 세부 학습량을 볼 수 있어요'}
+                    </span>
+                    <span className="amgi-rev-legend">
+                      <span><i className="amgi-rev-dot amgi-rev-dot--learn" />학습</span>
+                      <span><i className="amgi-rev-dot amgi-rev-dot--young" />익힘</span>
+                      <span><i className="amgi-rev-dot amgi-rev-dot--mature" />장기</span>
+                    </span>
+                  </div>
+                </>
+              )}
+            </section>
+
+            {/* Card 6: 답변 버튼 분포 */}
+            <section className="amgi-stats-card">
+              <div className="amgi-stats-card-head">
+                <div>
+                  <h2 className="amgi-stats-card-title">답변 버튼 분포</h2>
+                  <p className="amgi-stats-card-sub">
+                    최근 1년 기준 총 {buttonStats.grandTotal.toLocaleString('ko-KR')}회 응답
+                  </p>
+                </div>
+              </div>
+
+              {buttonStats.grandTotal === 0 ? (
+                <div className="amgi-future-empty">아직 답변 버튼 기록이 없습니다.</div>
+              ) : (
+                <div className="amgi-btn-dist-list">
+                  {buttonStats.rows.map((row) => (
+                    <div key={row.label} className="amgi-btn-dist-row">
+                      <div className="amgi-btn-dist-top">
+                        <span className="amgi-btn-dist-name">{row.label}</span>
+                        <span className="amgi-btn-dist-pass">
+                          {row.total > 0 ? `정답 ${row.passRate}% (${row.total}회)` : '기록 없음'}
+                        </span>
+                      </div>
+                      <div className="amgi-btn-dist-bar">
+                        {row.total > 0 && (
+                          <>
+                            {row.again > 0 && (
+                              <span
+                                className="amgi-btn-dist-seg amgi-btn-dist-seg--again"
+                                style={{ width: `${(row.again / row.total) * 100}%` }}
+                              />
+                            )}
+                            {row.hard > 0 && (
+                              <span
+                                className="amgi-btn-dist-seg amgi-btn-dist-seg--hard"
+                                style={{ width: `${(row.hard / row.total) * 100}%` }}
+                              />
+                            )}
+                            {row.good > 0 && (
+                              <span
+                                className="amgi-btn-dist-seg amgi-btn-dist-seg--good"
+                                style={{ width: `${(row.good / row.total) * 100}%` }}
+                              />
+                            )}
+                            {row.easy > 0 && (
+                              <span
+                                className="amgi-btn-dist-seg amgi-btn-dist-seg--easy"
+                                style={{ width: `${(row.easy / row.total) * 100}%` }}
+                              />
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  <div className="amgi-rev-legend" style={{ marginTop: 2 }}>
+                    <span><i className="amgi-rev-dot amgi-btn-dot--again" />다시</span>
+                    <span><i className="amgi-rev-dot amgi-btn-dot--hard" />어려움</span>
+                    <span><i className="amgi-rev-dot amgi-btn-dot--good" />알맞음</span>
+                    <span><i className="amgi-rev-dot amgi-btn-dot--easy" />쉬움</span>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            {/* Card 7: 시간대별 학습 정답률 */}
+            <section className="amgi-stats-card">
+              <div className="amgi-stats-card-head">
+                <div>
+                  <h2 className="amgi-stats-card-title">시간대별 정답률</h2>
+                  <p className="amgi-stats-card-sub">어느 시간대에 집중력이 가장 높은지 보여줍니다</p>
+                </div>
+                {hourlyStats.bestHour && (
+                  <span className="amgi-stats-badge">
+                    최고 {hourlyStats.bestHour.hour}시 ({hourlyStats.bestHour.pct}%)
+                  </span>
+                )}
+              </div>
+
+              {!hourlyStats.hasAny ? (
+                <div className="amgi-future-empty">아직 시간대별 학습 기록이 없습니다.</div>
+              ) : (
+                <>
+                  <div className="amgi-future-svg-wrap">
+                    <svg
+                      className="amgi-future-svg"
+                      viewBox="0 0 320 132"
+                      role="img"
+                      aria-label="시간대별 학습 정답률 막대 그래프"
+                    >
+                      {(() => {
+                        const plotLeft = 8;
+                        const plotRight = 312;
+                        const plotTop = 10;
+                        const plotBottom = 108;
+                        const plotH = plotBottom - plotTop;
+                        const plotW = plotRight - plotLeft;
+                        const slotW = plotW / 24;
+                        const barW = Math.max(5, slotW - 3);
+                        return (
+                          <>
+                            <line
+                              x1={plotLeft}
+                              x2={plotRight}
+                              y1={plotBottom - 0.8 * plotH}
+                              y2={plotBottom - 0.8 * plotH}
+                              className="amgi-future-guide"
+                            />
+                            {hourlyStats.hours.map((h) => {
+                              const barH = h.total > 0 ? Math.max(4, (h.pct / 100) * plotH) : 0;
+                              const x = plotLeft + h.hour * slotW + 1.5;
+                              const y = plotBottom - barH;
+                              return (
+                                <g key={h.hour}>
+                                  {barH > 0 && (
+                                    <rect
+                                      x={x}
+                                      y={y}
+                                      width={barW}
+                                      height={barH}
+                                      rx={isEink ? 0 : 2}
+                                      className={`amgi-hour-bar ${selectedHour === h.hour ? 'is-selected' : ''}`}
+                                    />
+                                  )}
+                                  <rect
+                                    x={plotLeft + h.hour * slotW}
+                                    y={plotTop}
+                                    width={slotW}
+                                    height={plotH + 8}
+                                    fill="transparent"
+                                    style={{ cursor: 'pointer' }}
+                                    onClick={() => setSelectedHour(h.hour)}
+                                  />
+                                </g>
+                              );
+                            })}
+                            {[0, 6, 12, 18, 23].map((hr) => (
+                              <text
+                                key={hr}
+                                x={plotLeft + hr * slotW + slotW / 2}
+                                y={125}
+                                textAnchor={hr === 0 ? 'start' : hr === 23 ? 'end' : 'middle'}
+                                className="amgi-future-axis-text"
+                              >
+                                {hr}시
+                              </text>
+                            ))}
+                          </>
+                        );
+                      })()}
+                    </svg>
+                  </div>
+                  <div className="amgi-heat-inspect">
+                    {selectedHour !== null && hourlyStats.hours[selectedHour]
+                      ? (() => {
+                          const h = hourlyStats.hours[selectedHour];
+                          return h.total > 0
+                            ? `${h.hour}시 · 정답률 ${h.pct}% (${h.correct}/${h.total}회)`
+                            : `${h.hour}시 · 학습 기록 없음`;
+                        })()
+                      : '시간대 막대를 누르면 상세 정답률을 볼 수 있어요'}
+                  </div>
+                </>
+              )}
+            </section>
+
+            {/* Card 8 (Optional): 최근 기억 유지율 */}
             {hasRetentionData && (
               <section className="amgi-stats-card amgi-stats-span-2">
                 <div className="amgi-stats-card-head">

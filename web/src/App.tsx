@@ -15,6 +15,8 @@ import {
   IconSpark,
   IconStats,
   IconSync,
+  IconTag,
+  IconUndo,
   IconUpload,
   SheetOrDialog,
   ToastProvider,
@@ -34,6 +36,8 @@ import { SettingsView } from './components/settings/SettingsView';
 import { SyncSheet } from './components/sync/SyncSheet';
 import { FullSyncDialog } from './components/sync/FullSyncDialog';
 import { AnkiIframeView } from './components/shared/AnkiIframeView';
+import { TagManagerSheet } from './components/shared/TagManagerSheet';
+import { CommandPalette } from './components/shared/CommandPalette';
 
 type RootTab = 'decks' | 'browse' | 'stats' | 'settings';
 
@@ -178,6 +182,8 @@ function AppShell() {
   const windowWidth = useWindowWidth();
 
   const [overflowOpen, setOverflowOpen] = useState(false);
+  const [tagManagerOpen, setTagManagerOpen] = useState(false);
+  const [commandOpen, setCommandOpen] = useState(false);
   const [emptyCardsReport, setEmptyCardsReport] = useState<anki.EmptyCardsReport | null>(
     null
   );
@@ -191,6 +197,8 @@ function AppShell() {
       closeAddSheet();
       closeSyncSheet();
       setOverflowOpen(false);
+      setTagManagerOpen(false);
+      setCommandOpen(false);
       setEmptyCardsReport(null);
     };
     window.addEventListener('hashchange', onHashChange);
@@ -200,6 +208,78 @@ function AppShell() {
   const route = useMemo(() => parseHashRoute(hash), [hash]);
   const isWideSplit = windowWidth >= 1024;
   const isStudy = route.kind === 'study';
+
+  const handleGlobalUndo = useCallback(async () => {
+    try {
+      const status = await anki.undoStatus();
+      if (!status.undo) {
+        showToast('되돌릴 수 있는 작업이 없습니다.', 'info');
+        return;
+      }
+      await anki.undo();
+      bumpCollection();
+      showToast(`되돌림: ${status.undo}`, 'info');
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : '작업을 되돌리지 못했습니다.',
+        'error'
+      );
+    }
+  }, [bumpCollection, showToast]);
+
+  const handleGlobalRedo = useCallback(async () => {
+    try {
+      const status = await anki.undoStatus();
+      if (!status.redo) {
+        showToast('다시 실행할 작업이 없습니다.', 'info');
+        return;
+      }
+      await anki.redo();
+      bumpCollection();
+      showToast(`다시 실행: ${status.redo}`, 'info');
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : '다시 실행하지 못했습니다.',
+        'error'
+      );
+    }
+  }, [bumpCollection, showToast]);
+
+  // Global keyboard shortcuts: Ctrl+K Quick Switcher, Ctrl+Z / Ctrl+Shift+Z outside Study/inputs
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.isComposing) return;
+      const hasMod = e.ctrlKey || e.metaKey;
+      if (hasMod && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setCommandOpen((v) => !v);
+        return;
+      }
+      if (isStudy) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (hasMod && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        void handleGlobalUndo();
+      } else if (
+        (hasMod && e.key.toLowerCase() === 'z' && e.shiftKey) ||
+        (hasMod && e.key.toLowerCase() === 'y')
+      ) {
+        e.preventDefault();
+        void handleGlobalRedo();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isStudy, handleGlobalUndo, handleGlobalRedo]);
 
   // Determine whether the outer AppShell topbar should render (avoid double topbar!)
   const hasOwnTopbar =
@@ -362,11 +442,25 @@ function AppShell() {
   const overflowItems = useMemo<ActionMenuItem[]>(
     () => [
       {
+        id: 'undo',
+        label: '방금 작업 되돌리기',
+        description: '최근 덱/카드 변경을 취소합니다 (Ctrl+Z)',
+        icon: <IconUndo size={18} />,
+        onSelect: () => void handleGlobalUndo(),
+      },
+      {
         id: 'notetypes',
         label: '노트 유형 관리',
         description: '필드, 카드 템플릿 및 스타일 편집',
         icon: <IconSpark size={18} />,
         onSelect: () => navigate('#/notetypes'),
+      },
+      {
+        id: 'tags',
+        label: '태그 관리',
+        description: '태그 검색, 이름 바꾸기, 미사용 태그 정리',
+        icon: <IconTag size={18} />,
+        onSelect: () => setTagManagerOpen(true),
       },
       {
         id: 'empty-cards',
@@ -396,6 +490,7 @@ function AppShell() {
       checkingEmpty,
       exportingColpkg,
       navigate,
+      handleGlobalUndo,
       handleCheckEmptyCards,
       handleExportCollection,
       bumpCollection,
@@ -486,7 +581,7 @@ function AppShell() {
       {showTopBar && (
         <header className="amgi-topbar">
           <div className="amgi-topbar-left">
-            {topbarMeta.showBack && (
+            {topbarMeta.showBack ? (
               <button
                 type="button"
                 className="amgi-btn amgi-btn-ghost amgi-btn-icon"
@@ -495,11 +590,27 @@ function AppShell() {
               >
                 <IconArrowLeft size={20} />
               </button>
-            )}
+            ) : isDecksRoot ? (
+              <span className="amgi-brand-mark" aria-hidden="true">
+                <IconDeck size={16} />
+              </span>
+            ) : null}
             <h1 className="amgi-topbar-title">{topbarMeta.title}</h1>
           </div>
 
           <div className="amgi-topbar-right">
+            {isDecksRoot && (
+              <button
+                type="button"
+                className="amgi-btn amgi-btn-ghost amgi-btn-icon"
+                aria-label="빠른 이동"
+                title="빠른 이동 (Ctrl+K)"
+                onClick={() => setCommandOpen(true)}
+              >
+                <IconSearch size={19} />
+              </button>
+            )}
+
             <button
               type="button"
               className={`amgi-sync-btn ${isSyncing ? 'is-syncing' : ''}`}
@@ -675,6 +786,16 @@ function AppShell() {
       />
       <SyncSheet open={syncSheetOpen} onClose={closeSyncSheet} />
       <FullSyncDialog open={fullSyncOpen} onClose={closeFullSyncDialog} />
+      <TagManagerSheet
+        open={tagManagerOpen}
+        onClose={() => setTagManagerOpen(false)}
+      />
+      <CommandPalette
+        open={commandOpen}
+        onClose={() => setCommandOpen(false)}
+        onOpenTags={() => setTagManagerOpen(true)}
+        onRunSync={() => void handleSyncPress()}
+      />
     </div>
   );
 }

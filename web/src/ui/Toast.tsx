@@ -11,14 +11,20 @@ import { IconCheck, IconClose } from './Icons';
 
 export type ToastKind = 'info' | 'success' | 'error';
 
+export interface ToastAction {
+  label: string;
+  onClick: () => void | Promise<void>;
+}
+
 export interface ToastItem {
   id: number;
   message: string;
   kind: ToastKind;
+  action?: ToastAction;
 }
 
 interface ToastContextValue {
-  showToast: (message: string, kind?: ToastKind) => void;
+  showToast: (message: string, kind?: ToastKind, action?: ToastAction) => void;
 }
 
 const ToastContext = createContext<ToastContextValue | null>(null);
@@ -38,10 +44,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const showToast = useCallback(
-    (message: string, kind: ToastKind = 'info') => {
+    (message: string, kind: ToastKind = 'info', action?: ToastAction) => {
       const id = nextId.current++;
-      setToasts((prev) => [...prev.slice(-2), { id, message, kind }]);
-      const timer = window.setTimeout(() => dismiss(id), 3200);
+      setToasts((prev) => [...prev.slice(-2), { id, message, kind, action }]);
+      const duration = action ? 5200 : 3200;
+      const timer = window.setTimeout(() => dismiss(id), duration);
       timers.current.set(id, timer);
     },
     [dismiss]
@@ -73,18 +80,26 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           >
             {toast.kind === 'success' && <IconCheck size={18} />}
             <span style={{ flex: 1 }}>{toast.message}</span>
+            {toast.action && (
+              <button
+                type="button"
+                className="amgi-toast-action compact"
+                data-compact="true"
+                onClick={() => {
+                  const fn = toast.action?.onClick;
+                  dismiss(toast.id);
+                  if (fn) void fn();
+                }}
+              >
+                {toast.action.label}
+              </button>
+            )}
             <button
               type="button"
+              className="amgi-toast-close compact"
+              data-compact="true"
               onClick={() => dismiss(toast.id)}
               aria-label="알림 닫기"
-              style={{
-                border: 'none',
-                background: 'transparent',
-                color: 'inherit',
-                padding: 4,
-                display: 'inline-flex',
-                cursor: 'pointer',
-              }}
             >
               <IconClose size={16} />
             </button>

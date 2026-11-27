@@ -128,6 +128,9 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadErrorLog, setLoadErrorLog] = useState<string | undefined>(undefined);
 
+  const [selectedConfigId, setSelectedConfigId] = useState<number>(1);
+  const [applyToSubdecks, setApplyToSubdecks] = useState(false);
+
   // Editable draft fields
   const [newPerDay, setNewPerDay] = useState(20);
   const [reviewsPerDay, setReviewsPerDay] = useState(200);
@@ -137,9 +140,21 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
   const [fsrsEnabled, setFsrsEnabled] = useState(false);
   const [initialFsrsEnabled, setInitialFsrsEnabled] = useState(false);
   const [desiredRetentionPct, setDesiredRetentionPct] = useState(90);
+  const [maxReviewInterval, setMaxReviewInterval] = useState(36500);
   const [optimizedParams, setOptimizedParams] = useState<number[] | null>(null);
   const [optimizeStatusMsg, setOptimizeStatusMsg] = useState<string | null>(null);
   const [optimizing, setOptimizing] = useState(false);
+  const [computingRetention, setComputingRetention] = useState(false);
+
+  // Display order
+  const [newGatherPriority, setNewGatherPriority] = useState(0);
+  const [newSortOrder, setNewSortOrder] = useState(0);
+  const [newMix, setNewMix] = useState(0);
+  const [reviewOrder, setReviewOrder] = useState(0);
+
+  // Lapses / Leech
+  const [leechThreshold, setLeechThreshold] = useState(8);
+  const [leechAction, setLeechAction] = useState(1);
 
   const [buryNew, setBuryNew] = useState(false);
   const [buryReviews, setBuryReviews] = useState(false);
@@ -155,6 +170,44 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
   const [dirty, setDirty] = useState(false);
   const [showOfficialIframe, setShowOfficialIframe] = useState(false);
 
+  const hydrateDraftFromConfig = useCallback(
+    (
+      cfg: anki.DeckConfig['config'] | undefined,
+      fallbackLimits?: anki.DeckConfigsForUpdate['currentDeck']
+    ) => {
+      setNewPerDay(cfg?.newPerDay ?? 20);
+      setReviewsPerDay(cfg?.reviewsPerDay ?? 200);
+      setLearnStepsText(formatStepsToText(cfg?.learnSteps) || '1m 10m');
+      setRelearnStepsText(formatStepsToText(cfg?.relearnSteps) || '10m');
+
+      const rawRet = cfg?.desiredRetention ?? fallbackLimits?.limits?.desiredRetention ?? 0.9;
+      const pct = Math.min(97, Math.max(70, Math.round(rawRet * 100)));
+      setDesiredRetentionPct(pct);
+      setMaxReviewInterval(Math.max(1, Math.min(36500, cfg?.maximumReviewInterval ?? 36500)));
+      setOptimizedParams(null);
+      setOptimizeStatusMsg(null);
+
+      setNewGatherPriority(cfg?.newCardGatherPriority ?? 0);
+      setNewSortOrder(cfg?.newCardSortOrder ?? 0);
+      setNewMix(cfg?.newMix ?? 0);
+      setReviewOrder(cfg?.reviewOrder ?? 0);
+
+      setLeechThreshold(Math.max(2, Math.min(99, cfg?.leechThreshold ?? 8)));
+      setLeechAction(cfg?.leechAction ?? 1);
+
+      setBuryNew(Boolean(cfg?.buryNew));
+      setBuryReviews(Boolean(cfg?.buryReviews));
+      setBuryInterdayLearning(Boolean(cfg?.buryInterdayLearning));
+
+      setDisableAutoplay(Boolean(cfg?.disableAutoplay));
+      setSkipQuestionAudio(Boolean(cfg?.skipQuestionWhenReplayingAnswer));
+      setShowTimer(Boolean(cfg?.showTimer));
+      setStopTimerOnAnswer(Boolean(cfg?.stopTimerOnAnswer));
+      setCapAnswerSecs(Math.max(10, Math.min(600, cfg?.capAnswerTimeToSecs ?? 60)));
+    },
+    []
+  );
+
   const loadOptions = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
@@ -167,32 +220,16 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
       const matched =
         res.allConfig?.find((c) => toNumber(c.config?.id) === targetConfigId) ??
         res.allConfig?.[0];
-      const cfg = matched?.config?.config ?? res.defaults?.config;
-
-      setNewPerDay(cfg?.newPerDay ?? 20);
-      setReviewsPerDay(cfg?.reviewsPerDay ?? 200);
-      setLearnStepsText(formatStepsToText(cfg?.learnSteps) || '1m 10m');
-      setRelearnStepsText(formatStepsToText(cfg?.relearnSteps) || '10m');
+      const matchedId = toNumber(matched?.config?.id, targetConfigId);
+      setSelectedConfigId(matchedId);
+      setApplyToSubdecks(false);
 
       const fsrsOn = Boolean(res.fsrs);
       setFsrsEnabled(fsrsOn);
       setInitialFsrsEnabled(fsrsOn);
-      const rawRet = cfg?.desiredRetention ?? res.currentDeck?.limits?.desiredRetention ?? 0.9;
-      const pct = Math.min(97, Math.max(70, Math.round(rawRet * 100)));
-      setDesiredRetentionPct(pct);
-      setOptimizedParams(null);
-      setOptimizeStatusMsg(null);
 
-      setBuryNew(Boolean(cfg?.buryNew));
-      setBuryReviews(Boolean(cfg?.buryReviews));
-      setBuryInterdayLearning(Boolean(cfg?.buryInterdayLearning));
-
-      setDisableAutoplay(Boolean(cfg?.disableAutoplay));
-      setSkipQuestionAudio(Boolean(cfg?.skipQuestionWhenReplayingAnswer));
-      setShowTimer(Boolean(cfg?.showTimer));
-      setStopTimerOnAnswer(Boolean(cfg?.stopTimerOnAnswer));
-      setCapAnswerSecs(Math.max(10, Math.min(600, cfg?.capAnswerTimeToSecs ?? 60)));
-
+      const cfg = matched?.config?.config ?? res.defaults?.config;
+      hydrateDraftFromConfig(cfg, res.currentDeck);
       setDirty(false);
     } catch (err) {
       setLoadError(
@@ -202,7 +239,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
     } finally {
       setLoading(false);
     }
-  }, [deckId]);
+  }, [deckId, hydrateDraftFromConfig]);
 
   useEffect(() => {
     void loadOptions();
@@ -219,12 +256,11 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
 
   const activeEntry = useMemo(() => {
     if (!data?.allConfig?.length) return null;
-    const targetConfigId = toNumber(data.currentDeck?.configId, 1);
     return (
-      data.allConfig.find((c) => toNumber(c.config?.id) === targetConfigId) ??
+      data.allConfig.find((c) => toNumber(c.config?.id) === selectedConfigId) ??
       data.allConfig[0]
     );
-  }, [data]);
+  }, [data, selectedConfigId]);
 
   const activeConfig = activeEntry?.config ?? null;
   const activeUseCount = activeEntry?.useCount ?? 1;
@@ -234,6 +270,15 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
     () => parseStepsText(relearnStepsText),
     [relearnStepsText]
   );
+
+  const handleSelectPreset = (nextConfigId: number) => {
+    setSelectedConfigId(nextConfigId);
+    const matched = data?.allConfig?.find((c) => toNumber(c.config?.id) === nextConfigId);
+    if (matched?.config?.config) {
+      hydrateDraftFromConfig(matched.config.config, data?.currentDeck);
+    }
+    setDirty(true);
+  };
 
   const handleApplyQuickPreset = (preset: QuickPreset) => {
     setNewPerDay(preset.newPerDay);
@@ -301,6 +346,55 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
     }
   };
 
+  const handleComputeOptimalRetention = async () => {
+    if (!activeConfig?.config || computingRetention) return;
+    setComputingRetention(true);
+    setOptimizeStatusMsg(null);
+    try {
+      const inner = activeConfig.config;
+      const currentParams =
+        optimizedParams ??
+        (inner.fsrsParams_6 && inner.fsrsParams_6.length > 0
+          ? inner.fsrsParams_6
+          : inner.fsrsParams_5 && inner.fsrsParams_5.length > 0
+            ? inner.fsrsParams_5
+            : inner.fsrsParams_4 && inner.fsrsParams_4.length > 0
+              ? inner.fsrsParams_4
+              : []);
+      const search = inner.paramSearch?.trim() || `preset:"${activeConfig.name || 'Default'}"`;
+      const optimal = await anki.computeOptimalRetention({
+        params: currentParams,
+        desiredRetention: Number((desiredRetentionPct / 100).toFixed(2)),
+        deckSize: 1000,
+        daysToSimulate: 365,
+        newLimit: Math.max(1, newPerDay),
+        reviewLimit: Math.max(1, reviewsPerDay),
+        maxInterval: Math.max(1, maxReviewInterval),
+        search,
+        newCardsIgnoreReviewLimit: Boolean(data?.newCardsIgnoreReviewLimit),
+        easyDaysPercentages: inner.easyDaysPercentages ?? [1, 1, 1, 1, 1, 1, 1],
+        reviewOrder,
+        suspendAfterLapseCount: leechAction === 0 ? leechThreshold : 0,
+        historicalRetention: inner.historicalRetention ?? 0.9,
+        learningStepCount: learnStepsParsed.steps.length,
+        relearningStepCount: relearnStepsParsed.steps.length,
+      });
+      const pct = Math.min(97, Math.max(70, Math.round(optimal * 100)));
+      setDesiredRetentionPct(pct);
+      setDirty(true);
+      setOptimizeStatusMsg(
+        `최소 시간으로 최대 암기 효율을 내는 추천 목표 기억률은 ${pct}%입니다.`
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '';
+      setOptimizeStatusMsg(
+        msg || '복습 기록이 더 쌓이면 최적 목표 기억률을 계산할 수 있습니다.'
+      );
+    } finally {
+      setComputingRetention(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!data || !activeConfig || saving) return;
     if (!learnStepsParsed.valid || !relearnStepsParsed.valid) {
@@ -313,7 +407,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
       const targetConfigId = toNumber(activeConfig.id);
       const retentionDecimal = Number((desiredRetentionPct / 100).toFixed(2));
 
-      const updatedConfigs = (data.allConfig ?? []).map((entry) => {
+      const updatedList = (data.allConfig ?? []).map((entry) => {
         const cfg = entry.config;
         if (!cfg) return {};
         if (toNumber(cfg.id) !== targetConfigId) {
@@ -327,6 +421,13 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
           learnSteps: learnStepsParsed.steps,
           relearnSteps: relearnStepsParsed.steps,
           desiredRetention: retentionDecimal,
+          maximumReviewInterval: Math.max(1, Math.min(36500, Math.round(maxReviewInterval))),
+          newCardGatherPriority: newGatherPriority,
+          newCardSortOrder: newSortOrder,
+          newMix,
+          reviewOrder,
+          leechThreshold: Math.max(2, Math.min(99, Math.round(leechThreshold))),
+          leechAction,
           buryNew,
           buryReviews,
           buryInterdayLearning,
@@ -351,11 +452,26 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
         };
       });
 
+      // Anki assigns configs[0] to targetDeckId (and children when APPLY_TO_CHILDREN).
+      const selectedIdx = updatedList.findIndex(
+        (c) => toNumber((c as anki.DeckConfig).id) === targetConfigId
+      );
+      const orderedConfigs =
+        selectedIdx > 0
+          ? [
+              updatedList[selectedIdx],
+              ...updatedList.slice(0, selectedIdx),
+              ...updatedList.slice(selectedIdx + 1),
+            ]
+          : updatedList;
+
       await anki.updateDeckConfigs({
         targetDeckId: deckId,
-        configs: updatedConfigs,
+        configs: orderedConfigs,
         removedConfigIds: [],
-        mode: UpdateDeckConfigsMode.UPDATE_DECK_CONFIGS_MODE_NORMAL,
+        mode: applyToSubdecks
+          ? UpdateDeckConfigsMode.UPDATE_DECK_CONFIGS_MODE_APPLY_TO_CHILDREN
+          : UpdateDeckConfigsMode.UPDATE_DECK_CONFIGS_MODE_NORMAL,
         cardStateCustomizer: data.cardStateCustomizer ?? '',
         limits: data.currentDeck?.limits ?? undefined,
         newCardsIgnoreReviewLimit: Boolean(data.newCardsIgnoreReviewLimit),
@@ -366,7 +482,12 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
       });
 
       bumpCollection();
-      showToast('학습 옵션을 저장했습니다.', 'success');
+      showToast(
+        applyToSubdecks
+          ? '학습 옵션을 저장하고 하위 덱에도 적용했습니다.'
+          : '학습 옵션을 저장했습니다.',
+        'success'
+      );
       goBack(`#/deck/${deckId}`);
     } catch (err) {
       showToast(
@@ -455,12 +576,56 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
           </>
         ) : (
           <>
-            {activeUseCount > 1 && (
-              <div className="amgi-options-banner">
-                현재 &apos;{activeConfig?.name || '기본'}&apos; 설정을 {activeUseCount}개 덱이
-                함께 쓰고 있습니다.
-              </div>
-            )}
+            {/* Preset Selector & Subdeck Apply */}
+            <SectionCard title="프리셋 및 적용 범위">
+              {(data?.allConfig?.length ?? 0) > 1 ? (
+                <div className="amgi-options-subrow">
+                  <label htmlFor="opt-preset-select" className="amgi-options-subrow-label">
+                    사용 중인 프리셋
+                  </label>
+                  <select
+                    id="opt-preset-select"
+                    className="amgi-select"
+                    value={selectedConfigId}
+                    onChange={(e) => handleSelectPreset(Number(e.target.value))}
+                  >
+                    {(data?.allConfig ?? []).map((entry) => {
+                      const cid = toNumber(entry.config?.id);
+                      const count = entry.useCount ?? 0;
+                      return (
+                        <option key={cid} value={cid}>
+                          {entry.config?.name || '기본'} ({count}개 덱 사용)
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              ) : (
+                <div className="amgi-options-subrow">
+                  <div className="amgi-options-subrow-top">
+                    <span className="amgi-options-subrow-label">현재 프리셋</span>
+                    <span className="amgi-options-subrow-desc" style={{ fontWeight: 700, color: 'var(--text)' }}>
+                      {activeConfig?.name || 'Default'} ({activeUseCount}개 덱)
+                    </span>
+                  </div>
+                </div>
+              )}
+              <SettingRow
+                label="하위 덱 모두에 적용"
+                description="저장할 때 이 덱 아래에 있는 모든 하위 덱에도 같은 프리셋을 적용합니다"
+                htmlFor="opt-apply-subdecks"
+                control={
+                  <Switch
+                    id="opt-apply-subdecks"
+                    checked={applyToSubdecks}
+                    onChange={(next) => {
+                      setApplyToSubdecks(next);
+                      setDirty(true);
+                    }}
+                  />
+                }
+              />
+            </SectionCard>
 
             {/* Quick-start Recommended Presets */}
             <SectionCard title="빠른 추천 설정">
@@ -721,6 +886,34 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
 
                   <div className="amgi-options-subrow">
                     <div className="amgi-options-subrow-top">
+                      <label htmlFor="opt-max-interval" className="amgi-options-subrow-label">
+                        최대 복습 간격(일)
+                      </label>
+                      <input
+                        id="opt-max-interval"
+                        type="number"
+                        inputMode="numeric"
+                        min={1}
+                        max={36500}
+                        className="amgi-num-step-input"
+                        style={{ width: 88 }}
+                        value={maxReviewInterval}
+                        onChange={(e) => {
+                          const val = Number(e.target.value);
+                          setMaxReviewInterval(
+                            Number.isFinite(val) ? Math.max(1, Math.min(36500, val)) : 36500
+                          );
+                          setDirty(true);
+                        }}
+                      />
+                    </div>
+                    <span className="amgi-options-subrow-desc">
+                      카드가 이 일수보다 더 멀리 밀리지 않도록 상한을 둡니다 (기본 36500일)
+                    </span>
+                  </div>
+
+                  <div className="amgi-options-subrow">
+                    <div className="amgi-options-subrow-top">
                       <span className="amgi-options-subrow-label">내 기록으로 자동 최적화</span>
                     </div>
                     <span className="amgi-options-subrow-desc">
@@ -728,15 +921,27 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                         ? `마지막 최적화: ${daysSinceOpt}일 전 · 내 복습 습관에 맞게 간격을 조정합니다`
                         : '내 복습 기록을 분석해 가장 알맞은 복습 간격을 찾습니다'}
                     </span>
-                    <button
-                      type="button"
-                      className="amgi-btn amgi-btn-secondary"
-                      disabled={optimizing}
-                      onClick={() => void handleOptimizeFsrs()}
-                    >
-                      <IconSpark size={16} />
-                      <span>{optimizing ? '기록 분석 중...' : '최적화 실행'}</span>
-                    </button>
+                    <div className="amgi-options-btn-row">
+                      <button
+                        type="button"
+                        className="amgi-btn amgi-btn-secondary"
+                        disabled={optimizing || computingRetention}
+                        onClick={() => void handleOptimizeFsrs()}
+                      >
+                        <IconSpark size={16} />
+                        <span>{optimizing ? '기록 분석 중...' : '파라미터 최적화'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="amgi-btn amgi-btn-secondary"
+                        disabled={optimizing || computingRetention}
+                        onClick={() => void handleComputeOptimalRetention()}
+                      >
+                        <span>
+                          {computingRetention ? '계산 중...' : '최적 기억률 계산'}
+                        </span>
+                      </button>
+                    </div>
                     {optimizeStatusMsg && (
                       <span className="amgi-options-subrow-desc" style={{ color: 'var(--text)' }}>
                         {optimizeStatusMsg}
@@ -747,7 +952,171 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
               )}
             </SectionCard>
 
-            {/* Group 4: 같은 날 카드 미루기 */}
+            {/* Group 4: 카드 표시 순서 (Display Order) */}
+            <SectionCard title="카드 표시 순서">
+              <div className="amgi-options-subrow">
+                <label htmlFor="opt-new-gather" className="amgi-options-subrow-label">
+                  새 카드 수집 순서
+                </label>
+                <select
+                  id="opt-new-gather"
+                  className="amgi-select"
+                  value={newGatherPriority}
+                  onChange={(e) => {
+                    setNewGatherPriority(Number(e.target.value));
+                    setDirty(true);
+                  }}
+                >
+                  <option value={0}>덱 순서대로</option>
+                  <option value={1}>먼저 추가한 카드부터 (오름차순)</option>
+                  <option value={2}>최근 추가한 카드부터 (내림차순)</option>
+                  <option value={3}>무작위 노트</option>
+                  <option value={4}>무작위 카드</option>
+                  <option value={5}>덱 순서 + 무작위 노트</option>
+                </select>
+              </div>
+
+              <div className="amgi-options-subrow">
+                <label htmlFor="opt-new-sort" className="amgi-options-subrow-label">
+                  새 카드 정렬 순서
+                </label>
+                <select
+                  id="opt-new-sort"
+                  className="amgi-select"
+                  value={newSortOrder}
+                  onChange={(e) => {
+                    setNewSortOrder(Number(e.target.value));
+                    setDirty(true);
+                  }}
+                >
+                  <option value={0}>카드 템플릿 순서대로</option>
+                  <option value={1}>수집 순서 그대로 유지</option>
+                  <option value={2}>템플릿 순 + 무작위</option>
+                  <option value={3}>무작위 노트 + 템플릿 순</option>
+                  <option value={4}>완전 무작위</option>
+                </select>
+              </div>
+
+              <div className="amgi-options-subrow">
+                <label htmlFor="opt-new-mix" className="amgi-options-subrow-label">
+                  새 카드와 복습 순서
+                </label>
+                <select
+                  id="opt-new-mix"
+                  className="amgi-select"
+                  value={newMix}
+                  onChange={(e) => {
+                    setNewMix(Number(e.target.value));
+                    setDirty(true);
+                  }}
+                >
+                  <option value={0}>복습 카드와 섞어서 표시</option>
+                  <option value={1}>복습 완료 후 새 카드 표시</option>
+                  <option value={2}>새 카드 먼저 표시</option>
+                </select>
+              </div>
+
+              <div className="amgi-options-subrow">
+                <label htmlFor="opt-review-order" className="amgi-options-subrow-label">
+                  복습 카드 정렬 순서
+                </label>
+                <select
+                  id="opt-review-order"
+                  className="amgi-select"
+                  value={reviewOrder}
+                  onChange={(e) => {
+                    setReviewOrder(Number(e.target.value));
+                    setDirty(true);
+                  }}
+                >
+                  <option value={0}>예정일 순 + 무작위</option>
+                  <option value={1}>예정일 순 + 덱 순서</option>
+                  <option value={2}>덱 순서 + 예정일 순</option>
+                  <option value={3}>짧은 복습 간격 먼저</option>
+                  <option value={4}>긴 복습 간격 먼저</option>
+                  <option value={7}>기억률 낮은 카드 먼저 (FSRS 추천)</option>
+                  <option value={11}>기억률 높은 카드 먼저</option>
+                  <option value={12}>상대적 연체 비율 높은 순</option>
+                  <option value={8}>무작위</option>
+                </select>
+              </div>
+            </SectionCard>
+
+            {/* Group 5: 거머리 카드 (Lapses / Leech) */}
+            <SectionCard title="거머리 카드 (반복 오답)">
+              <div className="amgi-options-subrow">
+                <div className="amgi-options-subrow-top">
+                  <label htmlFor="opt-leech-threshold" className="amgi-options-subrow-label">
+                    거머리 기준 횟수
+                  </label>
+                  <div className="amgi-num-stepper">
+                    <button
+                      type="button"
+                      className="amgi-num-step-btn"
+                      aria-label="거머리 기준 횟수 줄이기"
+                      onClick={() => {
+                        setLeechThreshold((v) => Math.max(2, v - 1));
+                        setDirty(true);
+                      }}
+                      data-compact="true"
+                    >
+                      -
+                    </button>
+                    <input
+                      id="opt-leech-threshold"
+                      type="number"
+                      inputMode="numeric"
+                      min={2}
+                      max={99}
+                      className="amgi-num-step-input"
+                      value={leechThreshold}
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        setLeechThreshold(
+                          Number.isFinite(val) ? Math.max(2, Math.min(99, val)) : 8
+                        );
+                        setDirty(true);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="amgi-num-step-btn"
+                      aria-label="거머리 기준 횟수 늘리기"
+                      onClick={() => {
+                        setLeechThreshold((v) => Math.min(99, v + 1));
+                        setDirty(true);
+                      }}
+                      data-compact="true"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+                <span className="amgi-options-subrow-desc">
+                  외웠던 카드를 이 횟수만큼 반복해서 틀리면 거머리(leech)로 표시합니다
+                </span>
+              </div>
+
+              <div className="amgi-options-subrow">
+                <label htmlFor="opt-leech-action" className="amgi-options-subrow-label">
+                  거머리 카드 처리 방법
+                </label>
+                <select
+                  id="opt-leech-action"
+                  className="amgi-select"
+                  value={leechAction}
+                  onChange={(e) => {
+                    setLeechAction(Number(e.target.value));
+                    setDirty(true);
+                  }}
+                >
+                  <option value={1}>태그만 붙이고 계속 학습 (leech)</option>
+                  <option value={0}>자동으로 일시 중단</option>
+                </select>
+              </div>
+            </SectionCard>
+
+            {/* Group 6: 같은 날 카드 미루기 */}
             <SectionCard title="같은 날 카드 미루기">
               <SettingRow
                 label="같은 노트 새 카드 미루기"

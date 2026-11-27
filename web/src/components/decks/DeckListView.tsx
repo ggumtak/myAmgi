@@ -6,6 +6,7 @@ import {
   ActionMenu,
   type ActionMenuItem,
   ErrorState,
+  IconBook,
   IconCheck,
   IconChevronDown,
   IconChevronRight,
@@ -13,8 +14,10 @@ import {
   IconDeck,
   IconDownload,
   IconEdit,
+  IconFlame,
   IconFolder,
   IconMore,
+  IconMove,
   IconPlay,
   IconRefresh,
   IconSearch,
@@ -121,10 +124,16 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [treeRoot, setTreeRoot] = useState<anki.DeckTreeNode | null>(null);
-  const [todayStats, setTodayStats] = useState<{ answerCount: number; answerMillis: number }>({
+  const [todayStats, setTodayStats] = useState<{
+    answerCount: number;
+    answerMillis: number;
+    streakDays: number;
+  }>({
     answerCount: 0,
     answerMillis: 0,
+    streakDays: 0,
   });
+  const [deckFilterQuery, setDeckFilterQuery] = useState('');
   const [selectedDeckId, setSelectedDeckId] = useState<number | null>(
     initialSelectedDeckId ?? null
   );
@@ -136,6 +145,8 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
   const [menuDeck, setMenuDeck] = useState<FlatDeckRow | null>(null);
   const [renameTarget, setRenameTarget] = useState<FlatDeckRow | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [moveTarget, setMoveTarget] = useState<FlatDeckRow | null>(null);
+  const [moveParentId, setMoveParentId] = useState<number>(0);
   const [subdeckParent, setSubdeckParent] = useState<FlatDeckRow | null>(null);
   const [subdeckName, setSubdeckName] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<FlatDeckRow | null>(null);
@@ -207,12 +218,31 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
     try {
       const [tree, g] = await Promise.all([
         anki.deckTree(),
-        anki.graphs('', 1).catch(() => null),
+        anki.graphs('', 60).catch(() => null),
       ]);
       setTreeRoot(tree);
+      const countMap = g?.reviews?.count ?? {};
+      const dayTotal = (offset: number) => {
+        const entry = countMap[String(offset)];
+        if (!entry) return 0;
+        return (
+          (entry.learn ?? 0) +
+          (entry.relearn ?? 0) +
+          (entry.young ?? 0) +
+          (entry.mature ?? 0) +
+          (entry.filtered ?? 0)
+        );
+      };
+      let streak = 0;
+      let cursor = dayTotal(0) > 0 ? 0 : -1;
+      while (cursor >= -59 && dayTotal(cursor) > 0) {
+        streak++;
+        cursor--;
+      }
       setTodayStats({
         answerCount: g?.today?.answerCount ?? 0,
         answerMillis: g?.today?.answerMillis ?? 0,
+        streakDays: streak,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : '덱 목록을 불러오지 못했습니다.');
@@ -331,11 +361,6 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
   const topLevelNodes = useMemo(
     () => ((treeRoot?.children ?? []) as anki.DeckTreeNode[]),
     [treeRoot]
-  );
-
-  const anyTopHasChildren = useMemo(
-    () => topLevelNodes.some((n) => (n.children ?? []).length > 0),
-    [topLevelNodes]
   );
 
   const totalDue = useMemo(
@@ -462,6 +487,26 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
     }
   };
 
+  const handleMoveDeckSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!moveTarget) return;
+    setBusyModal(true);
+    try {
+      await anki.reparentDecks([moveTarget.deckId], moveParentId);
+      const movedName = moveTarget.shortName;
+      setMoveTarget(null);
+      bumpCollection();
+      showToast(`'${movedName}' 덱의 위치를 변경했습니다.`, 'success');
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : '덱을 이동하지 못했습니다.',
+        'error'
+      );
+    } finally {
+      setBusyModal(false);
+    }
+  };
+
   const handleConfirmDelete = async () => {
     if (!deleteTarget) return;
     setBusyModal(true);
@@ -473,7 +518,18 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
       }
       setDeleteTarget(null);
       bumpCollection();
-      showToast(`'${deletedName}' 덱을 삭제했습니다.`, 'success');
+      showToast(`'${deletedName}' 덱을 삭제했습니다.`, 'success', {
+        label: '되돌리기',
+        onClick: async () => {
+          try {
+            await anki.undo();
+            bumpCollection();
+            showToast('덱 삭제를 되돌렸습니다.', 'info');
+          } catch {
+            showToast('되돌리지 못했습니다.', 'error');
+          }
+        },
+      });
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : '덱을 삭제하지 못했습니다.',
@@ -709,6 +765,16 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
         },
       },
       {
+        id: 'move',
+        label: '상위 덱 이동',
+        description: '다른 덱 아래로 옮기거나 최상위로 꺼냅니다',
+        icon: <IconMove size={18} />,
+        onSelect: () => {
+          setMoveTarget(row);
+          setMoveParentId(0);
+        },
+      },
+      {
         id: 'browse',
         label: '카드 찾아보기',
         icon: <IconSearch size={18} />,
@@ -736,8 +802,29 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
     return items;
   };
 
-  // Summary text formatting in natural Korean
+  const firstDueDeck = useMemo(
+    () => rows.find((r) => r.newCount + r.learnCount + r.reviewCount > 0) ?? null,
+    [rows]
+  );
+
+  const visibleRows = useMemo(() => {
+    const q = deckFilterQuery.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(
+      (r) =>
+        r.shortName.toLowerCase().includes(q) ||
+        r.fullName.toLowerCase().includes(q)
+    );
+  }, [rows, deckFilterQuery]);
+
+  // Summary Hero Card with progress bar, streak chip, and 1-tap Quick Study button
   const renderSummaryCard = () => {
+    const todayTotalGoal = todayStats.answerCount + totalDue;
+    const progressPct =
+      todayTotalGoal > 0
+        ? Math.min(100, Math.round((todayStats.answerCount / todayTotalGoal) * 100))
+        : 100;
+
     let primaryText: string;
     let secondaryText: string;
     if (totalDue > 0) {
@@ -756,22 +843,59 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
 
     return (
       <section className="amgi-summary-card" aria-label="오늘의 학습 요약">
-        <div className="amgi-summary-body">
-          <div className="amgi-summary-eyebrow">
-            <span>오늘의 학습</span>
+        <div className="amgi-summary-top">
+          <div className="amgi-summary-body">
+            <div className="amgi-summary-eyebrow">
+              <span>오늘의 학습</span>
+              {todayStats.streakDays > 0 && (
+                <span className="amgi-streak-pill">
+                  <IconFlame size={12} />
+                  <span>{todayStats.streakDays}일 연속</span>
+                </span>
+              )}
+            </div>
+            <div className="amgi-summary-primary tabular">{primaryText}</div>
+            <div className="amgi-summary-secondary tabular">{secondaryText}</div>
           </div>
-          <div className="amgi-summary-primary tabular">{primaryText}</div>
-          <div className="amgi-summary-secondary tabular">{secondaryText}</div>
+
+          <div className="amgi-summary-actions">
+            {firstDueDeck && (
+              <button
+                type="button"
+                className="amgi-btn amgi-btn-primary amgi-btn-sm"
+                onClick={() => {
+                  void anki.setCurrentDeck(firstDueDeck.deckId).finally(() => {
+                    navigate(`#/study/${firstDueDeck.deckId}`);
+                  });
+                }}
+              >
+                <IconPlay size={15} />
+                <span>바로 학습</span>
+              </button>
+            )}
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-ghost amgi-btn-icon"
+              onClick={() => void loadDecks(true)}
+              aria-label="카운트 새로고침"
+              title="카운트 새로고침"
+            >
+              <IconRefresh size={18} />
+            </button>
+          </div>
         </div>
-        <button
-          type="button"
-          className="amgi-btn amgi-btn-ghost amgi-btn-icon amgi-summary-refresh"
-          onClick={() => void loadDecks(true)}
-          aria-label="카운트 새로고침"
-          title="카운트 새로고침"
-        >
-          <IconRefresh size={18} />
-        </button>
+
+        {todayTotalGoal > 0 && (
+          <div className="amgi-summary-progress-wrap" aria-label={`오늘 진행률 ${progressPct}%`}>
+            <div className="amgi-summary-progress-track">
+              <div
+                className="amgi-summary-progress-fill"
+                style={{ width: `${Math.max(todayStats.answerCount > 0 ? 4 : 0, progressPct)}%` }}
+              />
+            </div>
+            <span className="amgi-summary-progress-pct tabular">{progressPct}%</span>
+          </div>
+        )}
       </section>
     );
   };
@@ -836,6 +960,24 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
 
     return (
       <>
+        {rows.length >= 6 && (
+          <div className="amgi-deck-filter-bar">
+            <div className="amgi-deck-filter-input-wrap">
+              <span className="amgi-deck-filter-icon">
+                <IconSearch size={16} />
+              </span>
+              <input
+                type="search"
+                className="amgi-deck-filter-input"
+                value={deckFilterQuery}
+                onChange={(e) => setDeckFilterQuery(e.target.value)}
+                placeholder="덱 이름으로 필터..."
+                aria-label="덱 필터"
+              />
+            </div>
+          </div>
+        )}
+
         <div className="amgi-deck-tree-card" role="region" aria-label="덱 목록">
           <div className="amgi-deck-header-row" role="row">
             <div className="amgi-deck-header-col">덱</div>
@@ -845,101 +987,116 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
             <div className="amgi-deck-header-col" aria-hidden="true" />
           </div>
 
-          {rows.map((row) => {
-            const indentPx = Math.min(row.depth, 4) * 18;
-            const isSelected = isWide && selectedDeckId === row.deckId;
-            return (
-              <div
-                key={row.deckId}
-                role="row"
-                data-deck-id={row.deckId}
-                className={`amgi-deck-row ${isSelected ? 'amgi-deck-row-selected' : ''}`}
-                onClick={() => {
-                  if (longPressFiredRef.current) {
-                    longPressFiredRef.current = false;
-                    return;
-                  }
-                  void handleRowTap(row);
-                }}
-                onTouchStart={() => startLongPress(row)}
-                onTouchMove={cancelLongPress}
-                onTouchEnd={cancelLongPress}
-                onTouchCancel={cancelLongPress}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  setMenuDeck(row);
-                }}
-              >
+          {visibleRows.length === 0 ? (
+            <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-2)', fontSize: 14 }}>
+              검색 조건과 일치하는 덱이 없습니다.
+            </div>
+          ) : (
+            visibleRows.map((row) => {
+              const indentPx = Math.min(row.depth, 4) * 18;
+              const isSelected = isWide && selectedDeckId === row.deckId;
+              const rowHasDue = row.newCount + row.learnCount + row.reviewCount > 0;
+              return (
                 <div
-                  className="amgi-deck-name-cell"
-                  style={{ paddingLeft: `${indentPx}px` }}
-                >
-                  {row.hasChildren ? (
-                    <button
-                      type="button"
-                      className="amgi-deck-chevron compact"
-                      aria-label={row.collapsed ? `${row.shortName} 펼치기` : `${row.shortName} 접기`}
-                      aria-expanded={!row.collapsed}
-                      onClick={(e) => void handleToggleCollapse(e, row)}
-                    >
-                      {row.collapsed ? (
-                        <IconChevronRight size={16} />
-                      ) : (
-                        <IconChevronDown size={16} />
-                      )}
-                    </button>
-                  ) : anyTopHasChildren || row.depth > 0 ? (
-                    <span className="amgi-deck-chevron-spacer" aria-hidden="true" />
-                  ) : null}
-
-                  <div className="amgi-deck-title-wrap">
-                    <span
-                      className={`amgi-deck-title ${
-                        row.filtered ? 'amgi-deck-title-filtered' : ''
-                      }`}
-                    >
-                      {row.shortName}
-                    </span>
-                    {row.filtered && <span className="amgi-filtered-pill">맞춤</span>}
-                  </div>
-                </div>
-
-                <div
-                  className={`amgi-deck-num tabular ${
-                    row.newCount > 0 ? 'amgi-deck-num-new' : 'amgi-deck-num-zero'
-                  }`}
-                >
-                  {row.newCount}
-                </div>
-                <div
-                  className={`amgi-deck-num tabular ${
-                    row.learnCount > 0 ? 'amgi-deck-num-learn' : 'amgi-deck-num-zero'
-                  }`}
-                >
-                  {row.learnCount}
-                </div>
-                <div
-                  className={`amgi-deck-num tabular ${
-                    row.reviewCount > 0 ? 'amgi-deck-num-review' : 'amgi-deck-num-zero'
-                  }`}
-                >
-                  {row.reviewCount}
-                </div>
-
-                <button
-                  type="button"
-                  className="amgi-deck-more-btn amgi-btn-icon"
-                  aria-label={`${row.shortName} 덱 메뉴`}
-                  onClick={(e) => {
-                    e.stopPropagation();
+                  key={row.deckId}
+                  role="row"
+                  data-deck-id={row.deckId}
+                  className={`amgi-deck-row ${isSelected ? 'amgi-deck-row-selected' : ''}`}
+                  onClick={() => {
+                    if (longPressFiredRef.current) {
+                      longPressFiredRef.current = false;
+                      return;
+                    }
+                    void handleRowTap(row);
+                  }}
+                  onTouchStart={() => startLongPress(row)}
+                  onTouchMove={cancelLongPress}
+                  onTouchEnd={cancelLongPress}
+                  onTouchCancel={cancelLongPress}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
                     setMenuDeck(row);
                   }}
                 >
-                  <IconMore size={18} />
-                </button>
-              </div>
-            );
-          })}
+                  <div
+                    className="amgi-deck-name-cell"
+                    style={{ paddingLeft: `${indentPx}px` }}
+                  >
+                    {row.depth > 0 && !row.hasChildren && (
+                      <span className="amgi-deck-branch" aria-hidden="true" />
+                    )}
+                    {row.hasChildren ? (
+                      <button
+                        type="button"
+                        className="amgi-deck-chevron compact"
+                        aria-label={row.collapsed ? `${row.shortName} 펼치기` : `${row.shortName} 접기`}
+                        aria-expanded={!row.collapsed}
+                        onClick={(e) => void handleToggleCollapse(e, row)}
+                      >
+                        {row.collapsed ? (
+                          <IconChevronRight size={16} />
+                        ) : (
+                          <IconChevronDown size={16} />
+                        )}
+                      </button>
+                    ) : row.depth === 0 ? (
+                      <span
+                        className={`amgi-deck-leaf-dot ${rowHasDue ? 'has-due' : ''}`}
+                        aria-hidden="true"
+                      >
+                        <IconBook size={13} />
+                      </span>
+                    ) : null}
+
+                    <div className="amgi-deck-title-wrap">
+                      <span
+                        className={`amgi-deck-title ${
+                          row.filtered ? 'amgi-deck-title-filtered' : ''
+                        }`}
+                      >
+                        {row.shortName}
+                      </span>
+                      {row.filtered && <span className="amgi-filtered-pill">맞춤</span>}
+                    </div>
+                  </div>
+
+                  <div
+                    className={`amgi-deck-num tabular ${
+                      row.newCount > 0 ? 'amgi-deck-num-new' : 'amgi-deck-num-zero'
+                    }`}
+                  >
+                    {row.newCount}
+                  </div>
+                  <div
+                    className={`amgi-deck-num tabular ${
+                      row.learnCount > 0 ? 'amgi-deck-num-learn' : 'amgi-deck-num-zero'
+                    }`}
+                  >
+                    {row.learnCount}
+                  </div>
+                  <div
+                    className={`amgi-deck-num tabular ${
+                      row.reviewCount > 0 ? 'amgi-deck-num-review' : 'amgi-deck-num-zero'
+                    }`}
+                  >
+                    {row.reviewCount}
+                  </div>
+
+                  <button
+                    type="button"
+                    className="amgi-deck-more-btn amgi-btn-icon"
+                    aria-label={`${row.shortName} 덱 메뉴`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuDeck(row);
+                    }}
+                  >
+                    <IconMore size={18} />
+                  </button>
+                </div>
+              );
+            })
+          )}
         </div>
 
         {onlyEmptyDefault && (
@@ -1108,6 +1265,69 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
             <span className="amgi-field-hint">
               <code>::</code>를 사용해 상위 덱 경로를 함께 바꿀 수 있습니다.
             </span>
+          </div>
+        </form>
+      </SheetOrDialog>
+
+      {/* Move / Reparent Deck Modal */}
+      <SheetOrDialog
+        open={moveTarget !== null}
+        onClose={() => {
+          if (!busyModal) setMoveTarget(null);
+        }}
+        title="상위 덱 이동"
+        subtitle={moveTarget?.fullName}
+        footer={
+          <>
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-secondary"
+              disabled={busyModal}
+              onClick={() => setMoveTarget(null)}
+            >
+              취소
+            </button>
+            <button
+              type="submit"
+              form="amgi-move-deck-form"
+              className="amgi-btn amgi-btn-primary"
+              disabled={busyModal}
+            >
+              {busyModal ? '이동 중...' : '이동'}
+            </button>
+          </>
+        }
+      >
+        <form
+          id="amgi-move-deck-form"
+          className="amgi-modal-form"
+          onSubmit={(e) => void handleMoveDeckSubmit(e)}
+        >
+          <div className="amgi-field-group">
+            <label className="amgi-field-label" htmlFor="move-deck-parent-select">
+              이동할 상위 덱
+            </label>
+            <select
+              id="move-deck-parent-select"
+              className="amgi-select"
+              value={moveParentId}
+              onChange={(e) => setMoveParentId(Number(e.target.value))}
+            >
+              <option value={0}>최상위 (상위 덱 없음)</option>
+              {rows
+                .filter(
+                  (r) =>
+                    !r.filtered &&
+                    moveTarget &&
+                    r.deckId !== moveTarget.deckId &&
+                    !r.fullName.startsWith(`${moveTarget.fullName}::`)
+                )
+                .map((r) => (
+                  <option key={r.deckId} value={r.deckId}>
+                    {r.fullName}
+                  </option>
+                ))}
+            </select>
           </div>
         </form>
       </SheetOrDialog>

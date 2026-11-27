@@ -22,6 +22,7 @@ import {
   Switch,
   useToast,
 } from '../../ui';
+import { TagManagerSheet } from '../shared/TagManagerSheet';
 import { formatSyncTime, SyncCard } from '../sync/SyncCard';
 import './settings.css';
 
@@ -103,10 +104,6 @@ function getLineHeightLabel(raw: unknown): string {
   return best.label;
 }
 
-function getThemeLabel(theme: PrefTheme): string {
-  return THEME_OPTIONS.find((o) => o.value === theme)?.label ?? '자동 (기기 설정)';
-}
-
 function getFlavorLabel(flavor: string | undefined, platform: string | undefined): string {
   if (flavor === 'comet') return '코멧 전자책 전용';
   if (flavor === 'pro') return '안드로이드 기본';
@@ -142,11 +139,11 @@ export const SettingsView: React.FC = () => {
   const [updateUnsupported, setUpdateUnsupported] = useState(false);
 
   // Pickers
-  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [lineHeightMenuOpen, setLineHeightMenuOpen] = useState(false);
   const [backupKeepMenuOpen, setBackupKeepMenuOpen] = useState(false);
   const [rolloverSheetOpen, setRolloverSheetOpen] = useState(false);
   const [rolloverCustomOpen, setRolloverCustomOpen] = useState(false);
+  const [tagManagerOpen, setTagManagerOpen] = useState(false);
 
   // Action busy flags & sub-sheets
   const [creatingBackup, setCreatingBackup] = useState(false);
@@ -606,13 +603,102 @@ export const SettingsView: React.FC = () => {
 
   return (
     <div className="amgi-settings-page">
-      {/* 1. 동기화 */}
-      <SectionCard title="1. 동기화">
+      {/* 동기화 */}
+      <SectionCard title="동기화">
         <SyncCard />
       </SectionCard>
 
-      {/* 2. 학습 설정 */}
-      <SectionCard title="2. 학습 설정">
+      {/* 화면 및 글자 */}
+      <SectionCard title="화면 및 글자">
+        <div className="amgi-theme-picker-wrap">
+          <div className="amgi-theme-picker-head">
+            <span className="amgi-theme-picker-title">화면 테마</span>
+            <span className="amgi-theme-picker-desc">
+              {THEME_OPTIONS.find((o) => o.value === prefTheme)?.desc}
+            </span>
+          </div>
+          <div className="amgi-theme-cards" role="radiogroup" aria-label="화면 테마 선택">
+            {(
+              [
+                { value: 'auto' as PrefTheme, label: '자동' },
+                { value: 'light' as PrefTheme, label: '밝음' },
+                { value: 'dark' as PrefTheme, label: '어둠' },
+                { value: 'eink' as PrefTheme, label: '흑백' },
+              ] as const
+            ).map((opt) => {
+              const selected = prefTheme === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  className={`amgi-theme-card ${selected ? 'active' : ''}`}
+                  onClick={() => void setPref('theme', opt.value)}
+                >
+                  <span
+                    className={`amgi-theme-swatch amgi-theme-swatch--${opt.value}`}
+                    aria-hidden="true"
+                  >
+                    <span className="amgi-theme-swatch-bar" />
+                    <span className="amgi-theme-swatch-line" />
+                  </span>
+                  <span className="amgi-theme-card-label">{opt.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <SettingRow
+          label="카드 글자 크기"
+          description={`학습할 때 카드 본문 글씨 크기를 조절합니다 (현재 ${fontScalePct}%)`}
+          control={
+            <div className="amgi-scale-stepper">
+              <button
+                type="button"
+                className="amgi-scale-btn"
+                aria-label="글자 크기 작게"
+                disabled={fontScaleIdx <= 0}
+                onClick={() =>
+                  void setPref('study.fontScale', FONT_SCALES[fontScaleIdx - 1])
+                }
+                data-compact="true"
+              >
+                -
+              </button>
+              <span className="amgi-scale-val">{fontScalePct}%</span>
+              <button
+                type="button"
+                className="amgi-scale-btn"
+                aria-label="글자 크기 크게"
+                disabled={fontScaleIdx >= FONT_SCALES.length - 1}
+                onClick={() =>
+                  void setPref('study.fontScale', FONT_SCALES[fontScaleIdx + 1])
+                }
+                data-compact="true"
+              >
+                +
+              </button>
+            </div>
+          }
+        />
+        <SettingRow
+          label="카드 줄 간격"
+          description="문장이나 예문이 긴 카드가 눈에 편하게 들어오도록 조절합니다"
+          onClick={() => setLineHeightMenuOpen(true)}
+          control={
+            <span className="amgi-setting-value-trigger">
+              <span className="amgi-setting-value-text">
+                {getLineHeightLabel(prefs['study.lineHeight'])}
+              </span>
+              <IconChevronRight size={18} />
+            </span>
+          }
+        />
+      </SectionCard>
+
+      {/* 학습 설정 */}
+      <SectionCard title="학습 설정">
         <SettingRow
           label="2버튼 학습 모드"
           description="켜면 '모름'과 '암기 완료' 2개 버튼만으로 빠르게 학습합니다"
@@ -719,69 +805,14 @@ export const SettingsView: React.FC = () => {
         />
       </SectionCard>
 
-      {/* 3. 화면 및 글자 */}
-      <SectionCard title="3. 화면 및 글자">
+      {/* 백업 및 데이터 정리 */}
+      <SectionCard title="백업 및 데이터 정리">
         <SettingRow
-          label="화면 테마"
-          description="어두운 밤에는 어두운 화면, 전자책 기기엔 흑백 모드가 편합니다"
-          onClick={() => setThemeMenuOpen(true)}
-          control={
-            <span className="amgi-setting-value-trigger">
-              <span className="amgi-setting-value-text">{getThemeLabel(prefTheme)}</span>
-              <IconChevronRight size={18} />
-            </span>
-          }
+          label="태그 관리"
+          description="모든 태그의 이름을 바꾸거나 사용하지 않는 태그를 정리합니다"
+          onClick={() => setTagManagerOpen(true)}
+          control={<IconChevronRight size={18} />}
         />
-        <SettingRow
-          label="카드 글자 크기"
-          description={`학습할 때 카드 본문 글씨 크기를 조절합니다 (현재 ${fontScalePct}%)`}
-          control={
-            <div className="amgi-scale-stepper">
-              <button
-                type="button"
-                className="amgi-scale-btn"
-                aria-label="글자 크기 작게"
-                disabled={fontScaleIdx <= 0}
-                onClick={() =>
-                  void setPref('study.fontScale', FONT_SCALES[fontScaleIdx - 1])
-                }
-                data-compact="true"
-              >
-                -
-              </button>
-              <span className="amgi-scale-val">{fontScalePct}%</span>
-              <button
-                type="button"
-                className="amgi-scale-btn"
-                aria-label="글자 크기 크게"
-                disabled={fontScaleIdx >= FONT_SCALES.length - 1}
-                onClick={() =>
-                  void setPref('study.fontScale', FONT_SCALES[fontScaleIdx + 1])
-                }
-                data-compact="true"
-              >
-                +
-              </button>
-            </div>
-          }
-        />
-        <SettingRow
-          label="카드 줄 간격"
-          description="문장이나 예문이 긴 카드가 눈에 편하게 들어오도록 조절합니다"
-          onClick={() => setLineHeightMenuOpen(true)}
-          control={
-            <span className="amgi-setting-value-trigger">
-              <span className="amgi-setting-value-text">
-                {getLineHeightLabel(prefs['study.lineHeight'])}
-              </span>
-              <IconChevronRight size={18} />
-            </span>
-          }
-        />
-      </SectionCard>
-
-      {/* 4. 백업 및 데이터 정리 */}
-      <SectionCard title="4. 백업 및 데이터 정리">
         <SettingRow
           label="지금 백업 만들기"
           description="현재 모든 카드와 학습 기록을 기기에 안전하게 저장합니다"
@@ -847,8 +878,8 @@ export const SettingsView: React.FC = () => {
         />
       </SectionCard>
 
-      {/* 5. 앱 정보 및 업데이트 */}
-      <SectionCard title="5. 앱 정보 및 업데이트">
+      {/* 앱 정보 및 업데이트 */}
+      <SectionCard title="앱 정보 및 업데이트">
         <SettingRow
           label="업데이트 확인"
           description={
@@ -889,20 +920,7 @@ export const SettingsView: React.FC = () => {
       </SectionCard>
 
       {/* Pickers & Modals */}
-      <ActionMenu
-        open={themeMenuOpen}
-        onClose={() => setThemeMenuOpen(false)}
-        title="화면 테마"
-        items={THEME_OPTIONS.map((opt) => ({
-          id: opt.value,
-          label: opt.label,
-          description: opt.desc,
-          icon: prefTheme === opt.value ? <IconCheck size={18} /> : undefined,
-          onSelect: () => {
-            void setPref('theme', opt.value);
-          },
-        }))}
-      />
+      <TagManagerSheet open={tagManagerOpen} onClose={() => setTagManagerOpen(false)} />
 
       <ActionMenu
         open={lineHeightMenuOpen}

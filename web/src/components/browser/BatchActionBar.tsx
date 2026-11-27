@@ -32,6 +32,7 @@ type BatchModal =
   | 'bury'
   | 'forget'
   | 'due'
+  | 'reposition'
   | 'findReplace'
   | 'changeNotetype'
   | 'delete';
@@ -94,6 +95,12 @@ export function BatchActionBar({
 
   // Set due date
   const [dueDays, setDueDays] = useState('0');
+
+  // Reposition new cards
+  const [repoStart, setRepoStart] = useState(0);
+  const [repoStep, setRepoStep] = useState(1);
+  const [repoRandomize, setRepoRandomize] = useState(false);
+  const [repoShift, setRepoShift] = useState(true);
 
   // Find & Replace
   const [frSearch, setFrSearch] = useState('');
@@ -572,6 +579,18 @@ export function BatchActionBar({
             label: '복습 날짜 지정',
             description: '다음 복습 예정일을 직접 입력합니다',
             onSelect: () => setModal('due'),
+          },
+          {
+            id: 'reposition',
+            label: '새 카드 순서 변경 (위치 재지정)',
+            description: '선택한 새 카드의 학습 시작 순서를 바꿉니다',
+            onSelect: () => {
+              setRepoStart(0);
+              setRepoStep(1);
+              setRepoRandomize(false);
+              setRepoShift(true);
+              setModal('reposition');
+            },
           },
           {
             id: 'notetype',
@@ -1122,6 +1141,106 @@ export function BatchActionBar({
           (노트 <strong className="tabular">{deleteCounts.notes}개</strong>)를 삭제합니다.
           삭제 후 되돌리기(Ctrl+Z)로 복구할 수 있습니다.
         </p>
+      </SheetOrDialog>
+      {/* Reposition New Cards Modal */}
+      <SheetOrDialog
+        open={modal === 'reposition'}
+        onClose={() => {
+          if (!busy) setModal(null);
+        }}
+        title="새 카드 순서 변경"
+        subtitle={`선택한 ${count.toLocaleString()}개 항목 중 새 카드 순서를 재지정합니다`}
+        footer={
+          <>
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-secondary"
+              disabled={busy}
+              onClick={() => setModal(null)}
+            >
+              취소
+            </button>
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-primary"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const cids = await resolveCardIds();
+                  await anki.repositionNewCards({
+                    cardIds: cids,
+                    startingFrom: Math.max(0, repoStart),
+                    stepSize: Math.max(1, repoStep),
+                    randomize: repoRandomize,
+                    shiftExisting: repoShift,
+                  });
+                  finishSuccess(`새 카드 ${cids.length.toLocaleString()}장의 순서를 변경했습니다.`);
+                } catch (err) {
+                  showToast(
+                    err instanceof Error ? err.message : '순서를 변경하지 못했습니다.',
+                    'error'
+                  );
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              {busy ? '적용 중...' : '적용'}
+            </button>
+          </>
+        }
+      >
+        <div className="amgi-modal-form">
+          <div className="amgi-field-group">
+            <label className="amgi-field-label" htmlFor="batch-repo-start">
+              시작 위치 번호
+            </label>
+            <input
+              id="batch-repo-start"
+              type="number"
+              min={0}
+              className="amgi-input tabular"
+              value={repoStart}
+              onChange={(e) => setRepoStart(Math.max(0, Number(e.target.value) || 0))}
+            />
+          </div>
+          <div className="amgi-field-group">
+            <label className="amgi-field-label" htmlFor="batch-repo-step">
+              간격 (Step)
+            </label>
+            <input
+              id="batch-repo-step"
+              type="number"
+              min={1}
+              className="amgi-input tabular"
+              value={repoStep}
+              onChange={(e) => setRepoStep(Math.max(1, Number(e.target.value) || 1))}
+            />
+          </div>
+          <div className="amgi-switch-row">
+            <div>
+              <div className="amgi-field-label">순서 무작위 섞기</div>
+              <div className="amgi-field-hint">선택한 새 카드들을 무작위 순서로 배치합니다</div>
+            </div>
+            <Switch
+              checked={repoRandomize}
+              onChange={setRepoRandomize}
+              aria-label="순서 무작위 섞기"
+            />
+          </div>
+          <div className="amgi-switch-row">
+            <div>
+              <div className="amgi-field-label">기존 카드 뒤로 밀기</div>
+              <div className="amgi-field-hint">겹치는 번호가 있으면 기존 새 카드를 뒤로 이동합니다</div>
+            </div>
+            <Switch
+              checked={repoShift}
+              onChange={setRepoShift}
+              aria-label="기존 카드 뒤로 밀기"
+            />
+          </div>
+        </div>
       </SheetOrDialog>
     </>
   );

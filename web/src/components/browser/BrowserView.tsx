@@ -16,11 +16,13 @@ import {
   IconEye,
   IconPlus,
   IconSearch,
+  IconSidebar,
   SheetOrDialog,
   useToast,
 } from '../../ui';
 import { BatchActionBar } from './BatchActionBar';
 import { BrowserPreviewPane, BrowserPreviewSheet } from './BrowserPreviewPane';
+import { BrowserSidebar } from './BrowserSidebar';
 import {
   composeQueryFromFilters,
   FilterBarAndSheet,
@@ -69,6 +71,7 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
   const { showToast } = useToast();
 
   const isWide = useIsWide(900);
+  const isSidebarWide = useIsWide(1100);
   const isEink = resolvedTheme === 'eink';
 
   const [queryText, setQueryText] = useState(() => initialQuery ?? '');
@@ -95,6 +98,7 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
   const [activeItemId, setActiveItemId] = useState<number | null>(null);
   const [previewSheetOpen, setPreviewSheetOpen] = useState(false);
   const [showWidePreview, setShowWidePreview] = useState(true);
+  const [showSidebar, setShowSidebar] = useState(true);
 
   const [sortSheetOpen, setSortSheetOpen] = useState(false);
   const [columnsSheetOpen, setColumnsSheetOpen] = useState(false);
@@ -451,6 +455,17 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
 
           {isWide ? (
             <>
+              {isSidebarWide && (
+                <button
+                  type="button"
+                  className={`amgi-browser-compact-btn ${showSidebar ? 'active' : ''}`}
+                  aria-label="탐색 사이드바 전환"
+                  onClick={() => setShowSidebar((v) => !v)}
+                >
+                  <IconSidebar size={16} />
+                  <span>탐색</span>
+                </button>
+              )}
               <button
                 type="button"
                 className="amgi-browser-compact-btn"
@@ -549,9 +564,21 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
       ) : (
         <div
           className={`amgi-browser-workspace ${
-            isWide && showWidePreview ? 'with-preview' : ''
-          }`.trim()}
+            isSidebarWide && showSidebar ? 'with-sidebar' : ''
+          } ${isWide && showWidePreview ? 'with-preview' : ''}`.trim()}
         >
+          {isSidebarWide && showSidebar && (
+            <BrowserSidebar
+              currentQuery={queryText}
+              collectionVersion={collectionVersion}
+              onSelectQuery={(nextQuery) => {
+                setQueryText(nextQuery);
+                setDebouncedQuery(nextQuery);
+                setFilters(parseQueryToFilters(nextQuery));
+              }}
+            />
+          )}
+
           <div className="amgi-browser-list-pane">
             <VirtualBrowserList
               ids={ids}

@@ -12,5 +12,11 @@ export {
   type SectionCardProps,
   type SettingRowProps,
 } from './SectionCard';
-export { ToastProvider, useToast, type ToastItem, type ToastKind } from './Toast';
+export {
+  ToastProvider,
+  useToast,
+  type ToastAction,
+  type ToastItem,
+  type ToastKind,
+} from './Toast';
 export { ErrorState, type ErrorStateProps } from './ErrorState';

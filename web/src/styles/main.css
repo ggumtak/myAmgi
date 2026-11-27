@@ -29,21 +29,24 @@
   --border-w: 1px;
   --target-min: 48px;
 
-  /* Surfaces & Ink (Light) */
-  --bg: #F5F7FA;
+  /* Surfaces & Ink (Light — Refined Alabaster & Crisp Paper) */
+  --bg: #F3F5F9;
   --surface: #FFFFFF;
+  --surface-glass: rgba(255, 255, 255, 0.88);
   --surface-2: #EEF2F7;
-  --surface-active: #E4EBF5;
-  --text: #111827;
-  --text-2: #4B5563;
+  --surface-active: #E3EAF4;
+  --text: #0F172A;
+  --text-2: #475569;
   --text-3: #94A3B8;
-  --border: #E2E7F0;
+  --border: #E2E8F0;
+  --border-subtle: rgba(15, 23, 42, 0.06);
   --border-strong: #CBD5E1;
 
   /* Primary Brand Accent */
   --primary: #2563EB;
   --primary-hover: #1D4ED8;
   --primary-soft: #EFF6FF;
+  --primary-glow: rgba(37, 99, 235, 0.24);
   --on-primary: #FFFFFF;
 
   /* Anki Deck Queue Counters */
@@ -86,10 +89,10 @@
   --flag-7: #8B5CF6; /* Purple */
 
   /* Shadows & Elevation */
-  --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.05), 0 1px 2px rgba(15, 23, 42, 0.03);
-  --shadow-md: 0 6px 20px rgba(15, 23, 42, 0.08);
-  --shadow-lg: 0 16px 40px rgba(15, 23, 42, 0.14);
-  --backdrop: rgba(15, 23, 42, 0.48);
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.03);
+  --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.08), 0 2px 6px rgba(15, 23, 42, 0.04);
+  --shadow-lg: 0 20px 48px rgba(15, 23, 42, 0.16), 0 4px 12px rgba(15, 23, 42, 0.06);
+  --backdrop: rgba(15, 23, 42, 0.46);
 
   /* Heatmap */
   --heat-0: #E8EDF4;
@@ -100,7 +103,7 @@
 
   /* Layout Dimensions */
   --topbar-h: 56px;
-  --rail-w: 76px;
+  --rail-w: 80px;
   --bottomnav-h: 64px;
   --selected-bar: 3px solid var(--primary);
 
@@ -124,66 +127,69 @@
   color-scheme: light;
 }
 
-/* Super AMOLED Dark Theme (zero purple clichés) */
+/* Super AMOLED Dark Theme (Deep Graphite-Obsidian, zero purple clichés) */
 :root[data-theme="dark"],
 html.night_mode:not([data-theme="light"]):not([data-theme="eink"]) {
   color-scheme: dark;
 
-  --bg: #0D1017;
-  --surface: #161B24;
-  --surface-2: #1F2633;
-  --surface-active: #283142;
+  --bg: #0A0D13;
+  --surface: #131822;
+  --surface-glass: rgba(19, 24, 34, 0.88);
+  --surface-2: #1B2230;
+  --surface-active: #252F42;
   --text: #F1F5F9;
   --text-2: #94A3B8;
-  --text-3: #73829A;
-  --border: #242C3A;
+  --text-3: #6B7B93;
+  --border: #232C3C;
+  --border-subtle: rgba(255, 255, 255, 0.06);
   --border-strong: #334155;
 
-  --primary: #60A5FA;
-  --primary-hover: #93C5FD;
-  --primary-soft: rgba(96, 165, 250, 0.14);
-  --on-primary: #081020;
+  --primary: #58A6FF;
+  --primary-hover: #79BAFF;
+  --primary-soft: rgba(88, 166, 255, 0.15);
+  --primary-glow: rgba(88, 166, 255, 0.22);
+  --on-primary: #07111F;
 
-  --count-new: #60A5FA;
-  --count-new-bg: rgba(96, 165, 250, 0.14);
-  --count-learn: #F87171;
-  --count-learn-bg: rgba(248, 113, 113, 0.14);
-  --count-review: #34D399;
-  --count-review-bg: rgba(52, 211, 153, 0.14);
+  --count-new: #58A6FF;
+  --count-new-bg: rgba(88, 166, 255, 0.14);
+  --count-learn: #FF7B72;
+  --count-learn-bg: rgba(255, 123, 114, 0.14);
+  --count-review: #3FB950;
+  --count-review-bg: rgba(63, 185, 80, 0.14);
 
-  --again: #F87171;
-  --again-bg: rgba(248, 113, 113, 0.12);
-  --again-border: rgba(248, 113, 113, 0.32);
-  --hard: #FBBF24;
-  --hard-bg: rgba(251, 191, 36, 0.12);
-  --hard-border: rgba(251, 191, 36, 0.32);
-  --good: #34D399;
-  --good-bg: rgba(52, 211, 153, 0.12);
-  --good-border: rgba(52, 211, 153, 0.32);
-  --easy: #60A5FA;
-  --easy-bg: rgba(96, 165, 250, 0.12);
-  --easy-border: rgba(96, 165, 250, 0.32);
+  --again: #FF7B72;
+  --again-bg: rgba(255, 123, 114, 0.12);
+  --again-border: rgba(255, 123, 114, 0.30);
+  --hard: #F2B84B;
+  --hard-bg: rgba(242, 184, 75, 0.12);
+  --hard-border: rgba(242, 184, 75, 0.30);
+  --good: #3FB950;
+  --good-bg: rgba(63, 185, 80, 0.12);
+  --good-border: rgba(63, 185, 80, 0.30);
+  --easy: #58A6FF;
+  --easy-bg: rgba(88, 166, 255, 0.12);
+  --easy-border: rgba(88, 166, 255, 0.30);
 
-  --danger: #F87171;
-  --danger-soft: rgba(248, 113, 113, 0.14);
-  --warn: #FBBF24;
-  --warn-soft: rgba(251, 191, 36, 0.14);
-  --ok: #34D399;
-  --ok-soft: rgba(52, 211, 153, 0.14);
+  --danger: #FF7B72;
+  --danger-soft: rgba(255, 123, 114, 0.14);
+  --warn: #F2B84B;
+  --warn-soft: rgba(242, 184, 75, 0.14);
+  --ok: #3FB950;
+  --ok-soft: rgba(63, 185, 80, 0.14);
 
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
-  --shadow-lg: 0 18px 44px rgba(0, 0, 0, 0.65);
-  --backdrop: rgba(4, 7, 14, 0.72);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --shadow-md: 0 10px 28px rgba(0, 0, 0, 0.50), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --shadow-lg: 0 20px 52px rgba(0, 0, 0, 0.68), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --backdrop: rgba(4, 7, 14, 0.74);
 
-  --heat-0: #1F2633;
+  --heat-0: #1C2331;
   --heat-1: #1E3A5F;
   --heat-2: #1D4ED8;
   --heat-3: #3B82F6;
   --heat-4: #93C5FD;
 }
 
-/* Innospaceone Comet 5.84" Carta E-Ink Theme */
+/* Innospaceone Comet 5.84" Carta E-Ink Theme (100% Pure Grayscale / #000 + #FFF) */
 :root[data-theme="eink"] {
   color-scheme: light;
 
@@ -198,17 +204,20 @@ html.night_mode:not([data-theme="light"]):not([data-theme="eink"]) {
 
   --bg: #FFFFFF;
   --surface: #FFFFFF;
+  --surface-glass: #FFFFFF;
   --surface-2: #FFFFFF;
   --surface-active: #FFFFFF;
   --text: #000000;
   --text-2: #000000;
   --text-3: #000000;
   --border: #000000;
+  --border-subtle: #000000;
   --border-strong: #000000;
 
   --primary: #000000;
   --primary-hover: #000000;
   --primary-soft: #FFFFFF;
+  --primary-glow: transparent;
   --on-primary: #FFFFFF;
 
   --count-new: #000000;
@@ -266,6 +275,8 @@ html.night_mode:not([data-theme="light"]):not([data-theme="eink"]) {
   transition: none !important;
   animation: none !important;
   box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 /* ==========================================================================
@@ -412,11 +423,17 @@ button {
   background: var(--primary);
   color: var(--on-primary);
   border-color: var(--primary);
+  box-shadow: 0 2px 8px var(--primary-glow);
 }
 
 .amgi-btn-primary:hover:not(:disabled) {
   background: var(--primary-hover);
   border-color: var(--primary-hover);
+  box-shadow: 0 4px 14px var(--primary-glow);
+}
+
+:root[data-theme="eink"] .amgi-btn-primary {
+  box-shadow: none;
 }
 
 .amgi-btn-secondary {
@@ -650,14 +667,20 @@ button {
   z-index: 30;
   min-height: calc(var(--topbar-h) + var(--safe-top));
   padding-top: var(--safe-top);
-  padding-left: 12px;
-  padding-right: 12px;
-  background: var(--surface);
+  padding-left: 14px;
+  padding-right: 14px;
+  background: var(--surface-glass);
+  backdrop-filter: blur(18px) saturate(1.35);
+  -webkit-backdrop-filter: blur(18px) saturate(1.35);
   border-bottom: var(--border-w) solid var(--border);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+:root[data-theme="eink"] .amgi-topbar {
+  background: #FFFFFF;
 }
 
 .amgi-topbar-left,
@@ -676,10 +699,29 @@ button {
   flex-shrink: 0;
 }
 
+.amgi-brand-mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--primary);
+  color: var(--on-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 2px 6px var(--primary-glow);
+}
+
+:root[data-theme="eink"] .amgi-brand-mark {
+  background: #000000;
+  color: #FFFFFF;
+  border-radius: 4px;
+}
+
 .amgi-topbar-title {
-  font-size: 17px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -828,12 +870,18 @@ button {
   padding-bottom: var(--safe-bottom);
   padding-left: var(--safe-left);
   padding-right: var(--safe-right);
-  background: var(--surface);
+  background: var(--surface-glass);
+  backdrop-filter: blur(18px) saturate(1.35);
+  -webkit-backdrop-filter: blur(18px) saturate(1.35);
   border-top: var(--border-w) solid var(--border);
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: stretch;
   overflow: hidden;
+}
+
+:root[data-theme="eink"] .amgi-bottomnav {
+  background: #FFFFFF;
 }
 
 .amgi-nav-item {
@@ -855,6 +903,7 @@ button {
   word-break: keep-all;
   cursor: pointer;
   padding: 4px 2px;
+  transition: color 0.14s ease;
 }
 
 .amgi-nav-item > * {
@@ -876,7 +925,7 @@ button {
   left: 50%;
   right: auto;
   transform: translateX(-50%);
-  width: 48px;
+  width: 50px;
   height: 28px;
   border-radius: 999px;
   background: var(--primary-soft);
@@ -910,13 +959,13 @@ button {
   bottom: calc(var(--bottomnav-h) + var(--safe-bottom) + 16px);
   z-index: 36;
   min-width: 56px;
-  height: 56px;
-  padding: 0 18px;
+  height: 54px;
+  padding: 0 20px;
   border-radius: var(--radius-pill);
   border: var(--border-w) solid var(--primary);
   background: var(--primary);
   color: var(--on-primary);
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 8px 22px var(--primary-glow), 0 2px 6px rgba(15, 23, 42, 0.12);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -924,13 +973,20 @@ button {
   font-size: 15px;
   font-weight: 700;
   cursor: pointer;
+  transition: transform 0.12s ease, background-color 0.14s ease, box-shadow 0.14s ease;
 }
 
 .amgi-fab:hover:not(:disabled) {
   background: var(--primary-hover);
+  box-shadow: 0 10px 26px var(--primary-glow), 0 4px 10px rgba(15, 23, 42, 0.16);
+}
+
+.amgi-fab:active:not(:disabled) {
+  transform: scale(0.96);
 }
 
 :root[data-theme="eink"] .amgi-fab {
+  height: 56px;
   background: #000000;
   color: #FFFFFF;
   border: 2px solid #000000;
@@ -1514,6 +1570,139 @@ button {
   color: #FFFFFF;
   border: 2px solid #000000;
   border-radius: var(--radius-sm);
+}
+
+.amgi-toast-action {
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.16);
+  color: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.amgi-toast-action:hover {
+  background: rgba(255, 255, 255, 0.26);
+}
+
+.amgi-toast-close {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+:root[data-theme="eink"] .amgi-toast-action {
+  min-height: 44px;
+  border: 2px solid #FFFFFF;
+  background: #000000;
+  color: #FFFFFF;
+}
+
+:root[data-theme="eink"] .amgi-toast-close {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* Command Palette / Quick Switcher & Tag Manager */
+.amgi-cmd-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  min-height: 48px;
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--border-strong);
+  background: var(--surface-2);
+  margin-bottom: 12px;
+}
+
+.amgi-cmd-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 15px;
+  color: var(--text);
+}
+
+.amgi-cmd-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 50dvh;
+  overflow-y: auto;
+}
+
+.amgi-cmd-row {
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid transparent;
+  background: transparent;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.amgi-cmd-row:hover,
+.amgi-cmd-row.active {
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+
+:root[data-theme="eink"] .amgi-cmd-search {
+  background: #FFFFFF;
+  border: 2px solid #000000;
+}
+
+:root[data-theme="eink"] .amgi-cmd-row {
+  min-height: 52px;
+  border-bottom: 1.5px solid #000000;
+  border-radius: 0;
+}
+
+.amgi-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+:root[data-theme="eink"] .amgi-kbd {
+  background: #FFFFFF;
+  color: #000000;
+  border: 1.5px solid #000000;
 }
 
 /* ==========================================================================

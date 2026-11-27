@@ -147,6 +147,7 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
+  const [loginExpanded, setLoginExpanded] = useState(compact);
   const [loggingIn, setLoggingIn] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
@@ -310,6 +311,43 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
   };
 
   if (!isLoggedIn) {
+    if (!loginExpanded && !compact) {
+      return (
+        <div className="amgi-sync-card amgi-sync-card--teaser">
+          <div className="amgi-sync-teaser-row">
+            <div className="amgi-sync-teaser-icon" aria-hidden="true">
+              <IconSync size={20} />
+            </div>
+            <div className="amgi-sync-card-head" style={{ flex: 1, minWidth: 0 }}>
+              <h4 className="amgi-sync-card-title">AnkiWeb 동기화</h4>
+              <p className="amgi-sync-card-sub">
+                계정을 연결하면 폰·태블릿·PC·전자책의 암기 기록이 자동으로 맞춰집니다.
+              </p>
+            </div>
+          </div>
+          <div className="amgi-sync-teaser-actions">
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-primary"
+              style={{ flex: 1 }}
+              onClick={() => setLoginExpanded(true)}
+            >
+              <IconSync size={17} />
+              <span>AnkiWeb 로그인</span>
+            </button>
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-secondary"
+              onClick={() => void handleOpenSignup()}
+            >
+              <span>계정 만들기</span>
+              <IconExternal size={15} />
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className={`amgi-sync-card ${compact ? 'amgi-sync-card--compact' : ''}`}>
         <div className="amgi-sync-card-head">

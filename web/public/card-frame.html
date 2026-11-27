@@ -17,10 +17,10 @@
       }
 
       html.night-mode {
-        --canvas: #121316;
-        --canvas-elevated: #161B24;
+        --canvas: #131822;
+        --canvas-elevated: #1B2230;
         --fg: #F1F5F9;
-        --border: #242C3A;
+        --border: #232C3C;
       }
 
       html,
@@ -28,25 +28,26 @@
         margin: 0;
         padding: 0;
         background-color: #ffffff;
-        color: #1b1c1f;
-        font-family: "Pretendard", "Noto Sans CJK KR", "Noto Sans KR", system-ui, sans-serif;
-        font-size: calc(18px * var(--card-font-scale, 1));
-        line-height: var(--card-line-height, 1.55);
+        color: #0f172a;
+        font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Noto Sans CJK KR", "Noto Sans KR", system-ui, sans-serif;
+        font-size: calc(19px * var(--card-font-scale, 1));
+        line-height: var(--card-line-height, 1.6);
         word-break: keep-all;
         overflow-wrap: break-word;
         -webkit-text-size-adjust: 100%;
+        -webkit-font-smoothing: antialiased;
       }
 
       body {
-        padding: 28px 20px 36px;
+        padding: 36px 24px 48px;
         box-sizing: border-box;
         min-height: 100vh;
       }
 
       :where(.card) {
-        font-family: "Pretendard", "Noto Sans CJK KR", "Noto Sans KR", system-ui, sans-serif;
-        font-size: calc(20px * var(--card-font-scale, 1));
-        line-height: var(--card-line-height, 1.55);
+        font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Noto Sans CJK KR", "Noto Sans KR", system-ui, sans-serif;
+        font-size: calc(22px * var(--card-font-scale, 1));
+        line-height: var(--card-line-height, 1.6);
         text-align: center;
         color: inherit;
         background-color: transparent;
@@ -55,6 +56,7 @@
       :where(img, svg, video, canvas) {
         max-width: 100%;
         height: auto;
+        border-radius: 8px;
       }
 
       :where(img) {
@@ -63,8 +65,11 @@
       }
 
       :where(.cloze) {
-        font-weight: 700;
-        color: #2f6fed;
+        font-weight: 800;
+        color: #2563eb;
+        background-color: rgba(37, 99, 235, 0.1);
+        padding: 1px 7px;
+        border-radius: 6px;
       }
 
       :where(.cloze-inactive) {
@@ -73,40 +78,42 @@
 
       :where(hr#answer) {
         border: 0;
-        border-top: 1px solid rgba(0, 0, 0, 0.16);
-        margin: 16px 0;
+        border-top: 1.5px dashed rgba(15, 23, 42, 0.16);
+        margin: 24px auto;
+        max-width: 82%;
       }
 
       :where(input#typeans) {
         width: 100%;
         max-width: 480px;
         box-sizing: border-box;
-        padding: 10px 12px;
+        padding: 12px 14px;
         font-family: inherit;
         font-size: calc(16px * var(--card-font-scale, 1));
         line-height: 1.5;
-        color: #1b1c1f;
-        background-color: #f4f5f8;
-        border: 1px solid #dde1e8;
-        border-radius: 10px;
+        color: #0f172a;
+        background-color: #f3f5f9;
+        border: 1.5px solid #cbd5e1;
+        border-radius: 12px;
         outline: none;
       }
 
       :where(input#typeans:focus) {
-        border-color: #2f6fed;
+        border-color: #2563eb;
+        background-color: #ffffff;
       }
 
       :where(.replay-button) {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-width: 40px;
-        min-height: 40px;
+        min-width: 42px;
+        min-height: 42px;
         padding: 6px 10px;
-        margin: 4px;
+        margin: 6px;
         border-radius: 999px;
-        border: 1px solid rgba(0, 0, 0, 0.18);
-        background-color: rgba(0, 0, 0, 0.04);
+        border: 1px solid rgba(15, 23, 42, 0.14);
+        background-color: rgba(15, 23, 42, 0.04);
         color: inherit;
         text-decoration: none;
         cursor: pointer;
@@ -135,35 +142,36 @@
       html.night-mode,
       html.night-mode body,
       body.nightMode {
-        background-color: #121316;
-        color: #F1F5F9;
+        background-color: #131822;
+        color: #f1f5f9;
       }
 
       :where(html.night-mode .card, body.nightMode .card) {
-        background-color: #121316;
-        color: #F1F5F9;
+        background-color: #131822;
+        color: #f1f5f9;
       }
 
       :where(html.night-mode .cloze, body.nightMode .cloze) {
-        color: #7aa7ff;
+        color: #58a6ff;
+        background-color: rgba(88, 166, 255, 0.16);
       }
 
       :where(html.night-mode hr#answer, body.nightMode hr#answer) {
-        border-top-color: rgba(255, 255, 255, 0.22);
+        border-top-color: rgba(255, 255, 255, 0.18);
       }
 
       :where(html.night-mode input#typeans, body.nightMode input#typeans) {
-        color: #e6e7ea;
-        background-color: #1c1e23;
-        border-color: #2c2f36;
+        color: #f1f5f9;
+        background-color: #1b2230;
+        border-color: #334155;
       }
 
       :where(html.night-mode input#typeans:focus, body.nightMode input#typeans:focus) {
-        border-color: #7aa7ff;
+        border-color: #58a6ff;
       }
 
       :where(html.night-mode .replay-button, body.nightMode .replay-button) {
-        border-color: rgba(255, 255, 255, 0.25);
+        border-color: rgba(255, 255, 255, 0.22);
         background-color: rgba(255, 255, 255, 0.08);
       }
 
@@ -196,6 +204,8 @@
       html.eink-mode .cloze,
       body.einkMode .cloze {
         color: #000000 !important;
+        background-color: transparent !important;
+        padding: 0 !important;
         text-decoration: underline;
         text-underline-offset: 3px;
       }
