@@ -10,6 +10,7 @@ import {
 } from 'react';
 import {
   host,
+  HostApiError,
   subscribeHostEvents,
   type HostInfo,
   type HostKeyEvent,
@@ -34,6 +35,10 @@ export interface AppContextValue {
   syncStatus: SyncStatus | null;
   syncProgress: ProgressEvent | null;
   refreshSyncStatus: () => Promise<void>;
+  startBackgroundSync: (
+    mode?: 'normal' | 'upload' | 'download',
+    opts?: { silentStartToast?: boolean }
+  ) => void;
   openSyncSheet: () => void;
   closeSyncSheet: () => void;
   syncSheetOpen: boolean;
@@ -193,6 +198,99 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const refreshSyncStatus = useCallback(async () => {
     const status = await host.syncStatus();
     setSyncStatus(status);
+  }, []);
+
+  const syncInFlightRef = useRef(false);
+  const startBackgroundSync = useCallback(
+    (
+      mode: 'normal' | 'upload' | 'download' = 'normal',
+      opts?: { silentStartToast?: boolean }
+    ) => {
+      if (syncInFlightRef.current) return;
+      syncInFlightRef.current = true;
+
+      setSyncStatus((prev) =>
+        prev
+          ? {
+              ...prev,
+              running: true,
+              phase: mode === 'download' ? 'download' : mode === 'upload' ? 'upload' : 'collection',
+              lastError: null,
+            }
+          : prev
+      );
+
+      if (!opts?.silentStartToast) {
+        const startMsg =
+          mode === 'download'
+            ? '백그라운드에서 서버 데이터를 가져옵니다. 다른 화면을 보셔도 계속 진행됩니다.'
+            : mode === 'upload'
+              ? '백그라운드에서 서버로 업로드합니다. 다른 화면을 보셔도 계속 진행됩니다.'
+              : '백그라운드에서 동기화를 시작했습니다.';
+        showToast(startMsg, 'info');
+      }
+
+      void host
+        .syncRun(mode)
+        .then(async (res) => {
+          await refreshSyncStatus().catch(() => undefined);
+          if (res.needsFullSync) {
+            setFullSyncOpen(true);
+            return;
+          }
+          setCollectionVersion((v) => v + 1);
+          showToast(
+            mode === 'download'
+              ? '서버에서 카드와 학습 설정을 모두 가져왔습니다.'
+              : mode === 'upload'
+                ? '이 기기의 카드와 기록을 서버로 보냈습니다.'
+                : '동기화를 마쳤습니다.',
+            'success'
+          );
+        })
+        .catch(async (err) => {
+          await refreshSyncStatus().catch(() => undefined);
+          if (err instanceof HostApiError && err.status === 409) {
+            showToast('동기화를 중단했습니다.', 'info');
+          } else {
+            showToast(
+              err instanceof Error ? err.message : '동기화를 끝내지 못했습니다.',
+              'error'
+            );
+          }
+        })
+        .finally(() => {
+          syncInFlightRef.current = false;
+        });
+    },
+    [refreshSyncStatus, showToast]
+  );
+
+  // When returning from another Android app, refresh syncStatus & collection if sync finished in background
+  const wasRunningRef = useRef(false);
+  useEffect(() => {
+    wasRunningRef.current = Boolean(syncStatus?.running);
+  }, [syncStatus?.running]);
+
+  useEffect(() => {
+    const onResume = () => {
+      if (document.visibilityState === 'hidden') return;
+      void host
+        .syncStatus()
+        .then((st) => {
+          setSyncStatus(st);
+          if (wasRunningRef.current && !st.running) {
+            setCollectionVersion((v) => v + 1);
+          }
+        })
+        .catch(() => undefined);
+    };
+    document.addEventListener('visibilitychange', onResume);
+    window.addEventListener('focus', onResume);
+    return () => {
+      document.removeEventListener('visibilitychange', onResume);
+      window.removeEventListener('focus', onResume);
+    };
   }, []);
 
   const openSyncSheet = useCallback(() => setSyncSheetOpen(true), []);
@@ -439,6 +537,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       syncStatus,
       syncProgress,
       refreshSyncStatus,
+      startBackgroundSync,
       openSyncSheet,
       closeSyncSheet,
       syncSheetOpen,
@@ -465,6 +564,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       syncStatus,
       syncProgress,
       refreshSyncStatus,
+      startBackgroundSync,
       openSyncSheet,
       closeSyncSheet,
       syncSheetOpen,

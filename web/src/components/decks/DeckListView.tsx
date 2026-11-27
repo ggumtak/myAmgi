@@ -6,7 +6,6 @@ import {
   ActionMenu,
   type ActionMenuItem,
   ErrorState,
-  IconBook,
   IconCheck,
   IconChevronDown,
   IconChevronRight,
@@ -29,6 +28,12 @@ import {
   Switch,
   useToast,
 } from '../../ui';
+import {
+  DailyProgressRing,
+  DeckCategoryIcon,
+  getPersonalGreeting,
+  resolveDeckTheme,
+} from './DeckBadge';
 import { DeckOverviewPane } from './DeckOverviewPane';
 import './decks.css';
 
@@ -817,33 +822,31 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
     );
   }, [rows, deckFilterQuery]);
 
-  // Summary Hero Card with progress bar, streak chip, and 1-tap Quick Study button
+  // Personal Dashboard Hero Card (inspired by MalhaeVoca / Mochi Cards)
   const renderSummaryCard = () => {
     const todayTotalGoal = todayStats.answerCount + totalDue;
     const progressPct =
       todayTotalGoal > 0
         ? Math.min(100, Math.round((todayStats.answerCount / todayTotalGoal) * 100))
         : 100;
+    const allDone = totalDue === 0 && todayStats.answerCount > 0;
+    const greeting = getPersonalGreeting(totalDue, todayStats.answerCount);
 
-    let primaryText: string;
-    let secondaryText: string;
+    let statSummary: string;
     if (totalDue > 0) {
-      primaryText = `남은 카드 ${totalDue.toLocaleString()}장 · 오늘 ${todayStats.answerCount.toLocaleString()}장 완료`;
-      secondaryText =
+      statSummary =
         todayStats.answerCount > 0
-          ? `학습 시간 ${formatDurationKo(todayStats.answerMillis)}`
-          : '지금 가볍게 복습을 시작해 보세요.';
+          ? `남은 ${totalDue.toLocaleString()}장 · 오늘 ${todayStats.answerCount.toLocaleString()}장 완료 · ${formatDurationKo(todayStats.answerMillis)}`
+          : `오늘 학습 대기 ${totalDue.toLocaleString()}장`;
     } else if (todayStats.answerCount > 0) {
-      primaryText = `오늘 학습 완료 · ${todayStats.answerCount.toLocaleString()}장 복습`;
-      secondaryText = `학습 시간 ${formatDurationKo(todayStats.answerMillis)}`;
+      statSummary = `오늘 ${todayStats.answerCount.toLocaleString()}장 완료 · ${formatDurationKo(todayStats.answerMillis)}`;
     } else {
-      primaryText = '오늘 남은 카드가 없습니다';
-      secondaryText = '새 카드를 추가하거나 맞춤 학습을 열어 보세요.';
+      statSummary = '새 카드를 추가하거나 덱을 가져와 시작해 보세요';
     }
 
     return (
       <section className="amgi-summary-card" aria-label="오늘의 학습 요약">
-        <div className="amgi-summary-top">
+        <div className="amgi-summary-hero-head">
           <div className="amgi-summary-body">
             <div className="amgi-summary-eyebrow">
               <span>오늘의 학습</span>
@@ -854,48 +857,47 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
                 </span>
               )}
             </div>
-            <div className="amgi-summary-primary tabular">{primaryText}</div>
-            <div className="amgi-summary-secondary tabular">{secondaryText}</div>
+            <div className="amgi-summary-primary">{greeting}</div>
+            <div className="amgi-summary-secondary tabular">{statSummary}</div>
           </div>
 
-          <div className="amgi-summary-actions">
-            {firstDueDeck && (
-              <button
-                type="button"
-                className="amgi-btn amgi-btn-primary amgi-btn-sm"
-                onClick={() => {
-                  void anki.setCurrentDeck(firstDueDeck.deckId).finally(() => {
-                    navigate(`#/study/${firstDueDeck.deckId}`);
-                  });
-                }}
-              >
-                <IconPlay size={15} />
-                <span>바로 학습</span>
-              </button>
-            )}
-            <button
-              type="button"
-              className="amgi-btn amgi-btn-ghost amgi-btn-icon"
-              onClick={() => void loadDecks(true)}
-              aria-label="카운트 새로고침"
-              title="카운트 새로고침"
-            >
-              <IconRefresh size={18} />
-            </button>
-          </div>
+          <DailyProgressRing pct={progressPct} done={allDone} size={58} />
         </div>
 
-        {todayTotalGoal > 0 && (
-          <div className="amgi-summary-progress-wrap" aria-label={`오늘 진행률 ${progressPct}%`}>
-            <div className="amgi-summary-progress-track">
-              <div
-                className="amgi-summary-progress-fill"
-                style={{ width: `${Math.max(todayStats.answerCount > 0 ? 4 : 0, progressPct)}%` }}
-              />
-            </div>
-            <span className="amgi-summary-progress-pct tabular">{progressPct}%</span>
-          </div>
-        )}
+        <div className="amgi-summary-cta-row">
+          {firstDueDeck ? (
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-primary amgi-summary-play-btn"
+              onClick={() => {
+                void anki.setCurrentDeck(firstDueDeck.deckId).finally(() => {
+                  navigate(`#/study/${firstDueDeck.deckId}`);
+                });
+              }}
+            >
+              <IconPlay size={16} />
+              <span>바로 학습하기</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-secondary amgi-summary-play-btn"
+              onClick={() => openAddSheet()}
+            >
+              <IconEdit size={16} />
+              <span>새 노트 추가</span>
+            </button>
+          )}
+          <button
+            type="button"
+            className="amgi-btn amgi-btn-secondary amgi-btn-icon"
+            onClick={() => void loadDecks(true)}
+            aria-label="카운트 새로고침"
+            title="카운트 새로고침"
+          >
+            <IconRefresh size={18} />
+          </button>
+        </div>
       </section>
     );
   };
@@ -928,7 +930,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
           </div>
           <h2 className="amgi-empty-title">아직 덱이 없습니다</h2>
           <p className="amgi-empty-desc">
-            가지고 있는 Anki 파일(.apkg)을 불러오거나 새 덱을 만들어 시작해 보세요.
+            가지고 있는 Anki 파일(.apkg · .colpkg)을 불러오거나 새 덱을 만들어 시작해 보세요.
           </p>
           <div className="amgi-empty-actions">
             <button
@@ -960,6 +962,11 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
 
     return (
       <>
+        <div className="amgi-deck-section-head">
+          <h2 className="amgi-deck-section-title">내 암기장</h2>
+          <span className="amgi-deck-section-count tabular">{rows.length}개</span>
+        </div>
+
         {rows.length >= 6 && (
           <div className="amgi-deck-filter-bar">
             <div className="amgi-deck-filter-input-wrap">
@@ -971,37 +978,35 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
                 className="amgi-deck-filter-input"
                 value={deckFilterQuery}
                 onChange={(e) => setDeckFilterQuery(e.target.value)}
-                placeholder="덱 이름으로 필터..."
+                placeholder="암기장 이름으로 빠르게 찾기..."
                 aria-label="덱 필터"
               />
             </div>
           </div>
         )}
 
-        <div className="amgi-deck-tree-card" role="region" aria-label="덱 목록">
-          <div className="amgi-deck-header-row" role="row">
-            <div className="amgi-deck-header-col">덱</div>
-            <div className="amgi-deck-header-col">새</div>
-            <div className="amgi-deck-header-col">학습</div>
-            <div className="amgi-deck-header-col">복습</div>
-            <div className="amgi-deck-header-col" aria-hidden="true" />
-          </div>
-
+        <div className="amgi-deck-shelf" role="list" aria-label="덱 목록">
           {visibleRows.length === 0 ? (
-            <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-2)', fontSize: 14 }}>
+            <div className="amgi-deck-empty-search">
               검색 조건과 일치하는 덱이 없습니다.
             </div>
           ) : (
             visibleRows.map((row) => {
-              const indentPx = Math.min(row.depth, 4) * 18;
               const isSelected = isWide && selectedDeckId === row.deckId;
-              const rowHasDue = row.newCount + row.learnCount + row.reviewCount > 0;
+              const rowDue = row.newCount + row.learnCount + row.reviewCount;
+              const isSub = row.depth > 0;
+              const subIndent = Math.min(row.depth, 4) * 14;
+              const themeMeta = resolveDeckTheme(row.fullName);
+
               return (
                 <div
                   key={row.deckId}
-                  role="row"
+                  role="listitem"
                   data-deck-id={row.deckId}
-                  className={`amgi-deck-row ${isSelected ? 'amgi-deck-row-selected' : ''}`}
+                  className={`amgi-deck-card ${isSub ? 'amgi-deck-card--sub' : ''} ${
+                    isSelected ? 'is-selected' : ''
+                  }`}
+                  style={isSub ? { marginLeft: `${subIndent}px` } : undefined}
                   onClick={() => {
                     if (longPressFiredRef.current) {
                       longPressFiredRef.current = false;
@@ -1018,14 +1023,61 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
                     setMenuDeck(row);
                   }}
                 >
-                  <div
-                    className="amgi-deck-name-cell"
-                    style={{ paddingLeft: `${indentPx}px` }}
-                  >
-                    {row.depth > 0 && !row.hasChildren && (
-                      <span className="amgi-deck-branch" aria-hidden="true" />
-                    )}
-                    {row.hasChildren ? (
+                  <div className="amgi-deck-card-left">
+                    {isSub && <span className="amgi-deck-branch" aria-hidden="true" />}
+
+                    {!isSub ? (
+                      <span
+                        className={`amgi-deck-emblem amgi-deck-emblem--${themeMeta.tone}`}
+                        aria-hidden="true"
+                      >
+                        <DeckCategoryIcon deckName={row.fullName} size={20} />
+                      </span>
+                    ) : null}
+
+                    <div className="amgi-deck-card-meta">
+                      <div className="amgi-deck-title-wrap">
+                        <span
+                          className={`amgi-deck-title ${
+                            row.filtered ? 'amgi-deck-title-filtered' : ''
+                          }`}
+                        >
+                          {row.shortName}
+                        </span>
+                        {row.filtered && <span className="amgi-filtered-pill">맞춤</span>}
+                      </div>
+
+                      <div className="amgi-deck-pills tabular">
+                        {rowDue === 0 ? (
+                          <span className="amgi-dpill amgi-dpill--done">
+                            <IconCheck size={11} />
+                            <span>완료</span>
+                          </span>
+                        ) : (
+                          <>
+                            {row.newCount > 0 && (
+                              <span className="amgi-dpill amgi-dpill--new">
+                                새 {row.newCount}
+                              </span>
+                            )}
+                            {row.learnCount > 0 && (
+                              <span className="amgi-dpill amgi-dpill--learn">
+                                학습 {row.learnCount}
+                              </span>
+                            )}
+                            {row.reviewCount > 0 && (
+                              <span className="amgi-dpill amgi-dpill--review">
+                                복습 {row.reviewCount}
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="amgi-deck-card-right">
+                    {row.hasChildren && (
                       <button
                         type="button"
                         className="amgi-deck-chevron compact"
@@ -1034,65 +1086,25 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
                         onClick={(e) => void handleToggleCollapse(e, row)}
                       >
                         {row.collapsed ? (
-                          <IconChevronRight size={16} />
+                          <IconChevronRight size={17} />
                         ) : (
-                          <IconChevronDown size={16} />
+                          <IconChevronDown size={17} />
                         )}
                       </button>
-                    ) : row.depth === 0 ? (
-                      <span
-                        className={`amgi-deck-leaf-dot ${rowHasDue ? 'has-due' : ''}`}
-                        aria-hidden="true"
-                      >
-                        <IconBook size={13} />
-                      </span>
-                    ) : null}
+                    )}
 
-                    <div className="amgi-deck-title-wrap">
-                      <span
-                        className={`amgi-deck-title ${
-                          row.filtered ? 'amgi-deck-title-filtered' : ''
-                        }`}
-                      >
-                        {row.shortName}
-                      </span>
-                      {row.filtered && <span className="amgi-filtered-pill">맞춤</span>}
-                    </div>
+                    <button
+                      type="button"
+                      className="amgi-deck-more-btn amgi-btn-icon"
+                      aria-label={`${row.shortName} 덱 메뉴`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuDeck(row);
+                      }}
+                    >
+                      <IconMore size={18} />
+                    </button>
                   </div>
-
-                  <div
-                    className={`amgi-deck-num tabular ${
-                      row.newCount > 0 ? 'amgi-deck-num-new' : 'amgi-deck-num-zero'
-                    }`}
-                  >
-                    {row.newCount}
-                  </div>
-                  <div
-                    className={`amgi-deck-num tabular ${
-                      row.learnCount > 0 ? 'amgi-deck-num-learn' : 'amgi-deck-num-zero'
-                    }`}
-                  >
-                    {row.learnCount}
-                  </div>
-                  <div
-                    className={`amgi-deck-num tabular ${
-                      row.reviewCount > 0 ? 'amgi-deck-num-review' : 'amgi-deck-num-zero'
-                    }`}
-                  >
-                    {row.reviewCount}
-                  </div>
-
-                  <button
-                    type="button"
-                    className="amgi-deck-more-btn amgi-btn-icon"
-                    aria-label={`${row.shortName} 덱 메뉴`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setMenuDeck(row);
-                    }}
-                  >
-                    <IconMore size={18} />
-                  </button>
                 </div>
               );
             })
@@ -1103,7 +1115,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
           <div className="amgi-onboarding-banner">
             <div className="amgi-summary-primary">처음 시작하시나요?</div>
             <p className="amgi-empty-desc" style={{ maxWidth: 'none', textAlign: 'left' }}>
-              기존 Anki 덱 파일(.apkg)을 불러오거나 새 노트를 직접 추가해 학습을 시작해 보세요.
+              기존 Anki 덱 파일(.apkg · .colpkg)을 불러오거나 새 노트를 직접 추가해 학습을 시작해 보세요.
             </p>
             <div className="amgi-inline-row">
               <button
@@ -1140,14 +1152,21 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
         }
       }}
       onTouchMove={(e) => {
-        if (touchStartYRef.current === null || window.scrollY > 0) return;
+        if (touchStartYRef.current === null || window.scrollY > 0) {
+          touchStartYRef.current = null;
+          if (pullDistance !== 0) setPullDistance(0);
+          return;
+        }
         const dy = e.touches[0].clientY - touchStartYRef.current;
-        if (dy > 16) {
+        if (dy > 28) {
           setPullDistance(Math.min(84, dy));
+        } else if (dy < 0) {
+          touchStartYRef.current = null;
+          if (pullDistance !== 0) setPullDistance(0);
         }
       }}
       onTouchEnd={() => {
-        if (pullDistance >= 56) {
+        if (pullDistance >= 64) {
           void loadDecks(true);
         }
         touchStartYRef.current = null;

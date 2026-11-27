@@ -184,12 +184,12 @@
   display: flex;
   flex-direction: column;
   background: var(--bg);
-  padding: 12px 12px 10px;
+  padding: 12px 12px 14px;
 }
 
 @media (min-width: 768px) {
   .amgi-study-stage {
-    padding: 20px 28px 16px;
+    padding: 20px 28px 18px;
   }
 }
 
@@ -205,6 +205,7 @@
   max-width: 820px;
   margin: 0 auto;
   position: relative;
+  z-index: 2;
   display: flex;
   flex-direction: column;
   background: var(--surface);
@@ -214,12 +215,31 @@
   overflow: hidden;
 }
 
+/* Tactile stacked-card deck illusion underneath the active flashcard */
+.amgi-study-card-stack-peek {
+  flex-shrink: 0;
+  width: calc(100% - 28px);
+  max-width: 792px;
+  height: 7px;
+  margin: -1px auto 0;
+  background: var(--surface-2);
+  border: var(--border-w) solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
 :root[data-theme="eink"] .amgi-study-card-shell {
   max-width: none;
   border: none;
   border-radius: 0;
   box-shadow: none;
   background: #FFFFFF;
+}
+
+:root[data-theme="eink"] .amgi-study-card-stack-peek {
+  display: none;
 }
 
 .amgi-study-stage-overlay {
@@ -498,16 +518,38 @@
   align-items: center;
   justify-content: center;
   gap: 10px;
+  box-shadow: 0 3px 0 rgba(15, 23, 42, 0.16);
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+
+.amgi-show-answer-btn:active:not(:disabled) {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.16);
 }
 
 :root[data-theme="eink"] .amgi-show-answer-btn {
   min-height: 58px;
+  box-shadow: none;
+  transition: none;
+}
+
+:root[data-theme="eink"] .amgi-show-answer-btn:active:not(:disabled) {
+  transform: none;
+  box-shadow: none;
 }
 
 .amgi-rate-grid-2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+}
+
+.amgi-rate-grid-2.is-left-handed .amgi-rate-again {
+  order: 2;
+}
+
+.amgi-rate-grid-2.is-left-handed .amgi-rate-good {
+  order: 1;
 }
 
 .amgi-rate-grid-4 {
@@ -528,6 +570,7 @@
   padding: 8px 4px 6px;
   border-radius: var(--radius-md);
   border: var(--border-w) solid var(--border);
+  border-bottom-width: 3px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -536,7 +579,7 @@
   cursor: pointer;
   text-align: center;
   overflow: hidden;
-  transition: transform 0.08s ease, filter 0.12s ease;
+  transition: transform 0.08s ease, filter 0.12s ease, border-bottom-width 0.08s ease;
 }
 
 .amgi-rate-btn::before {
@@ -549,7 +592,8 @@
 }
 
 .amgi-rate-btn:active:not(:disabled) {
-  transform: scale(0.97);
+  transform: translateY(1px) scale(0.98);
+  border-bottom-width: 1px;
 }
 
 .amgi-rate-btn:disabled {
@@ -627,6 +671,12 @@
   color: #000000;
   border: 2px solid #000000;
   border-radius: var(--radius-sm);
+  transition: none;
+}
+
+:root[data-theme="eink"] .amgi-rate-btn:active:not(:disabled) {
+  transform: none;
+  border-bottom-width: 2px;
 }
 
 :root[data-theme="eink"] .amgi-rate-btn::before {
@@ -688,6 +738,25 @@
   align-items: center;
   text-align: center;
   gap: 12px;
+}
+
+.amgi-celebration-badge {
+  width: 72px;
+  height: 72px;
+  border-radius: 22px;
+  background: var(--ok-soft);
+  color: var(--ok);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+}
+
+:root[data-theme="eink"] .amgi-celebration-badge {
+  background: #FFFFFF;
+  color: #000000;
+  border: 2px solid #000000;
+  border-radius: 12px;
 }
 
 .amgi-study-congrats-icon {

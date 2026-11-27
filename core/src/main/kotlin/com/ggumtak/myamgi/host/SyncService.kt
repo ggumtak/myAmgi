@@ -97,7 +97,8 @@ class SyncService(
     private val prefs: Prefs,
     /** Called before a full download replaces the local collection. */
     private val backupBeforeDownload: () -> Unit,
-    private val mediaPollMillis: Long = 300
+    private val mediaPollMillis: Long = 300,
+    private val onRunningChanged: (Boolean, String?) -> Unit = { _, _ -> }
 ) {
     private val running = AtomicBoolean(false)
     private val abortRequested = AtomicBoolean(false)
@@ -145,7 +146,20 @@ class SyncService(
         )
     }
 
-    private fun publishState() = events.publish("sync-state", status())
+    private fun publishState() {
+        val st = status()
+        events.publish("sync-state", st)
+        val isRunning = running.get()
+        val label = when (phase) {
+            "backup" -> "안전 백업을 만드는 중…"
+            "download" -> "AnkiWeb 서버에서 가져오는 중…"
+            "upload" -> "AnkiWeb 서버로 올리는 중…"
+            "media" -> "사진과 음성 파일을 맞추는 중…"
+            "collection" -> "카드와 학습 기록을 맞추는 중…"
+            else -> null
+        }
+        runCatching { onRunningChanged(isRunning, if (isRunning) label else null) }
+    }
 
     fun login(user: String, password: String, endpoint: String?): JsonObject {
         val u = user.trim()

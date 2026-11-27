@@ -466,7 +466,12 @@ class AndroidPlatform(context: Context) : Platform {
         return JsonObject(map)
     }
 
+    override fun onSyncRunningChanged(running: Boolean, statusText: String?) {
+        com.ggumtak.myamgi.sync.SyncForegroundService.update(app, running, statusText)
+    }
+
     fun shutdown() {
+        com.ggumtak.myamgi.sync.SyncForegroundService.update(app, false, null)
         synchronized(ttsLock) {
             runCatching { ttsEngine?.stop() }
             runCatching { ttsEngine?.shutdown() }

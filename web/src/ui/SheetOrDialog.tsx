@@ -12,6 +12,22 @@ export interface SheetOrDialogProps {
   maxWidth?: number;
 }
 
+let openSheetCount = 0;
+
+function acquireBodyScrollLock() {
+  openSheetCount += 1;
+  if (openSheetCount === 1) {
+    document.body.style.overflow = 'hidden';
+  }
+}
+
+function releaseBodyScrollLock() {
+  openSheetCount = Math.max(0, openSheetCount - 1);
+  if (openSheetCount === 0) {
+    document.body.style.overflow = '';
+  }
+}
+
 export function SheetOrDialog({
   open,
   onClose,
@@ -27,8 +43,7 @@ export function SheetOrDialog({
   useEffect(() => {
     if (!open) return;
 
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    acquireBodyScrollLock();
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -39,7 +54,7 @@ export function SheetOrDialog({
     window.addEventListener('keydown', onKeyDown);
 
     return () => {
-      document.body.style.overflow = prevOverflow;
+      releaseBodyScrollLock();
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [open, onClose]);

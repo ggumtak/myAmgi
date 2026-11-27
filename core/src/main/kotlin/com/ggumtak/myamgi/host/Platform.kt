@@ -35,4 +35,7 @@ interface Platform {
     fun updateStatus(): JsonObject = throw HostError.unsupported("업데이트")
     fun updateCheck(): JsonObject = throw HostError.unsupported("업데이트")
     fun updateApply(): JsonObject = throw HostError.unsupported("업데이트")
+
+    /** Notifies shell when a long-running sync starts, updates phase, or finishes. */
+    fun onSyncRunningChanged(running: Boolean, statusText: String? = null) = Unit
 }

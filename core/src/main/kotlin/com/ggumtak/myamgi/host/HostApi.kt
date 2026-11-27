@@ -34,7 +34,8 @@ class HostApi(
         progress = progress,
         log = log,
         prefs = prefs,
-        backupBeforeDownload = { backups.create("before-full-download") }
+        backupBeforeDownload = { backups.create("before-full-download") },
+        onRunningChanged = { running, text -> platform.onSyncRunningChanged(running, text) }
     )
 
     private val handlers: Map<String, (JsonObject) -> JsonElement> = mapOf(

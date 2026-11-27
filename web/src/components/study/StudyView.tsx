@@ -8,7 +8,6 @@ import {
   ActionMenu,
   ErrorState,
   IconArrowLeft,
-  IconCheck,
   IconDeck,
   IconEdit,
   IconEye,
@@ -29,6 +28,7 @@ import {
   Switch,
   useToast,
 } from '../../ui';
+import { CelebrationBadge } from '../decks/DeckBadge';
 import './study.css';
 
 export interface StudyViewProps {
@@ -215,6 +215,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
   }, [prefs, info?.eink]);
 
   const tapToFlip = prefs['study.tapToFlip'] === true;
+  const leftHandedMode = prefs['study.leftHanded'] === true;
   const volumeKeysEnabled = useMemo(() => {
     if (typeof prefs['study.volumeKeys'] === 'boolean') {
       return prefs['study.volumeKeys'] as boolean;
@@ -1416,9 +1417,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
       ) : !activeCard || !prepared ? (
         <div className="amgi-study-congrats-wrap">
           <div className="amgi-study-congrats-card">
-            <div className="amgi-study-congrats-icon" aria-hidden="true">
-              <IconCheck size={28} />
-            </div>
+            <CelebrationBadge size={44} />
             <h2 className="amgi-study-congrats-title">오늘 학습을 모두 마쳤습니다!</h2>
             <div style={{ fontSize: 14, color: 'var(--text-2)' }}>{deckName}</div>
 
@@ -1547,6 +1546,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                 onClose={() => setWhiteboardOpen(false)}
               />
             </div>
+            <div className="amgi-study-card-stack-peek" aria-hidden="true" />
           </main>
 
           {/* Bottom Answer Bar */}
@@ -1561,7 +1561,9 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                   <span>정답 보기</span>
                 </button>
               ) : twoButtonMode ? (
-                <div className="amgi-rate-grid-2">
+                <div
+                  className={`amgi-rate-grid-2 ${leftHandedMode ? 'is-left-handed' : ''}`}
+                >
                   <button
                     type="button"
                     className="amgi-rate-btn amgi-rate-again"

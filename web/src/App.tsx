@@ -34,6 +34,7 @@ import { DeckOptionsView } from './components/options/DeckOptionsView';
 import { StatsView } from './components/stats/StatsView';
 import { SettingsView } from './components/settings/SettingsView';
 import { SyncSheet } from './components/sync/SyncSheet';
+import { formatSyncProgressText } from './components/sync/SyncCard';
 import { FullSyncDialog } from './components/sync/FullSyncDialog';
 import { AnkiIframeView } from './components/shared/AnkiIframeView';
 import { TagManagerSheet } from './components/shared/TagManagerSheet';
@@ -158,9 +159,11 @@ function useWindowWidth(): number {
 
 function AppShell() {
   const {
+    prefs,
     syncStatus,
+    syncProgress,
     resolvedTheme,
-    refreshSyncStatus,
+    startBackgroundSync,
     openSyncSheet,
     closeSyncSheet,
     syncSheetOpen,
@@ -333,7 +336,7 @@ function AppShell() {
     }
   }, [route.kind, isWideSplit]);
 
-  const handleSyncPress = useCallback(async () => {
+  const handleSyncPress = useCallback(() => {
     if (!syncStatus?.loggedIn) {
       openSyncSheet();
       return;
@@ -350,31 +353,8 @@ function AppShell() {
       openSyncSheet();
       return;
     }
-    try {
-      const res = await host.syncRun('normal');
-      await refreshSyncStatus();
-      if (res.needsFullSync) {
-        openFullSyncDialog();
-      } else if (res.ok) {
-        bumpCollection();
-        showToast('동기화를 마쳤습니다.', 'success');
-      }
-    } catch (err) {
-      await refreshSyncStatus().catch(() => undefined);
-      showToast(
-        err instanceof Error ? err.message : '동기화에 실패했습니다.',
-        'error'
-      );
-      openSyncSheet();
-    }
-  }, [
-    syncStatus,
-    openSyncSheet,
-    openFullSyncDialog,
-    refreshSyncStatus,
-    bumpCollection,
-    showToast,
-  ]);
+    startBackgroundSync('normal');
+  }, [syncStatus, openSyncSheet, openFullSyncDialog, startBackgroundSync]);
 
   const handleCheckEmptyCards = useCallback(async () => {
     if (checkingEmpty) return;
@@ -646,6 +626,33 @@ function AppShell() {
         </header>
       )}
 
+      {isSyncing && !syncSheetOpen && (
+        <div className="amgi-bg-sync-bar" role="status" aria-live="polite">
+          <button
+            type="button"
+            className="amgi-bg-sync-bar-main"
+            onClick={openSyncSheet}
+            data-compact="true"
+          >
+            <IconSync
+              size={15}
+              className={resolvedTheme === 'eink' ? undefined : 'amgi-spin'}
+            />
+            <span className="amgi-bg-sync-bar-text">
+              {formatSyncProgressText(syncStatus, syncProgress)}
+            </span>
+          </button>
+          <button
+            type="button"
+            className="amgi-bg-sync-bar-stop"
+            onClick={() => void host.syncAbort().catch(() => undefined)}
+            data-compact="true"
+          >
+            중단
+          </button>
+        </div>
+      )}
+
       <div className="amgi-shell-body">
         {showNavChrome && (
           <nav className="amgi-rail" aria-label="기본 탐색">
@@ -715,7 +722,7 @@ function AppShell() {
       {showFab && (
         <button
           type="button"
-          className="amgi-fab"
+          className={`amgi-fab ${prefs['study.leftHanded'] === true ? 'amgi-fab--left' : ''}`.trim()}
           onClick={openAddSheet}
           aria-label="추가"
         >

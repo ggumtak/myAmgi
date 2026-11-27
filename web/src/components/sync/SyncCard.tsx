@@ -139,8 +139,8 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
     syncStatus,
     syncProgress,
     refreshSyncStatus,
+    startBackgroundSync,
     openFullSyncDialog,
-    bumpCollection,
   } = useApp();
   const { showToast } = useToast();
 
@@ -151,7 +151,6 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
   const [loggingIn, setLoggingIn] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
-  const [manualRunning, setManualRunning] = useState(false);
   const [aborting, setAborting] = useState(false);
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
@@ -159,7 +158,7 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
 
   const isEink = resolvedTheme === 'eink';
   const isLoggedIn = Boolean(syncStatus?.loggedIn);
-  const isRunning = Boolean(syncStatus?.running) || manualRunning;
+  const isRunning = Boolean(syncStatus?.running);
 
   const autoSync = prefs['sync.auto'] === true;
   const mediaSync = prefs['sync.media'] !== false;
@@ -182,30 +181,8 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
       setShowPw(false);
       await setPref('sync.auto', true);
       await refreshSyncStatus();
-
-      try {
-        const res = await host.syncRun('normal');
-        await refreshSyncStatus();
-        if (res.needsFullSync) {
-          openFullSyncDialog();
-          onSuccess?.();
-        } else {
-          bumpCollection();
-          showToast('연결 완료 · 동기화를 마쳤습니다.', 'success');
-          onSuccess?.();
-        }
-      } catch (syncErr) {
-        await refreshSyncStatus().catch(() => undefined);
-        if (syncErr instanceof HostApiError && syncErr.status === 409) {
-          showToast('동기화를 중단했습니다.', 'info');
-        } else {
-          const msg =
-            syncErr instanceof Error
-              ? syncErr.message
-              : '연결은 되었지만 동기화에 실패했습니다.';
-          showToast(msg, 'error');
-        }
-      }
+      onSuccess?.();
+      startBackgroundSync('normal');
     } catch (err) {
       setLoginError(mapLoginErrorMessage(err));
     } finally {
@@ -221,32 +198,10 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
     }
   };
 
-  const handleRunNormalSync = async () => {
+  const handleRunNormalSync = () => {
     if (isRunning) return;
-    setManualRunning(true);
-    try {
-      const res = await host.syncRun('normal');
-      await refreshSyncStatus();
-      if (res.needsFullSync) {
-        openFullSyncDialog();
-      } else {
-        bumpCollection();
-        showToast('동기화를 마쳤습니다.', 'success');
-        onSuccess?.();
-      }
-    } catch (err) {
-      await refreshSyncStatus().catch(() => undefined);
-      if (err instanceof HostApiError && err.status === 409) {
-        showToast('동기화를 중단했습니다.', 'info');
-      } else {
-        showToast(
-          err instanceof Error ? err.message : '동기화를 끝내지 못했습니다.',
-          'error'
-        );
-      }
-    } finally {
-      setManualRunning(false);
-    }
+    startBackgroundSync('normal');
+    if (compact) onSuccess?.();
   };
 
   const handleAbort = async () => {
@@ -268,43 +223,26 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
 
   const handleExecuteConfirm = async () => {
     if (!confirmAction || confirmBusy) return;
+    if (confirmAction !== 'logout') {
+      const mode = confirmAction;
+      setConfirmAction(null);
+      startBackgroundSync(mode);
+      if (compact) onSuccess?.();
+      return;
+    }
+
     setConfirmBusy(true);
     try {
-      if (confirmAction === 'logout') {
-        await host.syncLogout();
-        await setPref('sync.auto', false);
-        await refreshSyncStatus();
-        setConfirmAction(null);
-        showToast('AnkiWeb 계정 연결을 해제했습니다.', 'info');
-      } else {
-        const mode = confirmAction;
-        setConfirmAction(null);
-        setManualRunning(true);
-        try {
-          await host.syncRun(mode);
-          await refreshSyncStatus();
-          bumpCollection();
-          showToast(
-            mode === 'download'
-              ? '서버에서 카드와 기록을 가져왔습니다.'
-              : '이 기기의 카드와 기록을 서버로 보냈습니다.',
-            'success'
-          );
-          onSuccess?.();
-        } finally {
-          setManualRunning(false);
-        }
-      }
+      await host.syncLogout();
+      await setPref('sync.auto', false);
+      await refreshSyncStatus();
+      setConfirmAction(null);
+      showToast('AnkiWeb 계정 연결을 해제했습니다.', 'info');
     } catch (err) {
-      await refreshSyncStatus().catch(() => undefined);
-      if (err instanceof HostApiError && err.status === 409) {
-        showToast('동기화를 중단했습니다.', 'info');
-      } else {
-        showToast(
-          err instanceof Error ? err.message : '요청을 처리하지 못했습니다.',
-          'error'
-        );
-      }
+      showToast(
+        err instanceof Error ? err.message : '요청을 처리하지 못했습니다.',
+        'error'
+      );
     } finally {
       setConfirmBusy(false);
     }
@@ -494,14 +432,25 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
               {!isEink && <IconSync size={16} className="amgi-spin" />}
               <span>동기화하는 중...</span>
             </span>
-            <button
-              type="button"
-              className="amgi-btn amgi-btn-secondary amgi-btn-sm"
-              onClick={() => void handleAbort()}
-              disabled={aborting}
-            >
-              {aborting ? '중단 중...' : '중단'}
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              {compact && onSuccess && (
+                <button
+                  type="button"
+                  className="amgi-btn amgi-btn-secondary amgi-btn-sm"
+                  onClick={onSuccess}
+                >
+                  백그라운드로
+                </button>
+              )}
+              <button
+                type="button"
+                className="amgi-btn amgi-btn-secondary amgi-btn-sm"
+                onClick={() => void handleAbort()}
+                disabled={aborting}
+              >
+                {aborting ? '중단 중...' : '중단'}
+              </button>
+            </div>
           </div>
           <div className="amgi-sync-progress-text">
             {formatSyncProgressText(syncStatus, syncProgress)}

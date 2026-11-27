@@ -1,11 +1,12 @@
 import type React from 'react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as anki from '../../anki';
 import { toNumber } from '../../anki';
 import { useApp, type PrefTheme } from '../../context/AppContext';
 import {
   host,
   HostApiError,
+  uploadHostFile,
   type BackupEntry,
   type CollectionStatus,
   type UpdateStatusResponse,
@@ -15,7 +16,9 @@ import {
   ErrorState,
   IconCheck,
   IconChevronRight,
+  IconDownload,
   IconRefresh,
+  IconSpark,
   SectionCard,
   SettingRow,
   SheetOrDialog,
@@ -143,7 +146,14 @@ export const SettingsView: React.FC = () => {
   const [backupKeepMenuOpen, setBackupKeepMenuOpen] = useState(false);
   const [rolloverSheetOpen, setRolloverSheetOpen] = useState(false);
   const [rolloverCustomOpen, setRolloverCustomOpen] = useState(false);
+  const [learnAheadMenuOpen, setLearnAheadMenuOpen] = useState(false);
+  const [newMixMenuOpen, setNewMixMenuOpen] = useState(false);
   const [tagManagerOpen, setTagManagerOpen] = useState(false);
+
+  // .colpkg full Anki settings + collection import
+  const colpkgInputRef = useRef<HTMLInputElement | null>(null);
+  const [colpkgPending, setColpkgPending] = useState<{ path: string; name: string } | null>(null);
+  const [colpkgBusy, setColpkgBusy] = useState(false);
 
   // Action busy flags & sub-sheets
   const [creatingBackup, setCreatingBackup] = useState(false);
@@ -243,7 +253,11 @@ export const SettingsView: React.FC = () => {
   }, []);
 
   const updateAnkiReviewingPref = async (
-    patch: Partial<{ showIntervalsOnButtons: boolean; showRemainingDueCounts: boolean }>
+    patch: Partial<{
+      showIntervalsOnButtons: boolean;
+      showRemainingDueCounts: boolean;
+      interruptAudioWhenAnswering: boolean;
+    }>
   ) => {
     if (!ankiPrefs) return;
     const nextPrefs: anki.Preferences = {
@@ -265,21 +279,28 @@ export const SettingsView: React.FC = () => {
     }
   };
 
-  const updateRolloverHour = async (hour: number) => {
+  const updateAnkiSchedulingPref = async (
+    patch: Partial<{
+      rollover: number;
+      learnAheadSecs: number;
+      newReviewMix: number;
+      dayLearnFirst: boolean;
+    }>,
+    successMsg?: string
+  ) => {
     if (!ankiPrefs) return;
-    const clamped = ((Math.round(hour) % 24) + 24) % 24;
     const nextPrefs: anki.Preferences = {
       ...ankiPrefs,
       scheduling: {
         ...(ankiPrefs.scheduling ?? {}),
-        rollover: clamped,
+        ...patch,
       },
     };
     setAnkiPrefs(nextPrefs);
     try {
       await anki.setPreferences(nextPrefs);
       bumpCollection();
-      showToast(`하루 시작 시각을 ${formatRolloverLabel(clamped)}로 맞췄습니다.`, 'success');
+      if (successMsg) showToast(successMsg, 'success');
     } catch (err) {
       setAnkiPrefs(ankiPrefs);
       showToast(
@@ -289,11 +310,108 @@ export const SettingsView: React.FC = () => {
     }
   };
 
+  const updateAnkiEditingPref = async (
+    patch: Partial<{
+      pasteStripsFormatting: boolean;
+      addingDefaultsToCurrentDeck: boolean;
+    }>
+  ) => {
+    if (!ankiPrefs) return;
+    const nextPrefs: anki.Preferences = {
+      ...ankiPrefs,
+      editing: {
+        ...(ankiPrefs.editing ?? {}),
+        ...patch,
+      },
+    };
+    setAnkiPrefs(nextPrefs);
+    try {
+      await anki.setPreferences(nextPrefs);
+    } catch (err) {
+      setAnkiPrefs(ankiPrefs);
+      showToast(
+        err instanceof Error ? err.message : '설정을 저장하지 못했습니다.',
+        'error'
+      );
+    }
+  };
+
+  const updateRolloverHour = async (hour: number) => {
+    const clamped = ((Math.round(hour) % 24) + 24) % 24;
+    await updateAnkiSchedulingPref(
+      { rollover: clamped },
+      `하루 시작 시각을 ${formatRolloverLabel(clamped)}로 맞췄습니다.`
+    );
+  };
+
+  const handleApplyAnkiDefaults = async () => {
+    try {
+      await setPref('study.twoButton', false);
+      await setPref('study.autoPlayAudio', true);
+      const fresh = await anki.getPreferences();
+      setAnkiPrefs(fresh);
+      bumpCollection();
+      showToast('Anki 기본 4버튼 학습 방식과 컬렉션 설정을 그대로 적용했습니다.', 'success');
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : 'Anki 설정을 불러오지 못했습니다.',
+        'error'
+      );
+    }
+  };
+
+  const handlePickColpkgFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setColpkgBusy(true);
+    try {
+      const uploaded = await uploadHostFile(file, file.name);
+      const res = await host.importFile({ path: uploaded.path, name: file.name });
+      if (res.kind === 'colpkg' && res.needsConfirm) {
+        setColpkgPending({ path: res.path, name: file.name });
+      } else {
+        showToast('Anki 전체 백업(.colpkg) 파일을 선택해 주세요.', 'info');
+      }
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : '파일을 올리지 못했습니다.',
+        'error'
+      );
+    } finally {
+      setColpkgBusy(false);
+    }
+  };
+
+  const handleConfirmColpkgImport = async () => {
+    if (!colpkgPending || colpkgBusy) return;
+    setColpkgBusy(true);
+    try {
+      await host.importFile({
+        path: colpkgPending.path,
+        name: colpkgPending.name,
+        replace: true,
+      });
+      setColpkgPending(null);
+      await loadAll();
+      bumpCollection();
+      showToast('Anki 컬렉션과 모든 덱 옵션·환경설정을 그대로 가져왔습니다.', 'success');
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : '컬렉션을 가져오지 못했습니다.',
+        'error'
+      );
+    } finally {
+      setColpkgBusy(false);
+    }
+  };
+
   // Pref values with defaults matching spec
   const twoButtonMode =
     typeof prefs['study.twoButton'] === 'boolean'
       ? (prefs['study.twoButton'] as boolean)
       : true;
+  const leftHandedMode = prefs['study.leftHanded'] === true;
   const tapToFlip = prefs['study.tapToFlip'] === true;
   const volumeKeys =
     typeof prefs['study.volumeKeys'] === 'boolean'
@@ -308,7 +426,20 @@ export const SettingsView: React.FC = () => {
 
   const showIntervals = ankiPrefs?.reviewing?.showIntervalsOnButtons !== false;
   const showRemaining = ankiPrefs?.reviewing?.showRemainingDueCounts !== false;
+  const interruptAudio = Boolean(ankiPrefs?.reviewing?.interruptAudioWhenAnswering);
   const rolloverHour = ankiPrefs?.scheduling?.rollover ?? 4;
+  const learnAheadMins = Math.round((ankiPrefs?.scheduling?.learnAheadSecs ?? 1200) / 60);
+  const newReviewMix = ankiPrefs?.scheduling?.newReviewMix ?? 0;
+  const dayLearnFirst = Boolean(ankiPrefs?.scheduling?.dayLearnFirst);
+  const pasteStrips = Boolean(ankiPrefs?.editing?.pasteStripsFormatting);
+  const addToCurrentDeck = ankiPrefs?.editing?.addingDefaultsToCurrentDeck !== false;
+
+  const newReviewMixLabel =
+    newReviewMix === 1
+      ? '복습 후 새 카드'
+      : newReviewMix === 2
+        ? '새 카드 먼저'
+        : '복습과 섞어서';
 
   const effectiveBackupKeep =
     typeof prefs['backup.keep'] === 'number' ? (prefs['backup.keep'] as number) : backupKeep;
@@ -712,6 +843,18 @@ export const SettingsView: React.FC = () => {
           }
         />
         <SettingRow
+          label="왼손잡이 한손 모드"
+          description="추가 버튼과 2버튼 학습 배치를 왼손 엄지에 맞게 반대로 배치합니다"
+          htmlFor="pref-study-lefthanded"
+          control={
+            <Switch
+              id="pref-study-lefthanded"
+              checked={leftHandedMode}
+              onChange={(next) => void setPref('study.leftHanded', next)}
+            />
+          }
+        />
+        <SettingRow
           label="화면 탭해서 뒤집기"
           description="카드의 빈 곳을 누르면 바로 정답을 확인합니다"
           htmlFor="pref-study-taptoflip"
@@ -759,6 +902,41 @@ export const SettingsView: React.FC = () => {
             />
           }
         />
+      </SectionCard>
+
+      {/* Anki 설정 그대로 가져오기 & 공식 환경설정 */}
+      <SectionCard title="Anki 설정 그대로 가져오기">
+        <input
+          ref={colpkgInputRef}
+          type="file"
+          accept=".colpkg"
+          style={{ display: 'none' }}
+          onChange={(e) => void handlePickColpkgFile(e)}
+        />
+        <div className="amgi-anki-import-box">
+          <p className="amgi-sheet-note">
+            AnkiWeb 동기화 또는 PC Anki의 <strong>.colpkg</strong> 백업을 불러오면 모든 덱 옵션(FSRS·학습 단계·일일 한도)과 스케줄링 설정이 그대로 적용됩니다.
+          </p>
+          <div className="amgi-anki-import-actions">
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-secondary"
+              onClick={() => void handleApplyAnkiDefaults()}
+            >
+              <IconSpark size={16} />
+              <span>Anki 기본 4버튼 적용</span>
+            </button>
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-primary"
+              disabled={colpkgBusy}
+              onClick={() => colpkgInputRef.current?.click()}
+            >
+              <IconDownload size={16} />
+              <span>{colpkgBusy ? '불러오는 중...' : '.colpkg 설정 통째로 가져오기'}</span>
+            </button>
+          </div>
+        </div>
         <SettingRow
           label="버튼 위 복습 간격"
           description="답변 버튼 위에 '1일', '4일' 같은 다음 복습 날짜를 표시합니다"
@@ -801,6 +979,86 @@ export const SettingsView: React.FC = () => {
               </span>
               <IconChevronRight size={18} />
             </span>
+          }
+        />
+        <SettingRow
+          label="미리 학습 제한 (Learn Ahead)"
+          description="남은 카드가 없을 때 몇 분 뒤 예정된 학습 카드까지 미리 볼지 정합니다"
+          onClick={() => setLearnAheadMenuOpen(true)}
+          control={
+            <span className="amgi-setting-value-trigger">
+              <span className="amgi-setting-value-text">
+                {learnAheadMins <= 0 ? '미리 보지 않음' : `${learnAheadMins}분`}
+              </span>
+              <IconChevronRight size={18} />
+            </span>
+          }
+        />
+        <SettingRow
+          label="새 카드와 복습 순서"
+          description="전체 컬렉션의 기본 새 카드·복습 카드 섞기 순서입니다"
+          onClick={() => setNewMixMenuOpen(true)}
+          control={
+            <span className="amgi-setting-value-trigger">
+              <span className="amgi-setting-value-text">{newReviewMixLabel}</span>
+              <IconChevronRight size={18} />
+            </span>
+          }
+        />
+        <SettingRow
+          label="하루 이상 학습 카드 우선"
+          description="날짜를 넘긴 학습 카드를 일반 복습 카드보다 먼저 보여줍니다"
+          htmlFor="pref-anki-daylearn"
+          control={
+            <Switch
+              id="pref-anki-daylearn"
+              checked={dayLearnFirst}
+              onChange={(next) =>
+                void updateAnkiSchedulingPref({ dayLearnFirst: next })
+              }
+            />
+          }
+        />
+        <SettingRow
+          label="답변 시 오디오 즉시 중단"
+          description="정답 버튼을 누르면 재생 중인 카드 음성을 바로 멈춥니다"
+          htmlFor="pref-anki-interrupt-audio"
+          control={
+            <Switch
+              id="pref-anki-interrupt-audio"
+              checked={interruptAudio}
+              onChange={(next) =>
+                void updateAnkiReviewingPref({ interruptAudioWhenAnswering: next })
+              }
+            />
+          }
+        />
+        <SettingRow
+          label="붙여넣기 시 서식 제거"
+          description="노트 편집기에 텍스트를 붙여넣을 때 폰트·색상 서식을 지우고 순수 글자만 넣습니다"
+          htmlFor="pref-anki-strip-paste"
+          control={
+            <Switch
+              id="pref-anki-strip-paste"
+              checked={pasteStrips}
+              onChange={(next) =>
+                void updateAnkiEditingPref({ pasteStripsFormatting: next })
+              }
+            />
+          }
+        />
+        <SettingRow
+          label="현재 덱으로 새 노트 추가"
+          description="새 노트를 추가할 때 노트 유형 기본 덱 대신 현재 보고 있는 덱을 선택합니다"
+          htmlFor="pref-anki-add-current"
+          control={
+            <Switch
+              id="pref-anki-add-current"
+              checked={addToCurrentDeck}
+              onChange={(next) =>
+                void updateAnkiEditingPref({ addingDefaultsToCurrentDeck: next })
+              }
+            />
           }
         />
       </SectionCard>
@@ -921,6 +1179,81 @@ export const SettingsView: React.FC = () => {
 
       {/* Pickers & Modals */}
       <TagManagerSheet open={tagManagerOpen} onClose={() => setTagManagerOpen(false)} />
+
+      <ActionMenu
+        open={learnAheadMenuOpen}
+        onClose={() => setLearnAheadMenuOpen(false)}
+        title="미리 학습 제한 (Learn Ahead)"
+        items={[
+          { mins: 0, label: '미리 보지 않음 (0분)' },
+          { mins: 10, label: '10분' },
+          { mins: 20, label: '20분 (Anki 기본값)' },
+          { mins: 30, label: '30분' },
+          { mins: 60, label: '60분' },
+        ].map((item) => ({
+          id: String(item.mins),
+          label: item.label,
+          icon: learnAheadMins === item.mins ? <IconCheck size={18} /> : undefined,
+          onSelect: () => {
+            void updateAnkiSchedulingPref(
+              { learnAheadSecs: item.mins * 60 },
+              `미리 학습 제한을 ${item.mins === 0 ? '사용 안 함' : `${item.mins}분`}으로 설정했습니다.`
+            );
+          },
+        }))}
+      />
+
+      <ActionMenu
+        open={newMixMenuOpen}
+        onClose={() => setNewMixMenuOpen(false)}
+        title="새 카드와 복습 순서"
+        items={[
+          { val: 0, label: '복습과 섞어서 (기본)' },
+          { val: 1, label: '복습 완료 후 새 카드' },
+          { val: 2, label: '새 카드 먼저' },
+        ].map((item) => ({
+          id: String(item.val),
+          label: item.label,
+          icon: newReviewMix === item.val ? <IconCheck size={18} /> : undefined,
+          onSelect: () => {
+            void updateAnkiSchedulingPref({ newReviewMix: item.val });
+          },
+        }))}
+      />
+
+      <SheetOrDialog
+        open={colpkgPending !== null}
+        onClose={() => {
+          if (!colpkgBusy) setColpkgPending(null);
+        }}
+        title="Anki 설정·컬렉션 그대로 가져오기"
+        subtitle={colpkgPending?.name}
+        footer={
+          <>
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-secondary"
+              disabled={colpkgBusy}
+              onClick={() => setColpkgPending(null)}
+            >
+              취소
+            </button>
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-primary"
+              disabled={colpkgBusy}
+              onClick={() => void handleConfirmColpkgImport()}
+            >
+              {colpkgBusy ? '가져오는 중...' : '안전 백업 후 가져오기'}
+            </button>
+          </>
+        }
+      >
+        <p className="amgi-prose" style={{ margin: 0 }}>
+          선택한 <strong>{colpkgPending?.name}</strong> 파일의 모든 덱, 카드, 덱 옵션(FSRS 포함),
+          Anki 환경설정을 이 기기에 그대로 적용합니다. 진행 전 현재 상태가 자동 백업됩니다.
+        </p>
+      </SheetOrDialog>
 
       <ActionMenu
         open={lineHeightMenuOpen}

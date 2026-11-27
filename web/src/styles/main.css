@@ -29,31 +29,31 @@
   --border-w: 1px;
   --target-min: 48px;
 
-  /* Surfaces & Ink (Light — Refined Alabaster & Crisp Paper) */
-  --bg: #F3F5F9;
+  /* Surfaces & Ink (Light — Warm Editorial Paper Ivory) */
+  --bg: #F6F5F0;
   --surface: #FFFFFF;
-  --surface-glass: rgba(255, 255, 255, 0.88);
-  --surface-2: #EEF2F7;
-  --surface-active: #E3EAF4;
-  --text: #0F172A;
-  --text-2: #475569;
-  --text-3: #94A3B8;
-  --border: #E2E8F0;
-  --border-subtle: rgba(15, 23, 42, 0.06);
-  --border-strong: #CBD5E1;
+  --surface-glass: rgba(255, 255, 255, 0.90);
+  --surface-2: #F0EEE8;
+  --surface-active: #E7E4DC;
+  --text: #18181B;
+  --text-2: #57534E;
+  --text-3: #A8A29E;
+  --border: #E6E3DA;
+  --border-subtle: rgba(24, 24, 27, 0.06);
+  --border-strong: #D6D3C9;
 
   /* Primary Brand Accent */
   --primary: #2563EB;
   --primary-hover: #1D4ED8;
-  --primary-soft: #EFF6FF;
-  --primary-glow: rgba(37, 99, 235, 0.24);
+  --primary-soft: #EEF4FF;
+  --primary-glow: rgba(37, 99, 235, 0.22);
   --on-primary: #FFFFFF;
 
   /* Anki Deck Queue Counters */
   --count-new: #2563EB;
-  --count-new-bg: #EFF6FF;
-  --count-learn: #DC2626;
-  --count-learn-bg: #FEF2F2;
+  --count-new-bg: #EEF4FF;
+  --count-learn: #E11D48;
+  --count-learn-bg: #FFF1F2;
   --count-review: #059669;
   --count-review-bg: #ECFDF5;
 
@@ -68,7 +68,7 @@
   --good-bg: #ECFDF5;
   --good-border: #A7F3D0;
   --easy: #2563EB;
-  --easy-bg: #EFF6FF;
+  --easy-bg: #EEF4FF;
   --easy-border: #BFDBFE;
 
   /* Semantic Status */
@@ -88,14 +88,14 @@
   --flag-6: #14B8A6; /* Turquoise */
   --flag-7: #8B5CF6; /* Purple */
 
-  /* Shadows & Elevation */
-  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.03);
-  --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.08), 0 2px 6px rgba(15, 23, 42, 0.04);
-  --shadow-lg: 0 20px 48px rgba(15, 23, 42, 0.16), 0 4px 12px rgba(15, 23, 42, 0.06);
-  --backdrop: rgba(15, 23, 42, 0.46);
+  /* Shadows & Elevation (Warm ambient lift) */
+  --shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.04), 0 4px 12px rgba(28, 25, 23, 0.035);
+  --shadow-md: 0 8px 24px rgba(28, 25, 23, 0.07), 0 2px 6px rgba(28, 25, 23, 0.04);
+  --shadow-lg: 0 20px 48px rgba(28, 25, 23, 0.14), 0 4px 12px rgba(28, 25, 23, 0.05);
+  --backdrop: rgba(24, 24, 27, 0.44);
 
   /* Heatmap */
-  --heat-0: #E8EDF4;
+  --heat-0: #EAE7DF;
   --heat-1: #BFDBFE;
   --heat-2: #60A5FA;
   --heat-3: #2563EB;
@@ -985,11 +985,84 @@ button {
   transform: scale(0.96);
 }
 
+.amgi-fab--left {
+  right: auto;
+  left: calc(16px + var(--safe-left));
+}
+
 :root[data-theme="eink"] .amgi-fab {
   height: 56px;
   background: #000000;
   color: #FFFFFF;
   border: 2px solid #000000;
+}
+
+/* Non-blocking Background Sync Strip */
+.amgi-bg-sync-bar {
+  position: sticky;
+  top: calc(var(--topbar-h) + var(--safe-top));
+  z-index: 28;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 12px;
+  background: var(--primary-soft);
+  border-bottom: var(--border-w) solid var(--easy-border);
+  color: var(--primary);
+}
+
+.amgi-bg-sync-bar-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.amgi-bg-sync-bar-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.amgi-bg-sync-bar-stop {
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--primary);
+  background: var(--surface);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+:root[data-theme="eink"] .amgi-bg-sync-bar {
+  background: #FFFFFF;
+  border-bottom: 2px solid #000000;
+  color: #000000;
+}
+
+:root[data-theme="eink"] .amgi-bg-sync-bar-main,
+:root[data-theme="eink"] .amgi-bg-sync-bar-stop {
+  min-height: 44px;
+  color: #000000;
+}
+
+:root[data-theme="eink"] .amgi-bg-sync-bar-stop {
+  border: 2px solid #000000;
+  background: #FFFFFF;
 }
 
 .amgi-split-pane {

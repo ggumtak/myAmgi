@@ -7,7 +7,7 @@
   flex-direction: column;
   gap: 14px;
   width: 100%;
-  padding-bottom: 68px; /* Clear floating +추가 FAB on mobile */
+  padding-bottom: 112px; /* Clear floating +추가 FAB & bottom nav on mobile so bottom decks scroll cleanly */
 }
 
 /* Tablet Portrait (840px–1023px): centered single column */
@@ -15,7 +15,7 @@
   .amgi-decks-page {
     max-width: 720px;
     margin: 0 auto;
-    padding-bottom: 12px;
+    padding-bottom: 24px;
   }
 }
 
@@ -40,6 +40,9 @@
     top: calc(var(--topbar-h) + var(--safe-top) + 16px);
     max-height: calc(100dvh - var(--topbar-h) - var(--safe-top) - 40px);
     overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    padding-bottom: 24px;
     display: flex;
     flex-direction: column;
     gap: 14px;
@@ -54,23 +57,23 @@
   }
 }
 
-/* Today's Study Hero Card */
+/* Personal Study Dashboard Hero Card */
 .amgi-summary-card {
   background: var(--surface);
   border: var(--border-w) solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
-  padding: 16px 18px;
+  padding: 18px 18px 16px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 
-.amgi-summary-top {
+.amgi-summary-hero-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 14px;
 }
 
 .amgi-summary-body {
@@ -111,9 +114,9 @@
 }
 
 .amgi-summary-primary {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 800;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.025em;
   line-height: 1.35;
   color: var(--text);
 }
@@ -124,68 +127,101 @@
   color: var(--text-2);
 }
 
-.amgi-summary-actions {
+.amgi-summary-cta-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+}
+
+.amgi-summary-play-btn {
+  flex: 1;
+  min-height: 48px;
+  font-size: 15px;
+  font-weight: 700;
+  border-radius: var(--radius-md);
+}
+
+:root[data-theme="eink"] .amgi-summary-play-btn {
+  min-height: 50px;
+}
+
+/* Circular Daily Goal Ring */
+.amgi-ring-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
 }
 
-@media (max-width: 440px) {
-  .amgi-summary-top {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
-  }
-
-  .amgi-summary-actions {
-    width: 100%;
-  }
-
-  .amgi-summary-actions .amgi-btn-primary {
-    flex: 1;
-  }
+.amgi-ring-track {
+  stroke: var(--surface-2);
 }
 
-.amgi-summary-progress-wrap {
+:root[data-theme="dark"] .amgi-ring-track {
+  stroke: var(--border);
+}
+
+.amgi-ring-fill {
+  stroke: var(--primary);
+  transition: stroke-dashoffset 0.35s ease;
+}
+
+.amgi-ring-wrap.is-done .amgi-ring-fill {
+  stroke: var(--ok);
+}
+
+.amgi-ring-label {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-}
-
-.amgi-summary-progress-track {
-  flex: 1;
-  height: 7px;
-  border-radius: var(--radius-pill);
-  background: var(--surface-2);
-  overflow: hidden;
-}
-
-.amgi-summary-progress-fill {
-  height: 100%;
-  border-radius: var(--radius-pill);
-  background: var(--primary);
-  transition: width 0.25s ease;
-}
-
-.amgi-summary-progress-pct {
+  justify-content: center;
   font-size: 12px;
   font-weight: 800;
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+
+:root[data-theme="eink"] .amgi-ring-track {
+  stroke: #D0D0D0;
+}
+
+:root[data-theme="eink"] .amgi-ring-fill,
+:root[data-theme="eink"] .amgi-ring-wrap.is-done .amgi-ring-fill {
+  stroke: #000000;
+  transition: none;
+}
+
+:root[data-theme="eink"] .amgi-ring-label {
+  color: #000000;
+}
+
+/* Deck Section Header */
+.amgi-deck-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 2px 4px 0;
+}
+
+.amgi-deck-section-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 800;
   color: var(--text-2);
-  min-width: 34px;
-  text-align: right;
+  letter-spacing: -0.01em;
 }
 
-:root[data-theme="eink"] .amgi-summary-progress-track {
-  height: 8px;
-  background: #FFFFFF;
-  border: 1.5px solid #000000;
-  border-radius: 2px;
+.amgi-deck-section-count {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-3);
 }
 
-:root[data-theme="eink"] .amgi-summary-progress-fill {
-  background: #000000;
-  border-radius: 0;
+:root[data-theme="eink"] .amgi-deck-section-title,
+:root[data-theme="eink"] .amgi-deck-section-count {
+  color: #000000;
 }
 
 /* Deck Quick Filter Strip */
@@ -248,143 +284,197 @@
   border-radius: var(--radius-sm);
 }
 
-/* Deck Tree Card */
-.amgi-deck-tree-card {
+/* Floating Card-Shelf Deck List */
+.amgi-deck-shelf {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.amgi-deck-empty-search {
+  padding: 28px 16px;
+  text-align: center;
+  font-size: 14px;
+  color: var(--text-2);
+  background: var(--surface);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.amgi-deck-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 70px;
+  padding: 12px 8px 12px 14px;
   background: var(--surface);
   border: var(--border-w) solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
-  overflow: hidden;
-}
-
-.amgi-deck-header-row,
-.amgi-deck-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 42px 42px 42px 44px;
-  gap: 4px;
-  align-items: center;
-  padding: 6px 6px 6px 12px;
-}
-
-:root[data-theme="eink"] .amgi-deck-header-row,
-:root[data-theme="eink"] .amgi-deck-row {
-  grid-template-columns: minmax(0, 1fr) 42px 42px 42px 48px;
-}
-
-@media (min-width: 480px) {
-  .amgi-deck-header-row,
-  .amgi-deck-row {
-    grid-template-columns: minmax(0, 1fr) 50px 50px 50px 48px;
-    gap: 6px;
-    padding: 6px 10px 6px 14px;
-  }
-
-  :root[data-theme="eink"] .amgi-deck-header-row,
-  :root[data-theme="eink"] .amgi-deck-row {
-    grid-template-columns: minmax(0, 1fr) 50px 50px 50px 48px;
-  }
-}
-
-.amgi-deck-header-row {
-  min-height: 38px;
-  padding-top: 8px;
-  padding-bottom: 8px;
-  background: var(--surface-2);
-  border-bottom: var(--border-w) solid var(--border);
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-2);
-}
-
-:root[data-theme="eink"] .amgi-deck-header-row {
-  color: #000000;
-  background: #FFFFFF;
-}
-
-.amgi-deck-header-col {
-  text-align: center;
-  white-space: nowrap;
-}
-
-.amgi-deck-header-col:first-child {
-  text-align: left;
-  padding-left: 2px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.amgi-deck-row {
-  min-height: 58px;
-  border-bottom: 1px solid var(--border-subtle);
-  background: transparent;
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
-  transition: background-color 0.12s ease;
+  transition: transform 0.12s ease, border-color 0.14s ease, box-shadow 0.14s ease, background-color 0.12s ease;
 }
 
-.amgi-deck-row:last-child {
-  border-bottom: none;
+.amgi-deck-card:hover {
+  border-color: var(--border-strong);
 }
 
-.amgi-deck-row:hover {
-  background: var(--surface-2);
+.amgi-deck-card:active {
+  transform: scale(0.99);
 }
 
-:root[data-theme="eink"] .amgi-deck-row {
-  min-height: 60px;
-  border-bottom: 2px solid #000000;
-}
-
-:root[data-theme="eink"] .amgi-deck-row:last-child {
-  border-bottom: none;
-}
-
-:root[data-theme="eink"] .amgi-deck-row:hover {
-  background: #FFFFFF;
-}
-
-.amgi-deck-row-selected {
-  border-left: var(--selected-bar);
+.amgi-deck-card.is-selected {
+  border-color: var(--primary);
+  box-shadow: inset 4px 0 0 var(--primary), var(--shadow-sm);
   background: var(--primary-soft);
 }
 
-:root[data-theme="eink"] .amgi-deck-row-selected {
-  background: #FFFFFF;
-  border-left: 4px solid #000000;
+.amgi-deck-card--sub {
+  min-height: 58px;
+  padding: 10px 8px 10px 12px;
+  border-radius: var(--radius-md);
+  box-shadow: none;
 }
 
-.amgi-deck-name-cell {
+:root[data-theme="eink"] .amgi-deck-card,
+:root[data-theme="eink"] .amgi-deck-card--sub {
+  background: #FFFFFF;
+  border: 2px solid #000000;
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+  transition: none;
+}
+
+:root[data-theme="eink"] .amgi-deck-card:hover,
+:root[data-theme="eink"] .amgi-deck-card:active {
+  background: #FFFFFF;
+  border-color: #000000;
+  transform: none;
+}
+
+:root[data-theme="eink"] .amgi-deck-card.is-selected {
+  background: #FFFFFF;
+  border: 2px solid #000000;
+  border-left: 5px solid #000000;
+  box-shadow: none;
+}
+
+.amgi-deck-card-left {
   display: flex;
   align-items: center;
+  gap: 12px;
   min-width: 0;
-  gap: 6px;
+  flex: 1;
 }
 
-.amgi-deck-leaf-dot {
-  width: 22px;
-  min-width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  background: var(--surface-2);
-  color: var(--text-2);
+.amgi-deck-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  flex: 1;
+}
+
+.amgi-deck-card-right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+/* Topic-Aware SVG Emblem Tile */
+.amgi-deck-emblem {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  border-radius: 13px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  border: 1px solid transparent;
 }
 
-.amgi-deck-leaf-dot.has-due {
-  background: var(--primary-soft);
-  color: var(--primary);
+.amgi-deck-emblem--rose {
+  background: #FFF1F2;
+  color: #E11D48;
+  border-color: #FECDD3;
 }
 
-:root[data-theme="eink"] .amgi-deck-leaf-dot,
-:root[data-theme="eink"] .amgi-deck-leaf-dot.has-due {
-  background: #FFFFFF;
-  color: #000000;
-  border: 1.5px solid #000000;
+.amgi-deck-emblem--blue {
+  background: #EFF6FF;
+  color: #2563EB;
+  border-color: #BFDBFE;
+}
+
+.amgi-deck-emblem--amber {
+  background: #FFFBEB;
+  color: #D97706;
+  border-color: #FDE68A;
+}
+
+.amgi-deck-emblem--emerald {
+  background: #ECFDF5;
+  color: #059669;
+  border-color: #A7F3D0;
+}
+
+.amgi-deck-emblem--indigo {
+  background: #EEF2FF;
+  color: #4F46E5;
+  border-color: #C7D2FE;
+}
+
+.amgi-deck-emblem--teal {
+  background: #F0FDFA;
+  color: #0D9488;
+  border-color: #99F6E4;
+}
+
+:root[data-theme="dark"] .amgi-deck-emblem--rose {
+  background: rgba(244, 63, 94, 0.16);
+  color: #FDA4AF;
+  border-color: rgba(244, 63, 94, 0.28);
+}
+
+:root[data-theme="dark"] .amgi-deck-emblem--blue {
+  background: rgba(59, 130, 246, 0.16);
+  color: #93C5FD;
+  border-color: rgba(59, 130, 246, 0.28);
+}
+
+:root[data-theme="dark"] .amgi-deck-emblem--amber {
+  background: rgba(245, 158, 11, 0.16);
+  color: #FCD34D;
+  border-color: rgba(245, 158, 11, 0.28);
+}
+
+:root[data-theme="dark"] .amgi-deck-emblem--emerald {
+  background: rgba(16, 185, 129, 0.16);
+  color: #6EE7B7;
+  border-color: rgba(16, 185, 129, 0.28);
+}
+
+:root[data-theme="dark"] .amgi-deck-emblem--indigo {
+  background: rgba(99, 102, 241, 0.16);
+  color: #A5B4FC;
+  border-color: rgba(99, 102, 241, 0.28);
+}
+
+:root[data-theme="dark"] .amgi-deck-emblem--teal {
+  background: rgba(20, 184, 166, 0.16);
+  color: #5EEAD4;
+  border-color: rgba(20, 184, 166, 0.28);
+}
+
+:root[data-theme="eink"] .amgi-deck-emblem {
+  background: #FFFFFF !important;
+  color: #000000 !important;
+  border: 1.5px solid #000000 !important;
+  border-radius: 8px;
 }
 
 .amgi-deck-branch {
@@ -402,13 +492,13 @@
 }
 
 .amgi-deck-chevron {
-  width: 28px;
-  min-width: 28px;
-  height: 44px;
+  width: 38px;
+  min-width: 38px;
+  height: 40px;
   padding: 0;
   margin: 0;
   border: none;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-2);
   display: inline-flex;
@@ -424,31 +514,35 @@
 }
 
 :root[data-theme="eink"] .amgi-deck-chevron {
-  width: 30px;
-  min-width: 30px;
-  height: 46px;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
   color: #000000;
 }
 
 .amgi-deck-title-wrap {
-  flex: 1;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 2px;
 }
 
 .amgi-deck-title {
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 1.35;
+  font-size: 15.5px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
   color: var(--text);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.amgi-deck-card--sub .amgi-deck-title {
+  font-size: 14.5px;
+  font-weight: 600;
 }
 
 .amgi-deck-title-filtered {
@@ -480,42 +574,70 @@
   border: 1.5px solid #000000;
 }
 
-.amgi-deck-num {
-  text-align: center;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.2;
-  padding: 3px 2px;
+/* Color-Coded Study Count Pills */
+.amgi-deck-pills {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.amgi-dpill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
   border-radius: var(--radius-pill);
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.35;
   white-space: nowrap;
 }
 
-.amgi-deck-num-new {
-  color: var(--count-new);
+.amgi-dpill--new {
+  background: #EFF6FF;
+  color: #1D4ED8;
 }
 
-.amgi-deck-num-learn {
-  color: var(--count-learn);
+.amgi-dpill--learn {
+  background: #FFF7ED;
+  color: #C2410C;
 }
 
-.amgi-deck-num-review {
-  color: var(--count-review);
+.amgi-dpill--review {
+  background: #ECFDF5;
+  color: #047857;
 }
 
-.amgi-deck-num-zero {
-  color: var(--text-3);
-  font-weight: 500;
+.amgi-dpill--done {
+  background: var(--surface-2);
+  color: var(--text-2);
 }
 
-:root[data-theme="eink"] .amgi-deck-num {
-  color: #000000;
-  font-weight: 800;
+:root[data-theme="dark"] .amgi-dpill--new {
+  background: rgba(59, 130, 246, 0.18);
+  color: #93C5FD;
 }
 
-:root[data-theme="eink"] .amgi-deck-num-zero {
-  color: #000000;
-  font-weight: 400;
-  opacity: 0.45;
+:root[data-theme="dark"] .amgi-dpill--learn {
+  background: rgba(249, 115, 22, 0.18);
+  color: #FDBA74;
+}
+
+:root[data-theme="dark"] .amgi-dpill--review {
+  background: rgba(16, 185, 129, 0.18);
+  color: #6EE7B7;
+}
+
+:root[data-theme="eink"] .amgi-dpill {
+  background: #FFFFFF !important;
+  color: #000000 !important;
+  border: 1.5px solid #000000 !important;
+  border-radius: 4px;
+}
+
+:root[data-theme="eink"] .amgi-dpill--done {
+  border-style: dashed !important;
 }
 
 .amgi-deck-more-btn {
@@ -523,7 +645,7 @@
   min-width: 44px;
   height: 44px;
   padding: 0;
-  margin: 0 auto;
+  margin: 0;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -540,9 +662,9 @@
 }
 
 :root[data-theme="eink"] .amgi-deck-more-btn {
-  width: 46px;
-  min-width: 46px;
-  height: 46px;
+  width: 48px;
+  min-width: 48px;
+  height: 48px;
   color: #000000;
 }
 
