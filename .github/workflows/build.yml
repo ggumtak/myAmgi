@@ -5,6 +5,15 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      force_apk:
+        description: 'Build and publish APKs even if only UI files changed'
+        type: boolean
+        default: false
+      allow_new_signing_key:
+        description: 'DANGER: generate a NEW signing key if none is cached (existing installs cannot upgrade)'
+        type: boolean
+        default: false
   # Keep the cached signing key alive: GitHub evicts cache entries unused for 7 days,
   # and regenerating a key would prevent in-place APK upgrades over existing installs.
   schedule:
@@ -12,6 +21,8 @@ on:
 
 permissions:
   contents: write
+  # Read-only: the build-mode step checks that the run which published the current APKs succeeded.
+  actions: read
 
 concurrency:
   group: build-${{ github.ref }}-${{ github.event_name == 'schedule' && 'keepalive' || 'build' }}
@@ -27,6 +38,93 @@ jobs:
       BUILD_NUMBER: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history and tags: the build-mode step diffs HEAD against tag `latest`.
+          fetch-depth: 0
+
+      # apk_needed=false ("OTA-only") only when every file changed since the commit of the published
+      # APKs (tag `latest`) is UI-only. Then only ui-version.json + ui-bundle.zip are published to
+      # update-files. Anything else, or any doubt, builds and publishes APKs as before.
+      # Later steps test `!= 'false'`, so a missing output also means a full APK build.
+      - name: Decide build mode (APK or OTA-only UI)
+        id: mode
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE_APK: ${{ inputs.force_apk && 'true' || 'false' }}
+        run: |
+          decide() { # apk_needed reason
+            echo "apk_needed=$1" >> "$GITHUB_OUTPUT"
+            if [ "$1" = "true" ]; then mode="full APK build"; else mode="OTA-only (UI bundle only, no APK)"; fi
+            echo "Build mode: ${mode} - $2"
+            {
+              echo "### Build mode: ${mode}"
+              echo ""
+              echo "$2"
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          if [ "$FORCE_APK" = "true" ]; then
+            decide true "workflow_dispatch input force_apk=true"
+            exit 0
+          fi
+          if ! base="$(git rev-parse -q --verify 'refs/tags/latest^{commit}')"; then
+            decide true "tag 'latest' not found (no previous APK release)"
+            exit 0
+          fi
+          # The tag moves before the APK upload; only trust it when that run finished successfully.
+          if ! ok_runs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${base}&status=success&per_page=100" \
+            --jq '[.workflow_runs[] | select((.path // "" | startswith(".github/workflows/build.yml")) and (.event == "push" or .event == "workflow_dispatch"))] | length')"; then
+            decide true "could not look up the run that published tag 'latest' (${base})"
+            exit 0
+          fi
+          if [ "${ok_runs:-0}" = "0" ]; then
+            decide true "no successful build run found for tag 'latest' (${base})"
+            exit 0
+          fi
+          if ! changed="$(git diff --no-renames --name-only "$base" HEAD)"; then
+            decide true "git diff ${base}..HEAD failed"
+            exit 0
+          fi
+
+          # UI-only allow-list (case globs: "*" also matches "/", so web/* covers web/**)
+          ui_only() {
+            case "$1" in
+              web/*|docs/*|*.md|tools/visual_qa.py|.github/workflows/deploy-web.yml) return 0 ;;
+            esac
+            return 1
+          }
+          native=""
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            if ! ui_only "$f"; then
+              native="${native}${f}"$'\n'
+            fi
+          done <<< "$changed"
+
+          echo "Files changed since tag latest (${base}):"
+          printf '%s\n' "${changed:-(none)}"
+          if [ -n "$native" ]; then
+            first="$(printf '%s' "$native" | head -n 5 | tr '\n' ' ')"
+            decide true "non-UI files changed since ${base}: ${first}"
+            exit 0
+          fi
+
+          # A UI that needs a newer native build than the published APK (web/min-native-build.json)
+          # would be ignored by every device: ship an APK with it instead.
+          if ! min_build="$(jq -er '.minBuild | numbers' web/min-native-build.json)"; then
+            decide true "web/min-native-build.json has no numeric minBuild"
+            exit 0
+          fi
+          if ! apk_build="$(gh release view latest --json assets --jq '.assets[].name' \
+            | sed -n 's/^myAmgi-Pro-\([0-9][0-9]*\)\.apk$/\1/p' | sort -n | tail -n 1)" || [ -z "$apk_build" ]; then
+            decide true "could not read the published APK build number from release latest"
+            exit 0
+          fi
+          if [ "$min_build" -gt "$apk_build" ]; then
+            decide true "UI needs native build ${min_build} (web/min-native-build.json) but the published APK is build ${apk_build}"
+            exit 0
+          fi
+          decide false "only UI files changed since ${base} (web/**, docs/**, **/*.md, tools/visual_qa.py, deploy-web.yml); UI minBuild ${min_build} <= published APK build ${apk_build}"
 
       - uses: actions/setup-java@v4
         with:
@@ -36,14 +134,17 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Restore signing key
+        if: steps.mode.outputs.apk_needed != 'false'
         uses: actions/cache/restore@v4
         with:
           path: ~/.myamgi-signing
           key: myamgi-signing-v1
 
       - name: Prepare signing key
+        if: steps.mode.outputs.apk_needed != 'false'
         id: key
         env:
+          ALLOW_NEW_SIGNING_KEY: ${{ inputs.allow_new_signing_key && 'true' || 'false' }}
           KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
           SECRET_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
           SECRET_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
@@ -63,7 +164,11 @@ jobs:
 
           dir="$HOME/.myamgi-signing"
           if [ ! -f "$dir/release.keystore" ] || [ ! -f "$dir/pass" ]; then
-            echo "::warning::No cached signing key found; generating a NEW one. Existing installs signed with an older key must be reinstalled once."
+            if [ "$ALLOW_NEW_SIGNING_KEY" != "true" ]; then
+              echo "::error::No signing key: the repository secrets SIGNING_KEYSTORE_BASE64 etc. are not set and the cached key (actions cache 'myamgi-signing-v1') is missing. A NEW key would make these APKs impossible to install over existing ones; reinstalling deletes the local collection on the device. Restore the old key as repository secrets, or re-run with workflow_dispatch input allow_new_signing_key=true if a new key is really wanted."
+              exit 1
+            fi
+            echo "::warning::No cached signing key found; generating a NEW one (allow_new_signing_key=true). Existing installs signed with an older key must be reinstalled once."
             rm -rf "$dir" && mkdir -p "$dir"
             pass="$(openssl rand -hex 24)"
             printf '%s' "$pass" > "$dir/pass"
@@ -97,6 +202,22 @@ jobs:
           path: ~/.myamgi-signing
           key: myamgi-signing-v1
 
+      - name: Show signing certificate fingerprint
+        if: steps.mode.outputs.apk_needed != 'false'
+        run: |
+          # Public information (not a secret): lets the owner pin the expected certificate.
+          if fp="$(keytool -list -v -keystore "$SIGNING_KEYSTORE_FILE" -storepass "$SIGNING_STORE_PASSWORD" -alias "$SIGNING_KEY_ALIAS" 2>/dev/null | grep -m1 -E '^[[:space:]]*SHA256:')"; then
+            fp="$(printf '%s' "$fp" | sed -E 's/^[[:space:]]+//')"
+            echo "Signing certificate ${fp}"
+            {
+              echo "### Signing certificate"
+              echo ""
+              echo "\`${fp}\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::Could not read the signing certificate fingerprint"
+          fi
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -113,12 +234,19 @@ jobs:
           npm run build
 
       - name: Run unit tests (engine host, Pro & Comet)
+        if: steps.mode.outputs.apk_needed != 'false'
         run: ./gradlew --stacktrace :core:test :desktop:installDist testProDebugUnitTest testCometDebugUnitTest
 
+      - name: Run unit tests (engine host; OTA-only build)
+        if: steps.mode.outputs.apk_needed == 'false'
+        run: ./gradlew --stacktrace :core:test
+
       - name: Build release APKs (Pro & Comet)
+        if: steps.mode.outputs.apk_needed != 'false'
         run: ./gradlew --stacktrace assembleProRelease assembleCometRelease
 
       - name: Collect and rename APKs
+        if: steps.mode.outputs.apk_needed != 'false'
         run: |
           mkdir -p dist
           pro_apk="$(find app/build/outputs/apk/pro/release -maxdepth 1 -name '*.apk' ! -name '*-unsigned.apk' | head -n 1)"
@@ -136,6 +264,7 @@ jobs:
           ls -lh dist
 
       - name: Verify arm64-v8a only native libraries
+        if: steps.mode.outputs.apk_needed != 'false'
         run: |
           python3 - "dist/myAmgi-Pro-${GITHUB_RUN_NUMBER}.apk" "dist/myAmgi-Comet-${GITHUB_RUN_NUMBER}.apk" <<'PY'
           import sys
@@ -165,6 +294,7 @@ jobs:
           PY
 
       - name: Generate OTA hot-patch manifest and assets
+        if: steps.mode.outputs.apk_needed != 'false'
         run: |
           python3 tools/make_ota_manifest.py \
             --assets-dir app/src/main/assets \
@@ -176,8 +306,17 @@ jobs:
           (cd web/dist && zip -qr "../../dist/ui-bundle.zip" .)
           ls -lh dist
 
+      - name: Prepare OTA-only UI bundle files
+        if: steps.mode.outputs.apk_needed == 'false'
+        run: |
+          mkdir -p dist
+          cp web/dist/ui-version.json dist/ui-version.json
+          (cd web/dist && zip -qr "../../dist/ui-bundle.zip" .)
+          cat dist/ui-version.json
+          ls -lh dist
+
       - name: Make flavor-specific binary delta patches
-        if: (github.ref_name == 'main' || github.ref_name == github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: steps.mode.outputs.apk_needed != 'false' && (github.ref_name == 'main' || github.ref_name == github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -207,7 +346,7 @@ jobs:
           path: dist/*
 
       - name: Publish releases (latest = download page, update-files = updater files)
-        if: (github.ref_name == 'main' || github.ref_name == github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: steps.mode.outputs.apk_needed != 'false' && (github.ref_name == 'main' || github.ref_name == github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -355,8 +494,53 @@ jobs:
           prune latest
           prune update-files
 
+      - name: Publish OTA-only UI bundle (update-files; no APK, no prune)
+        if: steps.mode.outputs.apk_needed == 'false' && (github.ref_name == 'main' || github.ref_name == github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          retry() {
+            local max="$1"; shift
+            local attempt=1
+            while true; do
+              if "$@"; then return 0; fi
+              if [ "$attempt" -ge "$max" ]; then return 1; fi
+              echo "::warning::Command failed (attempt $attempt/$max), retrying in $((attempt * 4))s..."
+              sleep $((attempt * 4))
+              attempt=$((attempt + 1))
+            done
+          }
+
+          for f in dist/ui-bundle.zip dist/ui-version.json; do
+            if [ ! -s "$f" ]; then
+              echo "::error::$f is missing; nothing published"
+              exit 1
+            fi
+          done
+
+          if ! gh release view update-files >/dev/null 2>&1; then
+            retry 5 gh release create update-files \
+              --target "${GITHUB_SHA}" \
+              --prerelease \
+              --title "앱 자동 업데이트용 파일 (직접 받지 마세요)" \
+              --notes "앱이 스스로 업데이트할 때 쓰는 파일입니다. 설치 파일은 latest 릴리스(다운로드 페이지)에서 받으세요."
+          fi
+
+          # Bundle first, version file last: a device that sees the new version finds its bundle.
+          # Release `latest`, its tag, apk-history and every other update-files asset stay untouched.
+          retry 5 gh release upload update-files dist/ui-bundle.zip --clobber \
+            || { echo "::error::Upload of ui-bundle.zip failed"; exit 1; }
+          retry 5 gh release upload update-files dist/ui-version.json --clobber \
+            || { echo "::error::Upload of ui-version.json failed"; exit 1; }
+          echo "Published OTA UI $(cat dist/ui-version.json) to update-files"
+          {
+            echo "### OTA-only UI published"
+            echo ""
+            echo "\`$(cat dist/ui-version.json)\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Archive APK history (newest 10 per flavor)
-        if: (github.ref_name == 'main' || github.ref_name == github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: steps.mode.outputs.apk_needed != 'false' && (github.ref_name == 'main' || github.ref_name == github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

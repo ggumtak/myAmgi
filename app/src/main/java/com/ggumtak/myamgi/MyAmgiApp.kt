@@ -58,7 +58,8 @@ class MyAmgiApp : Application() {
                 dataDir = hostDataDir,
                 platform = hostPlatform,
                 port = 0,
-                collectionDir = collectionDir
+                collectionDir = collectionDir,
+                nativeBuild = BuildConfig.VERSION_CODE
             ).start()
             hostPlatform.serverRef = server
             hostServer = server

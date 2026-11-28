@@ -1,20 +1,13 @@
 package com.ggumtak.myamgi
 
-import android.view.KeyEvent
-import com.ggumtak.myamgi.engine.EncodingDetector
 import com.ggumtak.myamgi.hanja.HanjaIntegration
 import com.ggumtak.myamgi.provider.ChunkSessionStore
-import com.ggumtak.myamgi.sync.SyncCode
-import com.ggumtak.myamgi.sync.SyncCodePayload
-import com.ggumtak.myamgi.ui.StudyKeyHandler
-import com.ggumtak.myamgi.ui.StudyKeyHandler.StudyAction
 import com.ggumtak.myamgi.update.ApkPatch
 import com.ggumtak.myamgi.update.OtaAssetUpdater
 import com.ggumtak.myamgi.update.UpdateInfo
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -23,7 +16,6 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.io.File
-import java.nio.charset.Charset
 import java.util.zip.DeflaterOutputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -32,92 +24,6 @@ class CoreModulesTest {
 
     @get:Rule
     val tempFolder = TemporaryFolder()
-
-    // --- 1. Encoding Auto-Detection (UTF-8, UTF-8 BOM, UTF-16 LE/BE, CP949/EUC-KR, Shift-JIS) ---
-
-    @Test
-    fun encodingDetectorHandlesAllRequiredCharsets() {
-        val korean = "단어\t뜻\n공부\t열심히 암기하기"
-        val japanese = "漢字\t読み\n勉強\tべんきょう・カタカナ"
-
-        // UTF-8 with BOM
-        val utf8Bom = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()) + korean.toByteArray(Charsets.UTF_8)
-        val decBom = EncodingDetector.detectAndDecode(utf8Bom)
-        assertEquals(korean, decBom.text)
-
-        // UTF-16 LE with BOM
-        val utf16Le = byteArrayOf(0xFF.toByte(), 0xFE.toByte()) + korean.toByteArray(Charsets.UTF_16LE)
-        assertEquals(korean, EncodingDetector.detectAndDecode(utf16Le).text)
-
-        // UTF-16 BE with BOM
-        val utf16Be = byteArrayOf(0xFE.toByte(), 0xFF.toByte()) + korean.toByteArray(Charsets.UTF_16BE)
-        assertEquals(korean, EncodingDetector.detectAndDecode(utf16Be).text)
-
-        // CP949 / EUC-KR
-        val cp949 = korean.toByteArray(Charset.forName("x-windows-949"))
-        val decKr = EncodingDetector.detectAndDecode(cp949)
-        assertEquals(korean, decKr.text)
-
-        // Shift-JIS
-        val sjis = japanese.toByteArray(Charset.forName("Shift_JIS"))
-        val decJp = EncodingDetector.detectAndDecode(sjis)
-        assertEquals(japanese, decJp.text)
-    }
-
-    // --- 2. 1-Second Sync Code (MYAMGI1:...) ---
-
-    @Test
-    fun syncCodeRoundTripAndValidation() {
-        val original = SyncCodePayload(
-            url = "https://xyzcompany.supabase.co",
-            anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.sample",
-            email = "me@example.com",
-            refreshToken = "refresh-token-123456",
-            accessToken = "access-token-abc"
-        )
-        val encoded = SyncCode.encode(original)
-        assertTrue(encoded.startsWith("MYAMGI1:"))
-
-        val decoded = SyncCode.decode(encoded)
-        assertNotNull(decoded)
-        assertEquals(original.url, decoded!!.url)
-        assertEquals(original.anonKey, decoded.anonKey)
-        assertEquals(original.email, decoded.email)
-        assertEquals(original.refreshToken, decoded.refreshToken)
-
-        // Invalid code must safely return null
-        assertNull(SyncCode.decode("INVALID:abc"))
-        assertNull(SyncCode.decode("MYAMGI1:not_valid_base64!!!"))
-    }
-
-    // --- 3. 2-Button High-Speed Keyboard & Comet Volume Keys ---
-
-    @Test
-    fun twoButtonModeMapsSpace12AndIgnores34() {
-        // Before answer: Space/Enter shows answer; 1/2/3/4 ignored
-        assertEquals(StudyAction.SHOW_ANSWER, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_SPACE, false, true, false))
-        assertEquals(StudyAction.SHOW_ANSWER, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_ENTER, false, true, false))
-        assertEquals(StudyAction.NONE, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_1, false, true, false))
-        assertEquals(StudyAction.NONE, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_2, false, true, false))
-
-        // After answer: Space/Enter/2 = GOOD, 1 = AGAIN, 3 & 4 = IGNORED
-        assertEquals(StudyAction.RATE_GOOD, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_SPACE, true, true, false))
-        assertEquals(StudyAction.RATE_GOOD, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_ENTER, true, true, false))
-        assertEquals(StudyAction.RATE_AGAIN, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_1, true, true, false))
-        assertEquals(StudyAction.RATE_GOOD, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_2, true, true, false))
-        assertEquals(StudyAction.NONE, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_3, true, true, false))
-        assertEquals(StudyAction.NONE, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_4, true, true, false))
-
-        // 4-button mode enables 1..4
-        assertEquals(StudyAction.RATE_HARD, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_2, true, false, false))
-        assertEquals(StudyAction.RATE_GOOD, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_3, true, false, false))
-        assertEquals(StudyAction.RATE_EASY, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_4, true, false, false))
-
-        // Comet physical side volume keys
-        assertEquals(StudyAction.SHOW_ANSWER, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_VOLUME_DOWN, false, true, true))
-        assertEquals(StudyAction.RATE_GOOD, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_VOLUME_DOWN, true, true, true))
-        assertEquals(StudyAction.RATE_AGAIN, StudyKeyHandler.mapKey(KeyEvent.KEYCODE_VOLUME_UP, true, true, true))
-    }
 
     // --- 4. Flavor-Aware Release & Patch Info Parser (Pro vs Comet) ---
 

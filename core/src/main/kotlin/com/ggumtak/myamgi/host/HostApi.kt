@@ -154,11 +154,16 @@ class HostApi(
                     jsonOf("kind" to "colpkg", "path" to file.absolutePath, "needsConfirm" to true, "route" to null)
                 } else {
                     sync.abortMedia()
-                    val safety = progress.run("import") {
-                        val b = backups.create("before-colpkg-import", prune = false)
-                        AnkiEngine.importColpkg(file.absolutePath)
-                        backups.prune()
-                        b
+                    val safety = try {
+                        progress.run("import") {
+                            val b = backups.create("before-colpkg-import", prune = false)
+                            AnkiEngine.importColpkg(file.absolutePath)
+                            backups.prune()
+                            b
+                        }
+                    } finally {
+                        // Finished (either way): the full-size upload copy is no longer needed.
+                        discardUpload(file.absolutePath)
                     }
                     sync.invalidateMediaCache()
                     log.info("collection replaced from $name")
@@ -217,21 +222,42 @@ class HostApi(
      */
     private fun newExportFile(base: String, ext: String): ExportFile {
         exportDir.mkdirs()
+        runCatching { cleanTemp() }
         val f = File(exportDir, "export-${UUID.randomUUID().toString().take(12)}.$ext")
         return ExportFile(f, "$base.$ext")
     }
 
     private class ExportFile(val file: File, val name: String)
 
-    /** Deletes temp uploads/exports older than a day (called at start). */
-    fun cleanTemp(maxAgeMillis: Long = 24 * 60 * 60 * 1000L) {
+    /**
+     * Deletes temp uploads/exports older than [maxAgeMillis] (default [TEMP_MAX_AGE_MILLIS]).
+     * Called at start and before every new upload/export, so large copies do not pile up.
+     */
+    fun cleanTemp(maxAgeMillis: Long = TEMP_MAX_AGE_MILLIS) {
         val cutoff = System.currentTimeMillis() - maxAgeMillis
         for (d in listOf(uploadDir, exportDir)) {
             d.listFiles()?.filter { it.isFile && it.lastModified() < cutoff }?.forEach { it.delete() }
         }
     }
 
+    /**
+     * Deletes an upload once its import has finished (success or failure). Only files directly in
+     * [uploadDir] are touched; anything else is ignored.
+     */
+    fun discardUpload(path: String?) {
+        if (path.isNullOrBlank()) return
+        runCatching {
+            val f = File(path).canonicalFile
+            if (f.parentFile == uploadDir.canonicalFile && f.isFile && f.delete()) {
+                log.info("upload removed after import: ${f.name}")
+            }
+        }
+    }
+
     companion object {
+        /** Temp uploads/exports live at most this long (an export must stay until saved or shared). */
+        const val TEMP_MAX_AGE_MILLIS: Long = 60 * 60 * 1000L
+
         val BACKEND_VERSION: String =
             "Anki ${net.ankiweb.rsdroid.BuildConfig.ANKI_DESKTOP_VERSION} (anki-backend 0.1.77)"
 

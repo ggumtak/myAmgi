@@ -50,6 +50,8 @@ class SyncServiceTest {
         val mediaPolls = AtomicInteger(2)
         val recordedFullSyncUsns = CopyOnWriteArrayList<Pair<Boolean, Int?>>()
         var mediaStatusProvider: (() -> MediaSyncSnapshot)? = null
+        /** Runs inside syncCollection just before it returns normally. */
+        var beforeCollectionReturns: (() -> Unit)? = null
 
         override fun login(user: String, password: String, endpoint: String?): SyncCredentials {
             calls += "login:$user"
@@ -64,6 +66,7 @@ class SyncServiceTest {
                 if (aborted.await(10, TimeUnit.SECONDS)) throw SyncAborted()
             }
             if (failAuth) throw SyncAuthFailed("expired")
+            beforeCollectionReturns?.invoke()
             return next
         }
 
@@ -267,6 +270,30 @@ class SyncServiceTest {
         assertEquals("aborted", result?.detail)
         assertFalse(service.status().b("running"))
         assertTrue(calls.contains("abort"))
+    }
+
+    @Test
+    fun abortAfterCollectionCompletedStillReportsSuccessAndSavesLastSync() {
+        service.login("me", "pw", null)
+        // "중단" pressed at the last moment: the transport finishes normally anyway.
+        transport.beforeCollectionReturns = { service.abort() }
+        calls.clear()
+        val r = service.run("normal")
+        assertTrue(r.b("ok"))
+        assertFalse(r.b("mediaSyncStarted"))
+        assertTrue(service.status()["lastSync"]!!.jsonPrimitive.content.toLong() > 0)
+        assertNull(service.status().strOrNull("lastError"))
+        assertFalse(service.status().b("running"))
+        assertTrue(calls.contains("abort"))
+        assertFalse("media sync must not start after an abort request", calls.contains("media"))
+
+        // The next sync is not affected by the earlier abort request.
+        transport.beforeCollectionReturns = null
+        calls.clear()
+        val again = service.run("normal")
+        assertTrue(again.b("ok"))
+        assertTrue(again.b("mediaSyncStarted"))
+        waitForMediaIdle()
     }
 
     @Test

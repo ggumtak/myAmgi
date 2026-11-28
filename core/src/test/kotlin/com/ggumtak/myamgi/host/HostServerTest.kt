@@ -313,6 +313,7 @@ class HostServerTest {
         val r = http.post("/_anki/importAnkiPackage", req.toByteArray())
         assertEquals(r.text, 200, r.status)
         assertEquals(2, ImportResponse.parseFrom(r.body).log.newCount)
+        assertFalse("upload must be deleted once the official import finished", File(upPath).exists())
         assertEquals(2, AnkiEngine.searchNotes("tag:export").size)
         assertTrue(AnkiEngine.getDeckNames().any { it.name == "내보내기::한자" })
     }
@@ -332,9 +333,11 @@ class HostServerTest {
         assertEquals("true", ask.s("needsConfirm"))
         assertTrue(AnkiEngine.getDeckNames().any { it.name == "나중 덱" })
 
+        assertTrue("an unconfirmed upload is kept for the confirmation", File(upPath).exists())
         val (s, done) = api("import.file", """{"path":$q,"replace":true}""")
         assertEquals(200, s)
         assertEquals("true", done.s("imported"))
+        assertFalse("upload must be deleted after the colpkg import", File(upPath).exists())
         val names = AnkiEngine.getDeckNames().map { it.name }
         assertTrue(names.contains("원래 덱"))
         assertFalse(names.contains("나중 덱"))
@@ -398,6 +401,35 @@ class HostServerTest {
         assertEquals("1.0.10", api("info").second.s("uiVersion"))
         assertTrue(UiBundle.compareVersions("1.0.10", "1.0.9") > 0)
         assertEquals(0, UiBundle.compareVersions("2", "2.0"))
+    }
+
+    @Test
+    fun otaBundleNeedingNewerNativeBuildIsNotActivated() {
+        val builtIn = tmp.newFolder("builtin-ui").apply {
+            File(this, "index.html").writeText("BUILT-IN")
+            File(this, "ui-version.json").writeText("""{"version":"1.0.0"}""")
+        }
+        val ota = tmp.newFolder("ota-ui").apply { File(this, "index.html").writeText("OTA") }
+        val vf = File(ota, "ui-version.json")
+        vf.writeText("""{"version":"1.0.20","minBuild":20}""")
+
+        val old = UiBundle(DirAssetSource(builtIn), ota, nativeBuild = 19)
+        assertFalse(old.otaActive())
+        assertEquals("1.0.0", old.version())
+        assertEquals("BUILT-IN", old.open("index.html")!!.use { it.readBytes().toString(Charsets.UTF_8) })
+
+        assertTrue(UiBundle(DirAssetSource(builtIn), ota, nativeBuild = 20).otaActive())
+        // Desktop / default: no native build check
+        assertTrue(UiBundle(DirAssetSource(builtIn), ota).otaActive())
+
+        // Missing minBuild means 0; a malformed one is never activated
+        vf.writeText("""{"version":"1.0.21"}""")
+        assertTrue(UiBundle(DirAssetSource(builtIn), ota, nativeBuild = 1).otaActive())
+        vf.writeText("""{"version":"1.0.22","minBuild":"soon"}""")
+        assertFalse(UiBundle(DirAssetSource(builtIn), ota, nativeBuild = 1000).otaActive())
+
+        assertEquals(0, UiBundle.parseMinBuild("""{"version":"1"}""".byteInputStream()))
+        assertEquals(16, UiBundle.parseMinBuild("""{"version":"1","minBuild":16}""".byteInputStream()))
     }
 
     @Test

@@ -26,11 +26,9 @@ import sys
 
 DEFAULT_TAG = "update-files"
 
+# Only assets the shell actually reads at runtime (HanjaIntegration loads hanja/anki-tap.js).
 TRACKED_ASSETS: tuple[str, ...] = (
-    "card/card-base.css",
-    "card/card-bridge.js",
     "hanja/anki-tap.js",
-    "editor/large-editor.html",
 )
 
 

@@ -1,6 +1,7 @@
 package com.ggumtak.myamgi.host
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -9,11 +10,21 @@ import java.io.InputStream
 
 /**
  * The myAmgi UI bundle: an OTA directory (used only when its `ui-version.json` is valid, newer than the
- * built-in bundle's, and it has `index.html`) layered over the built-in bundle.
+ * built-in bundle's, does not need a newer native shell, and it has `index.html`) layered over the
+ * built-in bundle.
  *
- * `ui-version.json` = `{"version": "<dotted numbers>" | <number>}` at the bundle root.
+ * `ui-version.json` = `{"version": "<dotted numbers>" | <number>, "minBuild": <native build>}` at the
+ * bundle root. `minBuild` is the smallest native build number (APK `versionCode`) the bundle works
+ * with; missing means 0.
+ *
+ * @param nativeBuild the running shell's build number; an OTA bundle with a larger `minBuild` is not
+ *   activated. The desktop host passes [Int.MAX_VALUE] (no check).
  */
-class UiBundle(private val builtIn: AssetSource, private val otaDir: File?) {
+class UiBundle(
+    private val builtIn: AssetSource,
+    private val otaDir: File?,
+    private val nativeBuild: Int = Int.MAX_VALUE
+) {
     private val otaSource = otaDir?.let { DirAssetSource(it) }
 
     @Volatile
@@ -28,8 +39,11 @@ class UiBundle(private val builtIn: AssetSource, private val otaDir: File?) {
         val stamp = if (vf.isFile) vf.lastModified() xor vf.length() else -1L
         otaCache?.let { (s, v) -> if (s == stamp) return v }
         val active = vf.isFile && File(dir, "index.html").isFile && run {
-            val ota = runCatching { vf.inputStream().use { parseVersion(it) } }.getOrNull()
-            ota != null && (builtInVersion == null || compareVersions(ota, builtInVersion!!) > 0)
+            val bytes = runCatching { vf.readBytes() }.getOrNull() ?: return@run false
+            val ota = runCatching { parseVersion(bytes.inputStream()) }.getOrNull()
+            val minBuild = runCatching { parseMinBuild(bytes.inputStream()) }.getOrDefault(Int.MAX_VALUE)
+            ota != null && minBuild <= nativeBuild &&
+                (builtInVersion == null || compareVersions(ota, builtInVersion!!) > 0)
         }
         otaCache = stamp to active
         return active
@@ -53,6 +67,16 @@ class UiBundle(private val builtIn: AssetSource, private val otaDir: File?) {
             val obj = Json.parseToJsonElement(input.readBytes().toString(Charsets.UTF_8)).jsonObject
             val v = (obj["version"] as? JsonPrimitive)?.contentOrNull?.trim()
             return v?.takeIf { it.isNotEmpty() && it.any(Char::isDigit) }
+        }
+
+        /** `minBuild` of a `ui-version.json`; 0 when absent. Throws on malformed JSON or a non-integer value. */
+        fun parseMinBuild(input: InputStream): Int {
+            val obj = Json.parseToJsonElement(input.readBytes().toString(Charsets.UTF_8)).jsonObject
+            val raw = obj["minBuild"] ?: return 0
+            if (raw is JsonNull) return 0
+            val prim = raw as? JsonPrimitive ?: throw IllegalArgumentException("minBuild is not a number")
+            return prim.contentOrNull?.trim()?.toIntOrNull()
+                ?: throw IllegalArgumentException("minBuild is not an integer: $prim")
         }
 
         /** Compares dotted numeric versions ("1.2.10" > "1.2.9"); non-digits separate parts. */

@@ -6,12 +6,15 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
 import android.content.res.Configuration
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.OpenableColumns
 import android.util.TypedValue
 import android.view.Gravity
@@ -21,6 +24,7 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -37,6 +41,7 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.ColorInt
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -49,6 +54,7 @@ import com.ggumtak.myamgi.device.DeviceProfile
 import com.ggumtak.myamgi.hanja.HanjaIntegration
 import com.ggumtak.myamgi.host.HostApi
 import com.ggumtak.myamgi.host.HostServer
+import com.ggumtak.myamgi.update.OtaUiUpdater
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -92,6 +98,20 @@ class MainActivity : AppCompatActivity() {
 
     @Volatile
     private var pendingOpenFileEvent: JsonObject? = null
+
+    /** Last colours applied to the system bars; reused when the WebView is recreated. */
+    @ColorInt
+    private var currentBarColor: Int = Color.WHITE
+    private var currentBarsLight: Boolean = true
+    private var lastNightMode: Int = Configuration.UI_MODE_NIGHT_UNDEFINED
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /** Set by `AndroidShell.uiReady()` once the web UI has mounted; reset on every top-level page load. */
+    @Volatile
+    private var uiReadySignalled: Boolean = false
+    private var bootWatchdogDialog: AlertDialog? = null
+    private val bootWatchdog = Runnable { onBootWatchdogFired() }
 
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
     private val openSingleDocument = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -155,28 +175,8 @@ class MainActivity : AppCompatActivity() {
             window.isNavigationBarContrastEnforced = false
         }
 
-        val initialBgHex: String
-        val initialLightBars: Boolean
-        when {
-            initialEink -> {
-                initialBgHex = "#FFFFFF"
-                initialLightBars = true
-            }
-            savedTheme == "light" -> {
-                initialBgHex = "#F4F5F7"
-                initialLightBars = true
-            }
-            savedTheme == "dark" -> {
-                initialBgHex = "#0B0E14"
-                initialLightBars = false
-            }
-            else -> {
-                val isNight = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-                    Configuration.UI_MODE_NIGHT_YES
-                initialBgHex = if (isNight) "#0B0E14" else "#F4F5F7"
-                initialLightBars = !isNight
-            }
-        }
+        lastNightMode = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        val (initialBgHex, initialLightBars) = defaultBarColors(initialEink, savedTheme, resources.configuration)
 
         rootContainer = FrameLayout(this).apply {
             layoutParams = ViewGroup.LayoutParams(
@@ -210,6 +210,42 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Shell colours before the page sets its own (via `AndroidShell.setSystemBars`). */
+    private fun defaultBarColors(eink: Boolean, savedTheme: String?, config: Configuration): Pair<String, Boolean> {
+        val isNight = (config.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        return when {
+            eink -> "#FFFFFF" to true
+            savedTheme == "light" -> "#F4F5F7" to true
+            savedTheme == "dark" -> "#0B0E14" to false
+            savedTheme == "eink" -> "#FFFFFF" to true
+            isNight -> "#0B0E14" to false
+            else -> "#F4F5F7" to true
+        }
+    }
+
+    /**
+     * The manifest handles uiMode/screen/density/fontScale changes itself, so the Activity (and the
+     * WebView with the study position and unsaved editor text) survives a system dark-mode switch or
+     * split screen. The page follows `prefers-color-scheme` and re-sends its bar colours; until it
+     * does, re-apply the shell default for the new night mode when the theme follows the system.
+     */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val night = newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        if (night != lastNightMode) {
+            lastNightMode = night
+            val savedTheme = runCatching {
+                app.hostServer?.api?.prefs?.all()?.get("theme")?.jsonPrimitive?.contentOrNull
+            }.getOrNull()
+            val eink = DeviceProfile.current(this).isEink || savedTheme == "eink"
+            if (!eink && savedTheme != "light" && savedTheme != "dark") {
+                val (bgHex, light) = defaultBarColors(false, savedTheme, newConfig)
+                applySystemBars(bgHex, light)
+            }
+        }
+        ViewCompat.requestApplyInsets(rootContainer)
+    }
+
     override fun onResume() {
         super.onResume()
         app.hostPlatform.attachActivity(this)
@@ -231,15 +267,90 @@ class MainActivity : AppCompatActivity() {
         pendingFileCallback?.onReceiveValue(null)
         pendingFileCallback = null
         app.hostPlatform.detachActivity(this)
-        webView?.let { wv ->
-            rootContainer.removeView(wv)
-            wv.stopLoading()
-            wv.removeJavascriptInterface("AndroidShell")
-            wv.destroy()
-        }
+        cancelBootWatchdog()
+        bootWatchdogDialog?.let { runCatching { it.dismiss() } }
+        bootWatchdogDialog = null
+        webView?.let { destroyWebView(it) }
         webView = null
         uiScope.cancel()
         super.onDestroy()
+    }
+
+    private fun destroyWebView(wv: WebView) {
+        rootContainer.removeView(wv)
+        runCatching { wv.stopLoading() }
+        runCatching { wv.removeJavascriptInterface("AndroidShell") }
+        runCatching { wv.destroy() }
+    }
+
+    /**
+     * The renderer crashed or was killed for memory. Without handling this the whole app (host server
+     * and any running sync included) would be killed; instead drop the dead WebView and start a new one.
+     */
+    private fun recreateWebView(server: HostServer, dead: WebView) {
+        cancelBootWatchdog()
+        if (webView === dead) webView = null
+        destroyWebView(dead)
+        if (isFinishing || isDestroyed) return
+        val bgHex = String.format(Locale.ROOT, "#%06X", currentBarColor and 0xFFFFFF)
+        val light = currentBarsLight
+        rootContainer.post {
+            if (isFinishing || isDestroyed || webView != null) return@post
+            setupWebView(server, bgHex, light)
+            Toast.makeText(this, "화면을 다시 불러왔습니다.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // --- OTA UI boot watchdog ---
+
+    private fun isUiPage(server: HostServer, url: String?): Boolean {
+        val uri = url?.let { runCatching { Uri.parse(it) }.getOrNull() } ?: return false
+        if ((uri.host != "127.0.0.1" && uri.host != "localhost") || uri.port != server.port) return false
+        val path = uri.path ?: return false
+        return path == "/ui" || path.startsWith("/ui/")
+    }
+
+    /** Arms only while an OTA bundle is the active UI, and at most once per process. */
+    private fun armBootWatchdog(server: HostServer) {
+        cancelBootWatchdog()
+        if (bootWatchdogShown || uiReadySignalled) return
+        if (!runCatching { server.ui.otaActive() }.getOrDefault(false)) return
+        mainHandler.postDelayed(bootWatchdog, BOOT_WATCHDOG_MS)
+    }
+
+    private fun cancelBootWatchdog() {
+        mainHandler.removeCallbacks(bootWatchdog)
+    }
+
+    private fun onBootWatchdogFired() {
+        val server = app.hostServer ?: return
+        if (isFinishing || isDestroyed || uiReadySignalled || bootWatchdogShown) return
+        if (!runCatching { server.ui.otaActive() }.getOrDefault(false)) return
+        bootWatchdogShown = true
+        bootWatchdogDialog = AlertDialog.Builder(this)
+            .setTitle("화면을 불러오지 못했습니다")
+            .setMessage("업데이트된 화면이 시작되지 않습니다. 앱에 들어 있는 기본 화면으로 되돌릴 수 있습니다.")
+            .setCancelable(false)
+            .setPositiveButton("기본 화면으로 복구") { _, _ ->
+                bootWatchdogDialog = null
+                restoreBuiltInUi(server)
+            }
+            .setNegativeButton("계속 기다리기") { _, _ ->
+                bootWatchdogDialog = null
+            }
+            .show()
+    }
+
+    private fun restoreBuiltInUi(server: HostServer) {
+        uiScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching { OtaUiUpdater.uiOtaDir(this@MainActivity).deleteRecursively() }.getOrDefault(false)
+            }
+            if (!ok) {
+                Toast.makeText(this@MainActivity, "기본 화면으로 되돌리지 못했습니다.", Toast.LENGTH_LONG).show()
+            }
+            webView?.loadUrl(server.startUrl)
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -289,10 +400,27 @@ class MainActivity : AppCompatActivity() {
                 return if (url == null) false else handleWebUrl(server, url)
             }
 
+            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                if (view !== webView) return
+                // A new top-level document: it must signal uiReady() again.
+                cancelBootWatchdog()
+                uiReadySignalled = false
+            }
+
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 isWebLoaded = true
                 flushPendingOpenFileEvent(server)
+                if (view === webView && isUiPage(server, url)) {
+                    armBootWatchdog(server)
+                }
+            }
+
+            override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
+                val dead = view ?: return true
+                recreateWebView(server, dead)
+                return true
             }
         }
 
@@ -446,6 +574,7 @@ class MainActivity : AppCompatActivity() {
                         .filter { it in 'a'..'z' || it in '0'..'9' }
                         .take(10)
                     server.api.uploadDir.mkdirs()
+                    runCatching { server.api.cleanTemp() }
                     val target = File(
                         server.api.uploadDir,
                         "upload-${UUID.randomUUID().toString().take(12)}" + if (ext.isEmpty()) "" else ".$ext"
@@ -626,6 +755,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun applySystemBarsColor(@ColorInt color: Int, isLight: Boolean) {
+        currentBarColor = color
+        currentBarsLight = isLight
         rootContainer.setBackgroundColor(color)
         window.decorView.setBackgroundColor(color)
         window.setBackgroundDrawable(ColorDrawable(color))
@@ -756,5 +887,24 @@ class MainActivity : AppCompatActivity() {
         fun setStudyState(inStudy: Boolean, volumeKeyStudy: Boolean) {
             setStudyState(inStudy, volumeKeyStudy, false)
         }
+
+        /** Called by the web UI after its first successful mount; disarms the OTA boot watchdog. */
+        @JavascriptInterface
+        fun uiReady() {
+            this@MainActivity.uiReadySignalled = true
+            runOnUiThread {
+                cancelBootWatchdog()
+                bootWatchdogDialog?.let { runCatching { it.dismiss() } }
+                bootWatchdogDialog = null
+            }
+        }
+    }
+
+    companion object {
+        private const val BOOT_WATCHDOG_MS = 15_000L
+
+        /** The boot watchdog dialog is shown at most once per launch (process). */
+        @Volatile
+        private var bootWatchdogShown: Boolean = false
     }
 }

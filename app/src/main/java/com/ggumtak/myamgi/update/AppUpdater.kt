@@ -12,8 +12,10 @@ import android.os.Looper
 import android.provider.Settings
 import com.ggumtak.myamgi.BuildConfig
 import java.io.File
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * In-place [PackageInstaller.Session] updater.
@@ -27,7 +29,14 @@ object AppUpdater {
 
     private val main = Handler(Looper.getMainLooper())
 
+    /** True while a download/patch/commit runs; a second install request is refused meanwhile. */
+    private val inFlight = AtomicBoolean(false)
+
     val current: Int get() = BuildConfig.VERSION_CODE
+
+    val inProgress: Boolean get() = inFlight.get()
+
+    const val ALREADY_IN_PROGRESS = "이미 업데이트를 내려받는 중입니다."
 
     fun check(done: (UpdateInfo.Latest?) -> Unit) {
         Thread {
@@ -39,9 +48,13 @@ object AppUpdater {
     /**
      * Reads the full APK from release `latest`. Only when it is newer, also reads release
      * `update-files` for delta patches; if that fails, the full APK is used.
+     *
+     * Throws [IOException] with a Korean message when the GitHub API does not answer 200 (e.g. the
+     * unauthenticated rate limit of 60 requests/hour), so the UI shows an error instead of
+     * "already up to date".
      */
     fun fetchLatestBlocking(): UpdateInfo.Latest? {
-        val latestJson = getText(UpdateInfo.LATEST_URL) ?: return null
+        val latestJson = getText(UpdateInfo.LATEST_URL)
         val apkOnly = UpdateInfo.parse(latestJson, BuildConfig.APK_PREFIX) ?: return null
         if (!UpdateInfo.isNewer(apkOnly, current)) return apkOnly
         val updateFilesJson = runCatching { getText(UpdateInfo.UPDATE_FILES_URL) }.getOrNull()
@@ -56,12 +69,18 @@ object AppUpdater {
         failed: (String) -> Unit
     ): Boolean = installWithContext(activity, latest, progress, failed)
 
+    /**
+     * Starts the download + install in the background. Returns false when the install permission is
+     * missing (the settings screen is opened) or when an update is already in progress ([inProgress];
+     * then [failed] is not called, the caller reports [ALREADY_IN_PROGRESS]).
+     */
     fun installWithContext(
         context: Context,
         latest: UpdateInfo.Latest,
         progress: (Int) -> Unit,
         failed: (String) -> Unit
     ): Boolean {
+        if (inFlight.get()) return false
         if (!context.packageManager.canRequestPackageInstalls()) {
             val settingsIntent = Intent(
                 Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
@@ -73,23 +92,34 @@ object AppUpdater {
             return false
         }
 
+        if (!inFlight.compareAndSet(false, true)) return false
+
         val app = context.applicationContext
-        Thread {
-            val report: (Int) -> Unit = { p -> main.post { progress(p) } }
-            val file = runCatching { fromPatch(app, latest, report) }.getOrNull()
-                ?: runCatching { fetchApk(app, latest, report) }.getOrNull()
+        try {
+            Thread {
+                try {
+                    val report: (Int) -> Unit = { p -> main.post { progress(p) } }
+                    val file = runCatching { fromPatch(app, latest, report) }.getOrNull()
+                        ?: runCatching { fetchApk(app, latest, report) }.getOrNull()
 
-            if (file == null) {
-                main.post { failed("업데이트 다운로드에 실패했습니다.") }
-                return@Thread
-            }
+                    if (file == null) {
+                        main.post { failed("업데이트 다운로드에 실패했습니다.") }
+                        return@Thread
+                    }
 
-            val ok = runCatching { commit(app, file) }.isSuccess
-            if (!ok) {
-                file.delete()
-                main.post { failed("업데이트 설치에 실패했습니다.") }
-            }
-        }.start()
+                    val ok = runCatching { commit(app, file) }.isSuccess
+                    if (!ok) {
+                        file.delete()
+                        main.post { failed("업데이트 설치에 실패했습니다.") }
+                    }
+                } finally {
+                    inFlight.set(false)
+                }
+            }.start()
+        } catch (t: Throwable) {
+            inFlight.set(false)
+            throw t
+        }
         return true
     }
 
@@ -132,11 +162,19 @@ object AppUpdater {
         setRequestProperty("User-Agent", "myAmgi-Android")
     }
 
-    private fun getText(url: String): String? {
+    private fun getText(url: String): String {
         val conn = open(url)
         return try {
-            if (conn.responseCode != 200) null
-            else conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            val code = conn.responseCode
+            if (code != 200) {
+                val limited = code == 429 ||
+                    (code == 403 && conn.getHeaderField("X-RateLimit-Remaining") == "0")
+                throw IOException(
+                    if (limited) "GitHub 요청 한도를 넘었습니다. 한 시간쯤 뒤에 다시 확인해 주세요. (HTTP $code)"
+                    else "업데이트 정보를 가져오지 못했습니다. (HTTP $code)"
+                )
+            }
+            conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
         } finally {
             conn.disconnect()
         }

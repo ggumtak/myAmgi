@@ -30,6 +30,8 @@ import java.util.UUID
  * @param dataDir host data: prefs, backups, temp files, sync state. The collection directory is
  *   whatever [AnkiEngine] is configured with (pass [collectionDir] to set it).
  * @param port 0 = random free port
+ * @param nativeBuild the shell's build number (APK `versionCode`); OTA UI bundles that need a newer
+ *   shell (`minBuild` in `ui-version.json`) are not activated. Desktop: no check.
  */
 class HostServer(
     uiBuiltIn: AssetSource,
@@ -41,10 +43,11 @@ class HostServer(
     val token: String = newToken(),
     collectionDir: File? = null,
     val log: HostLog = HostLog(),
-    syncTransport: SyncTransport = EngineSyncTransport()
+    syncTransport: SyncTransport = EngineSyncTransport(),
+    nativeBuild: Int = Int.MAX_VALUE
 ) {
     val events = EventBus()
-    val ui = UiBundle(uiBuiltIn, uiOtaDir)
+    val ui = UiBundle(uiBuiltIn, uiOtaDir, nativeBuild)
     val api: HostApi
 
     private val http = Http(port)
@@ -347,6 +350,7 @@ class HostServer(
             val bytes = frontendCall(method, body)
             return NanoHTTPD.newFixedLengthResponse(status(200), PROTO_MIME, ByteArrayInputStream(bytes), bytes.size.toLong())
         }
+        val importedUpload = importUploadPath(method, body)
         return try {
             val out = AnkiEngine.rawCall(method, body)
             if (method == "updateDeckConfigs") {
@@ -359,8 +363,20 @@ class HostServer(
         } catch (t: Throwable) {
             log.error("/_anki/$method failed: ${t.message}")
             text(500, t.message ?: t.toString())
+        } finally {
+            // The official import pages are done with the uploaded file once the import ran.
+            if (importedUpload != null) api.discardUpload(importedUpload)
         }
     }
+
+    /** The uploaded file an official import page is importing, for [HostApi.discardUpload]. */
+    private fun importUploadPath(method: String, body: ByteArray): String? = runCatching {
+        when (method) {
+            "importAnkiPackage" -> anki.import_export.ImportAnkiPackageRequest.parseFrom(body).packagePath
+            "importCsv" -> anki.import_export.ImportCsvRequest.parseFrom(body).path
+            else -> null
+        }
+    }.getOrNull()?.takeIf { it.isNotBlank() }
 
     /** FrontendService methods (implemented by Anki desktop's mediasrv, not by the backend). */
     private fun frontendCall(method: String, body: ByteArray): ByteArray {
@@ -418,6 +434,7 @@ class HostServer(
     private fun upload(req: Req): NanoHTTPD.Response {
         val name = HostApi.safeFileName(File(req.param("name") ?: "upload.bin").name)
         api.uploadDir.mkdirs()
+        runCatching { api.cleanTemp() }
         // ASCII on-disk name (see HostApi.newExportFile); the original name is returned and passed back by the UI.
         val ext = name.substringAfterLast('.', "").lowercase().filter { it in 'a'..'z' || it in '0'..'9' }.take(10)
         val target = File(api.uploadDir, "upload-${UUID.randomUUID().toString().take(12)}" + if (ext.isEmpty()) "" else ".$ext")

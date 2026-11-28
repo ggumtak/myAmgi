@@ -169,10 +169,7 @@ class TestMakeOtaManifest(unittest.TestCase):
             out_dir = tmp_path / "dist" / "ota"
 
             tracked = {
-                "card/card-base.css": b"body { background: #fff; }\n",
-                "card/card-bridge.js": b"window.myAmgi = { version: 1 };\n",
                 "hanja/anki-tap.js": b"console.log('hanja tap');\n",
-                "editor/large-editor.html": b"<!doctype html><html><body>Editor</body></html>\n",
             }
             for rel, content in tracked.items():
                 p = assets_dir / rel
@@ -183,6 +180,10 @@ class TestMakeOtaManifest(unittest.TestCase):
             untracked = assets_dir / "other/ignore.txt"
             untracked.parent.mkdir(parents=True, exist_ok=True)
             untracked.write_bytes(b"ignore me")
+            # Retired assets (no longer shipped or read) must not be synced either
+            retired = assets_dir / "card/card-base.css"
+            retired.parent.mkdir(parents=True, exist_ok=True)
+            retired.write_bytes(b"body {}\n")
 
             rc = make_ota_manifest.main(
                 [
@@ -207,7 +208,7 @@ class TestMakeOtaManifest(unittest.TestCase):
             self.assertRegex(manifest["generatedAt"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
             files = manifest["files"]
-            self.assertEqual(len(files), 4)
+            self.assertEqual(len(files), 1)
             by_path = {entry["path"]: entry for entry in files}
 
             for rel, content in tracked.items():
@@ -226,39 +227,38 @@ class TestMakeOtaManifest(unittest.TestCase):
                 self.assertEqual(copied.read_bytes(), content)
 
             self.assertFalse((out_dir / "ota__other__ignore.txt").exists())
+            self.assertFalse((out_dir / "ota__card__card-base.css").exists())
 
     def test_handles_partial_missing_assets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             assets_dir = tmp_path / "assets"
             out_dir = tmp_path / "ota"
-            css = assets_dir / "card/card-base.css"
-            css.parent.mkdir(parents=True, exist_ok=True)
-            css.write_bytes(b".card { color: black; }\n")
+            assets_dir.mkdir(parents=True, exist_ok=True)
 
+            # A tracked asset missing from the assets dir is skipped, not an error
             manifest = make_ota_manifest.generate_ota_manifest(
                 assets_dir=assets_dir,
                 out_dir=out_dir,
                 version=7,
             )
             self.assertEqual(manifest["version"], 7)
-            self.assertEqual(len(manifest["files"]), 1)
-            self.assertEqual(manifest["files"][0]["assetName"], "ota__card__card-base.css")
+            self.assertEqual(manifest["files"], [])
 
     def test_default_and_explicit_tag_in_urls(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             assets_dir = tmp_path / "assets"
-            css = assets_dir / "card/card-base.css"
-            css.parent.mkdir(parents=True, exist_ok=True)
-            css.write_bytes(b".card {}\n")
+            js = assets_dir / "hanja/anki-tap.js"
+            js.parent.mkdir(parents=True, exist_ok=True)
+            js.write_bytes(b"// tap\n")
 
             default = make_ota_manifest.generate_ota_manifest(
                 assets_dir=assets_dir, out_dir=tmp_path / "a", version=1, repo="o/r"
             )
             self.assertEqual(
                 default["files"][0]["url"],
-                "https://github.com/o/r/releases/download/update-files/ota__card__card-base.css",
+                "https://github.com/o/r/releases/download/update-files/ota__hanja__anki-tap.js",
             )
             # The download page release must never be the OTA source by default.
             self.assertNotIn("/latest/", default["files"][0]["url"])
@@ -268,7 +268,7 @@ class TestMakeOtaManifest(unittest.TestCase):
             )
             self.assertEqual(
                 explicit["files"][0]["url"],
-                "https://github.com/o/r/releases/download/other/ota__card__card-base.css",
+                "https://github.com/o/r/releases/download/other/ota__hanja__anki-tap.js",
             )
 
 

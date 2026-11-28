@@ -61,6 +61,9 @@ class AndroidPlatform(context: Context) : Platform {
     private var cachedApkLatest: UpdateInfo.Latest? = null
     @Volatile
     private var cachedUiAvailable: OtaUiUpdater.Available? = null
+    /** A newer UI bundle that needs a newer APK (`minBuild` > this build); never applied. */
+    @Volatile
+    private var cachedUiNeedsApk: OtaUiUpdater.Available? = null
     @Volatile
     private var isCheckingUpdates = false
     @Volatile
@@ -301,10 +304,11 @@ class AndroidPlatform(context: Context) : Platform {
             cachedApkLatest = apkLatest
 
             val currentUi = serverRef?.ui?.version()
-            val uiAvailable = runCatching { OtaUiUpdater.check(currentUi) }
+            val uiResult = runCatching { OtaUiUpdater.check(currentUi) }
                 .onFailure { if (lastUpdateError == null) lastUpdateError = it.message }
                 .getOrNull()
-            cachedUiAvailable = uiAvailable
+            cachedUiAvailable = uiResult?.takeIf { !it.needsNewerApp }
+            cachedUiNeedsApk = uiResult?.takeIf { it.needsNewerApp }
 
             // Keep legacy OTA assets (e.g. hanja/anki-tap.js) fresh in background.
             runCatching { runBlocking { OtaAssetUpdater.checkAndUpdate(app) } }
@@ -319,8 +323,13 @@ class AndroidPlatform(context: Context) : Platform {
             updateCheck()
         }
 
+        // An APK newer than the installed build always wins (it also carries the newest built-in UI);
+        // otherwise fall through to the OTA UI bundle.
         val apkLatest = cachedApkLatest
         val apkAvailable = apkLatest != null && UpdateInfo.isNewer(apkLatest, AppUpdater.current)
+        if (apkAvailable && AppUpdater.inProgress) {
+            return buildUpdatePayload(started = false, message = AppUpdater.ALREADY_IN_PROGRESS)
+        }
         if (apkAvailable) {
             if (!app.packageManager.canRequestPackageInstalls()) {
                 val permIntent = Intent(
@@ -359,6 +368,9 @@ class AndroidPlatform(context: Context) : Platform {
                     )
                 }
             )
+            if (!started && AppUpdater.inProgress) {
+                return buildUpdatePayload(started = false, message = AppUpdater.ALREADY_IN_PROGRESS)
+            }
             return buildUpdatePayload(started = started)
         }
 
@@ -423,6 +435,7 @@ class AndroidPlatform(context: Context) : Platform {
         val uiAvail = cachedUiAvailable
         val uiAvailable = uiAvail != null
         val patch = if (apkAvailable) UpdateInfo.patchFor(apkLatest, AppUpdater.current) else null
+        val uiNeedsApk = cachedUiNeedsApk
 
         val kind = overrideKind ?: when {
             apkAvailable -> "apk"
@@ -458,10 +471,18 @@ class AndroidPlatform(context: Context) : Platform {
             "applied" to JsonPrimitive(applied),
             "reloadRequired" to JsonPrimitive(reloadRequired),
             "needsPermission" to JsonPrimitive(needsPermission),
+            "inProgress" to JsonPrimitive(AppUpdater.inProgress),
+            "uiNeedsApk" to JsonPrimitive(uiNeedsApk != null),
+            "uiMinBuild" to (uiNeedsApk?.minBuild?.let { JsonPrimitive(it) } ?: JsonNull),
             "error" to (lastUpdateError?.let { JsonPrimitive(it) } ?: JsonNull)
         )
-        if (!message.isNullOrBlank()) {
-            map["message"] = JsonPrimitive(message)
+        val effectiveMessage = message ?: if (uiNeedsApk != null && !apkAvailable) {
+            "새 화면(${uiNeedsApk.version})은 앱 업데이트(빌드 ${uiNeedsApk.minBuild} 이상)가 필요합니다. 새 앱이 올라오면 함께 설치됩니다."
+        } else {
+            null
+        }
+        if (!effectiveMessage.isNullOrBlank()) {
+            map["message"] = JsonPrimitive(effectiveMessage)
         }
         return JsonObject(map)
     }

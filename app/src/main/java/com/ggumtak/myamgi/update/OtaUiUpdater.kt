@@ -19,10 +19,16 @@ object OtaUiUpdater {
     const val UI_BUNDLE_ZIP = "ui-bundle.zip"
     private const val MAX_BUNDLE_BYTES = 50L * 1024 * 1024
 
+    /**
+     * A remote UI bundle newer than the running one. When [needsNewerApp] is true its `minBuild` is
+     * greater than this APK's build number: it must not be installed, an APK update comes first.
+     */
     data class Available(
         val version: String,
         val sizeBytes: Long,
-        val bundleUrl: String
+        val bundleUrl: String,
+        val minBuild: Int = 0,
+        val needsNewerApp: Boolean = false
     )
 
     private val client: OkHttpClient by lazy {
@@ -44,24 +50,44 @@ object OtaUiUpdater {
 
     /**
      * Checks `ui-version.json` and `ui-bundle.zip` on `update-files`.
-     * Returns null if no newer UI bundle is available (including 404).
+     * Returns null if no newer UI bundle is available (including 404). A newer bundle whose `minBuild`
+     * exceeds [nativeBuild] is returned with [Available.needsNewerApp] = true (never to be applied).
      */
-    fun check(currentUiVersion: String?, repo: String = BuildConfig.GITHUB_REPO): Available? {
+    fun check(
+        currentUiVersion: String?,
+        repo: String = BuildConfig.GITHUB_REPO,
+        nativeBuild: Int = BuildConfig.VERSION_CODE
+    ): Available? {
         val versionReq = Request.Builder()
             .url(versionUrl(repo))
             .header("Accept", "application/json")
             .header("User-Agent", "myAmgi-Android/${BuildConfig.VERSION_CODE}")
             .build()
 
-        val remoteVersion = client.newCall(versionReq).execute().use { resp ->
+        val versionBytes = client.newCall(versionReq).execute().use { resp ->
             if (!resp.isSuccessful) return null
-            val bytes = resp.body?.bytes() ?: return null
-            runCatching { ByteArrayInputStream(bytes).use { UiBundle.parseVersion(it) } }.getOrNull()
-        } ?: return null
+            resp.body?.bytes() ?: return null
+        }
+        val remoteVersion = runCatching {
+            ByteArrayInputStream(versionBytes).use { UiBundle.parseVersion(it) }
+        }.getOrNull() ?: return null
+        // Missing minBuild = 0; an unreadable value is treated as "needs a newer app" (fail safe).
+        val minBuild = runCatching {
+            ByteArrayInputStream(versionBytes).use { UiBundle.parseMinBuild(it) }
+        }.getOrDefault(Int.MAX_VALUE)
 
         val baseline = currentUiVersion?.takeIf { it.isNotBlank() } ?: "0"
         if (UiBundle.compareVersions(remoteVersion, baseline) <= 0) {
             return null
+        }
+        if (minBuild > nativeBuild) {
+            return Available(
+                version = remoteVersion,
+                sizeBytes = 0L,
+                bundleUrl = bundleUrl(repo),
+                minBuild = minBuild,
+                needsNewerApp = true
+            )
         }
 
         val zipUrl = bundleUrl(repo)
@@ -79,7 +105,8 @@ object OtaUiUpdater {
         return Available(
             version = remoteVersion,
             sizeBytes = sizeBytes.coerceAtLeast(0L),
-            bundleUrl = zipUrl
+            bundleUrl = zipUrl,
+            minBuild = minBuild
         )
     }
 
@@ -120,6 +147,12 @@ object OtaUiUpdater {
                 ?: throw IllegalStateException("유효한 UI 버전 정보를 읽을 수 없습니다.")
             if (!expectedVersion.isNullOrBlank() && extractedVersion != expectedVersion) {
                 throw IllegalStateException("UI 번들 버전 불일치 ($extractedVersion != $expectedVersion)")
+            }
+            val extractedMinBuild = runCatching {
+                versionFile.inputStream().use { UiBundle.parseMinBuild(it) }
+            }.getOrDefault(Int.MAX_VALUE)
+            if (extractedMinBuild > BuildConfig.VERSION_CODE) {
+                throw IllegalStateException("이 화면 업데이트를 쓰려면 먼저 앱을 업데이트해야 합니다.")
             }
 
             backupDir.deleteRecursively()

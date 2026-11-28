@@ -510,7 +510,9 @@ class SyncService(
                         fullDownload(creds, mediaUsn)
                     }
                 }
-                checkAbort()
+                // No checkAbort() here: the collection sync already completed and its changes are
+                // applied, so a "중단" pressed at the last moment must not report it as cancelled
+                // (and must not skip saving lastSync).
                 needsFullSync = false
                 CollectionOutcome(serverMessage, mediaUsn, didFullSync)
             }
@@ -520,7 +522,8 @@ class SyncService(
             val now = System.currentTimeMillis()
             saveState(mapOf("lastSync" to now, "pendingServerMediaUsn" to null))
 
-            val mediaEnabled = prefs.bool("sync.media", true)
+            // An abort that arrived after the collection finished still stops the follow-up media sync.
+            val mediaEnabled = prefs.bool("sync.media", true) && !abortRequested.get()
             var mediaSyncStarted = false
             var mediaSyncSkipped = false
             if (mediaEnabled) {
