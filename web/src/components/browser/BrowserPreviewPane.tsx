@@ -45,14 +45,16 @@ export function BrowserPreviewContent({
   hasNext,
   onCloseSheet,
 }: BrowserPreviewContentProps) {
-  const { resolvedTheme, navigate, bumpCollection } = useApp();
+  const { resolvedTheme, navigate } = useApp();
   const { showToast } = useToast();
   const frameRef = useRef<CardFrameHandle | null>(null);
+  const loadSeqRef = useRef(0);
 
   const [side, setSide] = useState<'question' | 'answer' | 'both'>('question');
   const [loading, setLoading] = useState(true);
   const [card, setCard] = useState<anki.Card | null>(null);
   const [note, setNote] = useState<anki.Note | null>(null);
+  const [noteCardCount, setNoteCardCount] = useState(1);
   const [notetypeName, setNotetypeName] = useState('');
   const [deckName, setDeckName] = useState('');
   const [rendered, setRendered] = useState<anki.RenderCardResponse | null>(null);
@@ -61,26 +63,36 @@ export function BrowserPreviewContent({
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   const loadItem = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     try {
       let targetCardId = itemId;
       let loadedCard: anki.Card | null = null;
       let loadedNote: anki.Note | null = null;
+      let cids: number[] = [];
 
       if (isNotesMode) {
         loadedNote = await anki.getNote(itemId);
-        const cids = await anki.cardsOfNote(itemId);
+        cids = await anki.cardsOfNote(itemId);
         if (cids.length > 0) {
           targetCardId = cids[0];
           loadedCard = await anki.getCard(targetCardId);
         }
       } else {
         loadedCard = await anki.getCard(itemId);
-        loadedNote = await anki.getNote(loadedCard.noteId);
+        const [fetchedNote, fetchedCids] = await Promise.all([
+          anki.getNote(loadedCard.noteId),
+          anki.cardsOfNote(loadedCard.noteId).catch(() => [itemId]),
+        ]);
+        loadedNote = fetchedNote;
+        cids = fetchedCids;
       }
+
+      if (seq !== loadSeqRef.current) return;
 
       setCard(loadedCard);
       setNote(loadedNote);
+      setNoteCardCount(cids.length);
 
       const [decks, nt] = await Promise.all([
         anki.getDeckNames(false, true).catch(() => []),
@@ -89,24 +101,30 @@ export function BrowserPreviewContent({
           : Promise.resolve(null),
       ]);
 
+      if (seq !== loadSeqRef.current) return;
+
       setNotetypeName(nt?.name ?? '');
       if (loadedCard) {
         const dId = anki.toNumber(loadedCard.deckId);
         const foundDeck = decks.find((d) => anki.toNumber(d.id) === dId);
         setDeckName(foundDeck?.name ?? '');
         const res = await anki.renderExistingCard(targetCardId, true, false);
+        if (seq !== loadSeqRef.current) return;
         setRendered(res);
       } else {
         setDeckName('');
         setRendered(null);
       }
     } catch (err) {
+      if (seq !== loadSeqRef.current) return;
       showToast(
         err instanceof Error ? err.message : '카드 미리보기를 불러오지 못했습니다.',
         'error'
       );
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) {
+        setLoading(false);
+      }
     }
   }, [itemId, isNotesMode, showToast]);
 
@@ -164,7 +182,6 @@ export function BrowserPreviewContent({
         await anki.addNoteTags([noteIdNum], 'marked');
         showToast('별표로 표시했습니다.');
       }
-      bumpCollection();
       onMutated();
       void loadItem();
     } catch (err) {
@@ -178,7 +195,6 @@ export function BrowserPreviewContent({
       await anki.setFlag([cardIdNum], flag);
       setFlagOpen(false);
       showToast(flag === 0 ? '깃발을 해제했습니다.' : `깃발 ${flag}번을 지정했습니다.`);
-      bumpCollection();
       onMutated();
       void loadItem();
     } catch (err) {
@@ -196,7 +212,6 @@ export function BrowserPreviewContent({
         await anki.buryOrSuspendCards([cardIdNum], [], anki.BuryOrSuspendMode.SUSPEND);
         showToast('카드를 일시 중지했습니다.');
       }
-      bumpCollection();
       onMutated();
       void loadItem();
     } catch (err) {
@@ -214,7 +229,6 @@ export function BrowserPreviewContent({
         await anki.buryOrSuspendCards([cardIdNum], [], anki.BuryOrSuspendMode.BURY_USER);
         showToast('카드를 숨겼습니다.');
       }
-      bumpCollection();
       onMutated();
       void loadItem();
     } catch (err) {
@@ -228,9 +242,28 @@ export function BrowserPreviewContent({
       await anki.removeNotes([noteIdNum], []);
       setConfirmDeleteOpen(false);
       onCloseSheet?.();
-      showToast('노트를 삭제했습니다.', 'success');
-      bumpCollection();
       onMutated();
+      showToast(
+        noteCardCount > 0
+          ? `노트 1개(카드 ${noteCardCount}장)를 삭제했습니다.`
+          : '노트를 삭제했습니다.',
+        'success',
+        {
+          label: '되돌리기',
+          onClick: async () => {
+            try {
+              await anki.undo();
+              onMutated();
+              showToast('삭제를 되돌렸습니다.', 'info');
+            } catch (err) {
+              showToast(
+                err instanceof Error ? err.message : '되돌리기에 실패했습니다.',
+                'error'
+              );
+            }
+          },
+        }
+      );
     } catch (err) {
       showToast(err instanceof Error ? err.message : '삭제하지 못했습니다.', 'error');
     }
@@ -335,7 +368,6 @@ export function BrowserPreviewContent({
           <button
             type="button"
             className="amgi-btn amgi-btn-ghost amgi-btn-icon"
-            style={{ width: 44, minWidth: 44, height: 44 }}
             aria-label="카드 작업 더 보기"
             onClick={() => setActionsOpen(true)}
           >
@@ -475,7 +507,13 @@ export function BrowserPreviewContent({
         }
       >
         <p className="amgi-prose" style={{ margin: 0 }}>
-          선택한 노트를 삭제할까요? 삭제 후 되돌리기로 복구할 수 있습니다.
+          선택한 노트 1개
+          {noteCardCount > 0 ? (
+            <>
+              (연결된 카드 <strong className="tabular">{noteCardCount}장</strong>)
+            </>
+          ) : null}
+          을(를) 삭제할까요? 삭제 직후 알림의 되돌리기로 복구할 수 있습니다.
         </p>
       </SheetOrDialog>
     </div>

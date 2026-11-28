@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as anki from '../../anki';
 import type { AnkiTypes } from '../../anki/generated';
 import { useApp } from '../../context/AppContext';
@@ -21,9 +21,6 @@ interface NoteTypeSummary {
   id: number;
   name: string;
   useCount: number;
-  fieldCount: number;
-  templateCount: number;
-  isCloze: boolean;
 }
 
 const STOCK_PRESETS: Array<{ kind: anki.StockNotetypeKind; label: string; desc: string }> = [
@@ -78,44 +75,36 @@ export const NoteTypeListView: React.FC = () => {
   const [renameInput, setRenameInput] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<NoteTypeSummary | null>(null);
 
+  const loadSeqRef = useRef(0);
+  const hasLoadedOnceRef = useRef(false);
+
   const loadList = useCallback(async () => {
-    setLoading(true);
+    const seq = ++loadSeqRef.current;
+    if (!hasLoadedOnceRef.current) {
+      setLoading(true);
+    }
     setError(null);
     try {
+      // Single RPC call avoids N+1 getNotetype requests; full details load on editor open.
       const counts = await anki.getNotetypeNamesAndCounts();
-      const details = await Promise.all(
-        counts.map(async (entry) => {
-          const id = anki.toNumber(entry.id);
-          const useCount = entry.useCount ?? 0;
-          try {
-            const nt = await anki.getNotetype(id);
-            return {
-              id,
-              name: entry.name ?? nt.name ?? '이름 없음',
-              useCount,
-              fieldCount: nt.fields?.length ?? 0,
-              templateCount: nt.templates?.length ?? 0,
-              isCloze: nt.config?.kind === anki.NotetypeKind.KIND_CLOZE,
-            };
-          } catch {
-            return {
-              id,
-              name: entry.name ?? '이름 없음',
-              useCount,
-              fieldCount: 0,
-              templateCount: 0,
-              isCloze: false,
-            };
-          }
-        })
+      if (seq !== loadSeqRef.current) return;
+      hasLoadedOnceRef.current = true;
+      setItems(
+        counts.map((entry) => ({
+          id: anki.toNumber(entry.id),
+          name: entry.name ?? '이름 없음',
+          useCount: entry.useCount ?? 0,
+        }))
       );
-      setItems(details);
     } catch (err) {
+      if (seq !== loadSeqRef.current) return;
       setError(
         err instanceof Error ? err.message : '노트 유형 목록을 불러오지 못했습니다.'
       );
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -172,7 +161,6 @@ export const NoteTypeListView: React.FC = () => {
       setAddModalOpen(false);
       bumpCollection();
       showToast(`"${trimmed}" 노트 유형을 만들었습니다.`, 'success');
-      await loadList();
       if (createdId > 0) {
         navigate(`#/notetype/${createdId}`);
       }
@@ -210,7 +198,6 @@ export const NoteTypeListView: React.FC = () => {
       await anki.addNotetype(cloned);
       bumpCollection();
       showToast(`"${cloneName}" 노트 유형을 복제했습니다.`, 'success');
-      await loadList();
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : '노트 유형을 복제하지 못했습니다.',
@@ -239,7 +226,6 @@ export const NoteTypeListView: React.FC = () => {
       setRenameTarget(null);
       bumpCollection();
       showToast('노트 유형 이름을 바꾸었습니다.', 'success');
-      await loadList();
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : '이름을 바꾸지 못했습니다.',
@@ -269,7 +255,6 @@ export const NoteTypeListView: React.FC = () => {
       setDeleteTarget(null);
       bumpCollection();
       showToast('노트 유형을 삭제했습니다.', 'success');
-      await loadList();
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : '노트 유형을 삭제하지 못했습니다.',
@@ -308,15 +293,15 @@ export const NoteTypeListView: React.FC = () => {
       </header>
 
       <div className="amgi-nt-list-body">
-        {error ? (
+        {error && items.length === 0 ? (
           <ErrorState
             title="노트 유형을 불러오지 못했습니다"
             message={error}
             onRetry={() => void loadList()}
           />
-        ) : loading ? (
+        ) : loading && items.length === 0 ? (
           <SectionCard>
-            <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-2)' }}>
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-3)' }}>
               노트 유형 목록을 불러오는 중...
             </div>
           </SectionCard>
@@ -331,11 +316,11 @@ export const NoteTypeListView: React.FC = () => {
                 >
                   <div className="amgi-nt-title-line">
                     <span className="amgi-nt-name">{item.name}</span>
-                    {item.isCloze && <span className="amgi-nt-badge">빈칸 유형</span>}
                   </div>
                   <div className="amgi-nt-meta tabular">
-                    노트 {item.useCount.toLocaleString()}개 · 필드 {item.fieldCount}개 · 카드{' '}
-                    {item.templateCount}장
+                    {item.useCount > 0
+                      ? `노트 ${item.useCount.toLocaleString('ko-KR')}개 사용 중`
+                      : '사용 중인 노트 없음'}
                   </div>
                 </button>
 

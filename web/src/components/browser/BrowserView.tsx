@@ -20,6 +20,7 @@ import {
   SheetOrDialog,
   useToast,
 } from '../../ui';
+import { openOverlayCount } from '../../ui/overlayStack';
 import { BatchActionBar } from './BatchActionBar';
 import { BrowserPreviewPane, BrowserPreviewSheet } from './BrowserPreviewPane';
 import { BrowserSidebar } from './BrowserSidebar';
@@ -37,6 +38,41 @@ import {
 import './browser.css';
 
 const BROWSER_TABLE_SHOW_NOTES_MODE = 0;
+const BROWSER_SCROLL_STORAGE_KEY = 'amgi:browser:scroll';
+
+function readInitialQueryFromHash(): string {
+  if (typeof window === 'undefined') return '';
+  const hash = window.location.hash || '';
+  const qIdx = hash.indexOf('?');
+  if (qIdx < 0) return '';
+  const params = new URLSearchParams(hash.slice(qIdx + 1));
+  return params.get('q') ?? '';
+}
+
+function readSavedScrollForQuery(query: string): number {
+  try {
+    const raw = window.sessionStorage.getItem(BROWSER_SCROLL_STORAGE_KEY);
+    if (!raw) return 0;
+    const parsed = JSON.parse(raw) as { query?: string; scrollTop?: number };
+    if (parsed.query === query && typeof parsed.scrollTop === 'number' && parsed.scrollTop > 0) {
+      return parsed.scrollTop;
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  return 0;
+}
+
+function writeSavedScrollForQuery(query: string, scrollTop: number): void {
+  try {
+    window.sessionStorage.setItem(
+      BROWSER_SCROLL_STORAGE_KEY,
+      JSON.stringify({ query, scrollTop })
+    );
+  } catch {
+    // Ignore storage errors
+  }
+}
 
 function useIsWide(breakpoint = 900): boolean {
   const [isWide, setIsWide] = useState(() =>
@@ -65,6 +101,7 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
     setPref,
     resolvedTheme,
     collectionVersion,
+    bumpCollection,
     navigate,
     registerBackHandler,
   } = useApp();
@@ -74,11 +111,26 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
   const isSidebarWide = useIsWide(1100);
   const isEink = resolvedTheme === 'eink';
 
-  const [queryText, setQueryText] = useState(() => initialQuery ?? '');
-  const [debouncedQuery, setDebouncedQuery] = useState(() => initialQuery ?? '');
-  const [filters, setFilters] = useState<BrowserFilterState>(() =>
-    parseQueryToFilters(initialQuery ?? '')
+  const resolvedInitialQuery = useMemo(
+    () => (initialQuery !== undefined ? initialQuery : readInitialQueryFromHash()),
+    // Only computed for initial mount default; external changes handled below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
   );
+
+  const [queryText, setQueryText] = useState(() => resolvedInitialQuery);
+  const [debouncedQuery, setDebouncedQuery] = useState(() => resolvedInitialQuery);
+  const [initialScrollTop] = useState(() => readSavedScrollForQuery(resolvedInitialQuery));
+
+  // Single source of truth: derive filter chip state directly from queryText.
+  const filters = useMemo(() => parseQueryToFilters(queryText), [queryText]);
+
+  const isComposingRef = useRef(false);
+  const searchSeqRef = useRef(0);
+  const filterComposeSeqRef = useRef(0);
+  const prevInitialQueryRef = useRef(initialQuery);
+  const debouncedQueryRef = useRef(debouncedQuery);
+  debouncedQueryRef.current = debouncedQuery;
 
   const [isNotesMode, setIsNotesMode] = useState(false);
   const [allColumns, setAllColumns] = useState<anki.BrowserColumn[]>([]);
@@ -103,14 +155,37 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
   const [sortSheetOpen, setSortSheetOpen] = useState(false);
   const [columnsSheetOpen, setColumnsSheetOpen] = useState(false);
 
-  // Sync external initialQuery prop changes (e.g., navigation from duplicate warning)
+  // Sync external initialQuery prop changes (e.g., navigation from tag manager or deck menu)
   useEffect(() => {
-    if (initialQuery !== undefined) {
-      setQueryText(initialQuery);
-      setDebouncedQuery(initialQuery);
-      setFilters(parseQueryToFilters(initialQuery));
+    if (initialQuery !== prevInitialQueryRef.current) {
+      prevInitialQueryRef.current = initialQuery;
+      if (initialQuery !== undefined) {
+        setQueryText(initialQuery);
+        setDebouncedQuery(initialQuery);
+      }
     }
   }, [initialQuery]);
+
+  // Persist current query in URL hash without creating extra history entries
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const currentHash = window.location.hash || '';
+    if (!currentHash.startsWith('#/browse')) return;
+    const nextHash = debouncedQuery.trim()
+      ? `#/browse?q=${encodeURIComponent(debouncedQuery)}`
+      : '#/browse';
+    if (currentHash !== nextHash) {
+      try {
+        window.history.replaceState(
+          window.history.state,
+          '',
+          `${window.location.pathname}${window.location.search}${nextHash}`
+        );
+      } catch {
+        // Ignore history errors in restricted environments
+      }
+    }
+  }, [debouncedQuery]);
 
   // Load initial browser mode, available columns, and saved prefs
   useEffect(() => {
@@ -148,29 +223,20 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
     }
   }, [isNotesMode, prefs]);
 
-  // Debounce free-text query edits
+  // Debounce free-text query edits (skip while IME composing)
   useEffect(() => {
+    if (isComposingRef.current) return;
     const timer = window.setTimeout(() => {
-      setDebouncedQuery(queryText);
+      if (!isComposingRef.current) {
+        setDebouncedQuery(queryText);
+      }
     }, 300);
     return () => window.clearTimeout(timer);
   }, [queryText]);
 
-  // Back handler exits selection mode / preview sheet first on phone
+  // Back handler exits selection mode on phone (sheets are handled by overlayStack)
   useEffect(() => {
     return registerBackHandler(() => {
-      if (previewSheetOpen) {
-        setPreviewSheetOpen(false);
-        return true;
-      }
-      if (sortSheetOpen) {
-        setSortSheetOpen(false);
-        return true;
-      }
-      if (columnsSheetOpen) {
-        setColumnsSheetOpen(false);
-        return true;
-      }
       if (selectionMode || selectedIds.size > 0) {
         setSelectionMode(false);
         setSelectedIds(new Set());
@@ -178,14 +244,7 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
       }
       return false;
     });
-  }, [
-    registerBackHandler,
-    previewSheetOpen,
-    sortSheetOpen,
-    columnsSheetOpen,
-    selectionMode,
-    selectedIds.size,
-  ]);
+  }, [registerBackHandler, selectionMode, selectedIds.size]);
 
   const sortableColumns = useMemo(() => {
     return allColumns.filter((col) => {
@@ -199,11 +258,13 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
   }, [isWide, wideColumns]);
 
   const runSearch = useCallback(async () => {
+    const seq = ++searchSeqRef.current;
     setLoadingSearch(true);
     setSearchError(null);
     try {
       // CRITICAL: always setActiveBrowserColumns BEFORE browserRowForId can run
       await anki.setActiveBrowserColumns(effectiveActiveColumns);
+      if (seq !== searchSeqRef.current) return;
 
       let order: anki.SortOrder = { none: {} };
       if (sortColumn) {
@@ -222,18 +283,43 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
         ? await anki.searchNotes(trimmed, order)
         : await anki.searchCards(trimmed, order);
 
+      if (seq !== searchSeqRef.current) return;
+
+      const idSet = new Set(resultIds);
       setIds(resultIds);
       setCacheGeneration((g) => g + 1);
+
+      // Prune selection so IDs removed by filtering or deletion do not linger
+      setSelectedIds((prev) => {
+        if (prev.size === 0) return prev;
+        let changed = false;
+        const next = new Set<number>();
+        for (const id of prev) {
+          if (idSet.has(id)) {
+            next.add(id);
+          } else {
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+      if (lastSelectedIdRef.current !== null && !idSet.has(lastSelectedIdRef.current)) {
+        lastSelectedIdRef.current = null;
+      }
+
       setActiveItemId((prev) => {
-        if (prev !== null && resultIds.includes(prev)) return prev;
+        if (prev !== null && idSet.has(prev)) return prev;
         return isWide && resultIds.length > 0 ? resultIds[0] : null;
       });
     } catch (err) {
+      if (seq !== searchSeqRef.current) return;
       setSearchError(
         err instanceof Error ? err.message : '카드 검색에 실패했습니다.'
       );
     } finally {
-      setLoadingSearch(false);
+      if (seq === searchSeqRef.current) {
+        setLoadingSearch(false);
+      }
     }
   }, [
     debouncedQuery,
@@ -249,9 +335,10 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
     void runSearch();
   }, [runSearch, collectionVersion]);
 
-  // Ctrl/Cmd+A selects all search results in wide mode
+  // Ctrl/Cmd+A selects all search results when no modal overlay is open
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (openOverlayCount() > 0) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
         const tag = (e.target as HTMLElement | null)?.tagName;
         if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
@@ -266,12 +353,14 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
   }, [ids]);
 
   const handleFiltersChange = async (next: BrowserFilterState) => {
-    setFilters(next);
+    const seq = ++filterComposeSeqRef.current;
     try {
       const composed = await composeQueryFromFilters(next);
+      if (seq !== filterComposeSeqRef.current) return;
       setQueryText(composed);
       setDebouncedQuery(composed);
     } catch (err) {
+      if (seq !== filterComposeSeqRef.current) return;
       showToast(
         err instanceof Error ? err.message : '필터 조건을 조합하지 못했습니다.',
         'error'
@@ -281,17 +370,9 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
 
   const handleManualQueryChange = (val: string) => {
     setQueryText(val);
-    setFilters(parseQueryToFilters(val));
   };
 
   const handleResetAll = () => {
-    const empty: BrowserFilterState = {
-      states: [],
-      tags: [],
-      addedToday: false,
-      freeText: '',
-    };
-    setFilters(empty);
     setQueryText('');
     setDebouncedQuery('');
   };
@@ -346,6 +427,10 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
   };
 
   const handleEnterSelectionMode = (initialId: number) => {
+    if (selectionMode || selectedIds.size > 0) {
+      handleToggleSelect(initialId, false);
+      return;
+    }
     setSelectionMode(true);
     lastSelectedIdRef.current = initialId;
     setSelectedIds(new Set([initialId]));
@@ -378,6 +463,12 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
     void setPref(prefKey, next).catch(() => undefined);
   };
 
+  const handleScrollTopChange = useCallback((top: number) => {
+    writeSavedScrollForQuery(debouncedQueryRef.current, top);
+  }, []);
+
+  const scrollResetKey = `${debouncedQuery}\0${isNotesMode ? 'N' : 'C'}\0${sortColumn ?? ''}\0${sortReverse ? '1' : '0'}`;
+
   const activeSortLabel = useMemo(() => {
     if (!sortColumn) return '정렬 없음';
     const meta = allColumns.find((c) => c.key === sortColumn);
@@ -403,7 +494,7 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
         <div className="amgi-browser-search-row">
           <div className="amgi-browser-search-wrap">
             <span className="amgi-browser-search-icon">
-              <IconSearch size={17} />
+              <IconSearch size={18} />
             </span>
             <input
               type="search"
@@ -411,7 +502,19 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
               placeholder={isWide ? '검색어 또는 조건 입력 (예: deck:일본어)' : '카드·태그 검색'}
               value={queryText}
               onChange={(e) => handleManualQueryChange(e.target.value)}
+              onCompositionStart={() => {
+                isComposingRef.current = true;
+              }}
+              onCompositionEnd={(e) => {
+                isComposingRef.current = false;
+                const val = e.currentTarget.value;
+                setQueryText(val);
+                setDebouncedQuery(val);
+              }}
               onKeyDown={(e) => {
+                if (e.nativeEvent.isComposing || e.keyCode === 229 || isComposingRef.current) {
+                  return;
+                }
                 if (e.key === 'Enter') {
                   setDebouncedQuery(queryText);
                 }
@@ -574,7 +677,6 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
               onSelectQuery={(nextQuery) => {
                 setQueryText(nextQuery);
                 setDebouncedQuery(nextQuery);
-                setFilters(parseQueryToFilters(nextQuery));
               }}
             />
           )}
@@ -594,6 +696,9 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
               sortReverse={sortReverse}
               cacheGeneration={cacheGeneration}
               loadingSearch={loadingSearch}
+              scrollResetKey={scrollResetKey}
+              initialScrollTop={initialScrollTop}
+              onScrollTopChange={handleScrollTopChange}
               onTapItem={handleTapItem}
               onToggleSelect={handleToggleSelect}
               onEnterSelectionMode={handleEnterSelectionMode}
@@ -605,7 +710,7 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
             <BrowserPreviewPane
               activeItemId={activeItemId}
               isNotesMode={isNotesMode}
-              onMutated={() => void runSearch()}
+              onMutated={bumpCollection}
               onHidePane={() => setShowWidePreview(false)}
             />
           )}
@@ -620,7 +725,7 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
           setSelectedIds(new Set());
           setSelectionMode(false);
         }}
-        onMutated={() => void runSearch()}
+        onMutated={bumpCollection}
       />
 
       {/* Mobile Preview Sheet */}
@@ -632,7 +737,7 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
           activeItemId={activeItemId}
           isNotesMode={isNotesMode}
           onSelectId={(nextId) => setActiveItemId(nextId)}
-          onMutated={() => void runSearch()}
+          onMutated={bumpCollection}
         />
       )}
 

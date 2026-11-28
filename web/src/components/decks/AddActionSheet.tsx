@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import * as anki from '../../anki';
 import * as host from '../../host';
 import { useApp } from '../../context/AppContext';
@@ -12,6 +12,7 @@ import {
   Switch,
   useToast,
 } from '../../ui';
+import { parseClampedInt, preventImeEnterSubmit } from './deckUtils';
 import './decks.css';
 
 export interface AddActionSheetProps {
@@ -37,9 +38,10 @@ export const AddActionSheet: React.FC<AddActionSheetProps> = ({
   onClose,
   defaultDeckId,
 }) => {
-  const { bumpCollection, navigate, registerBackHandler } = useApp();
+  const { bumpCollection, navigate } = useApp();
   const { showToast } = useToast();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const filteredLoadSeqRef = useRef(0);
 
   // Create Deck modal state
   const [createDeckOpen, setCreateDeckOpen] = useState(false);
@@ -50,7 +52,7 @@ export const AddActionSheet: React.FC<AddActionSheetProps> = ({
   const [filteredOpen, setFilteredOpen] = useState(false);
   const [filteredName, setFilteredName] = useState('맞춤 학습 덱');
   const [filteredSearch, setFilteredSearch] = useState('is:due');
-  const [filteredLimit, setFilteredLimit] = useState(100);
+  const [filteredLimitDraft, setFilteredLimitDraft] = useState('100');
   const [filteredOrder, setFilteredOrder] = useState<number>(
     anki.FilteredSearchOrder.OLDEST_REVIEWED_FIRST
   );
@@ -65,42 +67,9 @@ export const AddActionSheet: React.FC<AddActionSheetProps> = ({
   } | null>(null);
   const [importingColpkg, setImportingColpkg] = useState(false);
 
-  // Register back handler when any sub-modal or menu is open
-  useEffect(() => {
-    if (!open && !createDeckOpen && !filteredOpen && !colpkgConfirm) return;
-    return registerBackHandler(() => {
-      if (colpkgConfirm && !importingColpkg) {
-        setColpkgConfirm(null);
-        return true;
-      }
-      if (filteredOpen && !creatingFiltered) {
-        setFilteredOpen(false);
-        return true;
-      }
-      if (createDeckOpen && !creatingDeck) {
-        setCreateDeckOpen(false);
-        return true;
-      }
-      if (open) {
-        onClose();
-        return true;
-      }
-      return false;
-    });
-  }, [
-    open,
-    onClose,
-    createDeckOpen,
-    creatingDeck,
-    filteredOpen,
-    creatingFiltered,
-    colpkgConfirm,
-    importingColpkg,
-    registerBackHandler,
-  ]);
-
   const handleCreateDeck = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (creatingDeck) return;
     const trimmed = deckName.trim();
     if (!trimmed) {
       showToast('덱 이름을 입력해 주세요.', 'error');
@@ -124,13 +93,15 @@ export const AddActionSheet: React.FC<AddActionSheetProps> = ({
   };
 
   const openFilteredBuilder = async () => {
+    const seq = ++filteredLoadSeqRef.current;
     setFilteredOpen(true);
     try {
       const defaults = await anki.getOrCreateFilteredDeck(0);
+      if (seq !== filteredLoadSeqRef.current) return;
       const firstTerm = defaults.config?.searchTerms?.[0];
       setFilteredName(defaults.name || '맞춤 학습 덱');
       setFilteredSearch(firstTerm?.search || 'is:due');
-      setFilteredLimit(firstTerm?.limit || 100);
+      setFilteredLimitDraft(String(firstTerm?.limit || 100));
       setFilteredOrder(
         firstTerm?.order ?? anki.FilteredSearchOrder.OLDEST_REVIEWED_FIRST
       );
@@ -142,11 +113,14 @@ export const AddActionSheet: React.FC<AddActionSheetProps> = ({
 
   const handleCreateFiltered = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (creatingFiltered) return;
     const trimmedName = filteredName.trim();
     if (!trimmedName) {
       showToast('필터 덱 이름을 입력해 주세요.', 'error');
       return;
     }
+    const clampedLimit = parseClampedInt(filteredLimitDraft, 1, 9999, 100);
+    setFilteredLimitDraft(String(clampedLimit));
     setCreatingFiltered(true);
     try {
       const base = await anki.getOrCreateFilteredDeck(0);
@@ -160,7 +134,7 @@ export const AddActionSheet: React.FC<AddActionSheetProps> = ({
           searchTerms: [
             {
               search: filteredSearch.trim(),
-              limit: Math.max(1, filteredLimit),
+              limit: clampedLimit,
               order: filteredOrder,
             },
           ],
@@ -345,6 +319,7 @@ export const AddActionSheet: React.FC<AddActionSheetProps> = ({
               autoFocus
               value={deckName}
               onChange={(e) => setDeckName(e.target.value)}
+              onKeyDown={preventImeEnterSubmit}
               placeholder="예: 일본어::한자 또는 토익 영단어"
             />
             <span className="amgi-field-hint">
@@ -397,6 +372,7 @@ export const AddActionSheet: React.FC<AddActionSheetProps> = ({
               className="amgi-input"
               value={filteredName}
               onChange={(e) => setFilteredName(e.target.value)}
+              onKeyDown={preventImeEnterSubmit}
             />
           </div>
           <div className="amgi-field-group">
@@ -409,6 +385,7 @@ export const AddActionSheet: React.FC<AddActionSheetProps> = ({
               className="amgi-input"
               value={filteredSearch}
               onChange={(e) => setFilteredSearch(e.target.value)}
+              onKeyDown={preventImeEnterSubmit}
               placeholder='예: deck:"일본어" is:due'
             />
             <span className="amgi-field-hint">
@@ -423,11 +400,18 @@ export const AddActionSheet: React.FC<AddActionSheetProps> = ({
             <input
               id="add-fd-limit"
               type="number"
+              inputMode="numeric"
               min={1}
               max={9999}
               className="amgi-input tabular"
-              value={filteredLimit}
-              onChange={(e) => setFilteredLimit(Number(e.target.value) || 100)}
+              value={filteredLimitDraft}
+              onChange={(e) => setFilteredLimitDraft(e.target.value)}
+              onBlur={() =>
+                setFilteredLimitDraft(
+                  String(parseClampedInt(filteredLimitDraft, 1, 9999, 100))
+                )
+              }
+              onKeyDown={preventImeEnterSubmit}
             />
           </div>
           <div className="amgi-field-group">

@@ -20,6 +20,11 @@ import {
   type SyncStatus,
 } from '../host';
 import { SheetOrDialog, useToast } from '../ui';
+import {
+  closeTopOverlay,
+  hasBlockingOverlay,
+  subscribeOverlayStack,
+} from '../ui/overlayStack';
 
 export type ResolvedTheme = 'light' | 'dark' | 'eink';
 export type PrefTheme = 'auto' | 'light' | 'dark' | 'eink';
@@ -54,7 +59,8 @@ export interface AppContextValue {
   collectionVersion: number;
   bumpCollection: () => void;
   navigate: (hash: string) => void;
-  goBack: (fallback?: string) => void;
+  /** On-screen / programmatic back. `force` skips screen back handlers (unsaved guards). */
+  goBack: (fallback?: string, opts?: { force?: boolean }) => void;
   registerBackHandler: (fn: () => boolean) => () => void;
   registerKeyHandler: (fn: (ev: HostKeyEvent) => boolean) => () => void;
 }
@@ -101,6 +107,43 @@ function isRootHash(hash: string): boolean {
   return normalized === '#/decks' || normalized === '#/';
 }
 
+/**
+ * Bottom-nav tab roots other than the deck list.
+ * Plain `#/browse`, `#/stats`, `#/settings` — or a `#/browse?q=...` entry reached via
+ * `replaceHash` (tab switch, marked with `history.state.amgiTabRoot`) — return to `#/decks`.
+ * Drill-in navigations like `#/browse?q=deck:...` from a deck or note editor keep normal
+ * `history.back()` so Back returns to the caller screen.
+ */
+function isTabRootHash(hash: string): boolean {
+  const normalized = normalizeHashTarget(hash);
+  if (normalized === '#/browse' || normalized === '#/stats' || normalized === '#/settings') {
+    return true;
+  }
+  const path = normalized.split('?')[0];
+  const state = window.history.state as { amgiTabRoot?: boolean } | null;
+  return Boolean(
+    state?.amgiTabRoot && (path === '#/browse' || path === '#/stats' || path === '#/settings')
+  );
+}
+
+/** Replace the current history entry with `hash` (no new back-stack entry). */
+export function replaceHash(hash: string): void {
+  const next = normalizeHashTarget(hash);
+  if (window.location.hash === next) return;
+  const path = next.split('?')[0];
+  const isTab = path === '#/browse' || path === '#/stats' || path === '#/settings';
+  try {
+    window.history.replaceState(
+      isTab ? { amgiTabRoot: true } : null,
+      '',
+      `${window.location.pathname}${window.location.search}${next}`
+    );
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  } catch {
+    window.location.replace(`${window.location.pathname}${window.location.search}${next}`);
+  }
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const { showToast } = useToast();
 
@@ -125,6 +168,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCollectionVersion((v) => v + 1);
   }, []);
 
+  // One finished sync is observed by several paths (syncRun result, status SSE transition,
+  // resume reconcile). Coalesce them so screens reload once instead of up to three times.
+  const lastSyncBumpRef = useRef(0);
+  const bumpAfterSync = useCallback(() => {
+    const now = Date.now();
+    if (now - lastSyncBumpRef.current < 3000) return;
+    lastSyncBumpRef.current = now;
+    setCollectionVersion((v) => v + 1);
+  }, []);
+
   const navigate = useCallback((hash: string) => {
     setAddSheetOpen(false);
     setSyncSheetOpen(false);
@@ -134,33 +187,87 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const goBack = useCallback((fallback = '#/decks') => {
+  const lastRootBackRef = useRef(0);
+
+  /** Runs registered screen back handlers (last registered first). True if one consumed it. */
+  const runBackHandlers = useCallback((): boolean => {
     const handlers = Array.from(backHandlersRef.current);
     for (let i = handlers.length - 1; i >= 0; i--) {
       try {
         if (handlers[i]()) {
-          return;
+          return true;
         }
       } catch {
         // Ignore faulty handler and try next
       }
     }
+    return false;
+  }, []);
 
-    if (isRootHash(window.location.hash || '#/decks')) {
-      void host.platformExit().catch(() => undefined);
+  /** Pure route navigation: history back, or the fallback hash when there is no history. */
+  const navigateBack = useCallback((fallback: string) => {
+    // Tabs are switched with history.replace, so "back" from a non-home tab always means
+    // "go to the deck list" (Android bottom-navigation convention), not the previous tab.
+    if (isTabRootHash(window.location.hash || '#/decks')) {
+      replaceHash('#/decks');
       return;
     }
-
     if (window.history.length > 1) {
       window.history.back();
       return;
     }
-
     const target = normalizeHashTarget(fallback);
     if (window.location.hash !== target) {
       window.location.hash = target;
     }
   }, []);
+
+  /**
+   * Programmatic / on-screen back (e.g. the top bar arrow). Screen handlers such as the
+   * unsaved-changes guard still run unless `force` is set — use `force` right after a
+   * successful save or an explicit "버리고 나가기", where state updates have not committed yet.
+   */
+  const goBack = useCallback(
+    (fallback = '#/decks', opts?: { force?: boolean }) => {
+      if (!opts?.force && runBackHandlers()) {
+        return;
+      }
+      if (isRootHash(window.location.hash || '#/decks')) {
+        return;
+      }
+      navigateBack(fallback);
+    },
+    [runBackHandlers, navigateBack]
+  );
+
+  /** Android hardware back (host `back` event). */
+  const handleSystemBack = useCallback(() => {
+    // 1. Any open sheet / dialog / menu / palette closes first (top-most only).
+    if (closeTopOverlay()) {
+      return;
+    }
+
+    // 2. Screen-specific handlers (inline panels, previews, unsaved-changes guards).
+    if (runBackHandlers()) {
+      return;
+    }
+
+    // 3. Root screen: require a second press while the hint toast is visible so a stray
+    //    back never quits the app. The window matches the toast duration (ui/Toast.tsx).
+    if (isRootHash(window.location.hash || '#/decks')) {
+      const now = Date.now();
+      if (now - lastRootBackRef.current < 3200) {
+        lastRootBackRef.current = 0;
+        void host.platformExit().catch(() => undefined);
+      } else {
+        lastRootBackRef.current = now;
+        showToast('뒤로 버튼을 한 번 더 누르면 종료됩니다.', 'info');
+      }
+      return;
+    }
+
+    navigateBack('#/decks');
+  }, [runBackHandlers, navigateBack, showToast]);
 
   const registerBackHandler = useCallback((fn: () => boolean) => {
     backHandlersRef.current.add(fn);
@@ -246,7 +353,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             return;
           }
           if (res.ok) {
-            setCollectionVersion((v) => v + 1);
+            bumpAfterSync();
             const doneMsg =
               mode === 'download'
                 ? res.mediaSyncStarted
@@ -283,7 +390,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           syncInFlightRef.current = false;
         });
     },
-    [refreshSyncStatus, showToast]
+    [bumpAfterSync, refreshSyncStatus, showToast]
   );
 
   const mediaSyncInFlightRef = useRef(false);
@@ -348,7 +455,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (wasRunningRef.current && !st.running) {
       wasRunningRef.current = false;
       if (!st.lastError && !st.needsFullSync) {
-        setCollectionVersion((v) => v + 1);
+        bumpAfterSync();
       }
     } else if (st.running) {
       wasRunningRef.current = true;
@@ -360,7 +467,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } else if (st.mediaRunning) {
       wasMediaRunningRef.current = true;
     }
-  }, []);
+  }, [bumpAfterSync]);
 
   useEffect(() => {
     wasRunningRef.current = Boolean(syncStatus?.running);
@@ -437,10 +544,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const bgHex =
       resolvedTheme === 'dark'
-        ? '#0B0E14'
+        ? '#101114'
         : resolvedTheme === 'eink'
           ? '#FFFFFF'
-          : '#F4F5F7';
+          : '#F2F4F6';
     const isLight = resolvedTheme !== 'dark';
     const themeColorMeta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
     if (themeColorMeta) {
@@ -458,24 +565,40 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [resolvedTheme]);
 
-  // Sync study & volume-key state to AndroidShell on route, focus, or pref changes
+  // Sync study & volume-key state to AndroidShell on route, focus, overlay, or pref changes
+  const frameInputFocusedRef = useRef(false);
   useEffect(() => {
+    const isEditable = (el: Element | null | undefined): boolean => {
+      const tag = el?.tagName?.toLowerCase();
+      return Boolean(
+        el &&
+          (tag === 'input' ||
+            tag === 'textarea' ||
+            tag === 'select' ||
+            (el as HTMLElement).isContentEditable)
+      );
+    };
+
     const pushStudyState = () => {
       const hash = window.location.hash || '#/decks';
-      const inStudy = hash.startsWith('#/study/');
+      // When a blocking modal/sheet/menu is open over Study, tell Android we are not in
+      // active study key-intercept mode so Volume & D-pad behave normally inside the dialog.
+      const inStudy = hash.startsWith('#/study/') && !hasBlockingOverlay();
       const volumeKeyStudy =
         typeof prefs['study.volumeKeys'] === 'boolean'
           ? prefs['study.volumeKeys']
           : Boolean(info?.eink);
       const active = document.activeElement;
-      const tag = active?.tagName?.toLowerCase();
-      const isInputFocused = Boolean(
-        active &&
-          (tag === 'input' ||
-            tag === 'textarea' ||
-            tag === 'select' ||
-            (active as HTMLElement).isContentEditable)
-      );
+      let isInputFocused = isEditable(active) || frameInputFocusedRef.current;
+      if (!isInputFocused && active?.tagName === 'IFRAME') {
+        try {
+          isInputFocused = isEditable(
+            (active as HTMLIFrameElement).contentDocument?.activeElement
+          );
+        } catch {
+          // Cross-origin / sandboxed frame: frameInputFocusedRef already covers it.
+        }
+      }
       try {
         const shell = (
           window as unknown as {
@@ -494,12 +617,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     };
 
+    const onFrameInputFocus = (ev: Event) => {
+      frameInputFocusedRef.current = Boolean((ev as CustomEvent<boolean>).detail);
+      pushStudyState();
+    };
+
+    const onHashChange = () => {
+      frameInputFocusedRef.current = false;
+      pushStudyState();
+    };
+
     pushStudyState();
-    window.addEventListener('hashchange', pushStudyState);
+    const unsubOverlay = subscribeOverlayStack(pushStudyState);
+    window.addEventListener('hashchange', onHashChange);
+    // Focus moving into an iframe only fires `blur` on the parent window.
+    window.addEventListener('blur', pushStudyState);
+    window.addEventListener('amgi:frame-input-focus', onFrameInputFocus);
     document.addEventListener('focusin', pushStudyState);
     document.addEventListener('focusout', pushStudyState);
     return () => {
-      window.removeEventListener('hashchange', pushStudyState);
+      unsubOverlay();
+      window.removeEventListener('hashchange', onHashChange);
+      window.removeEventListener('blur', pushStudyState);
+      window.removeEventListener('amgi:frame-input-focus', onFrameInputFocus);
       document.removeEventListener('focusin', pushStudyState);
       document.removeEventListener('focusout', pushStudyState);
     };
@@ -538,7 +678,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             if (res.needsFullSync) {
               setFullSyncOpen(true);
             } else if (res.ok) {
-              setCollectionVersion((v) => v + 1);
+              bumpAfterSync();
             }
           })
           .catch(() => {
@@ -554,7 +694,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       controller.abort();
     };
-  }, []);
+  }, [bumpAfterSync]);
 
   // Subscribe to host SSE stream
   useEffect(() => {
@@ -571,7 +711,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (ev.phase === 'done' || ev.phase === 'error') {
             setSyncProgress(null);
             if (ev.phase === 'done') {
-              setCollectionVersion((v) => v + 1);
+              bumpAfterSync();
             }
           } else {
             setSyncProgress(ev);
@@ -604,7 +744,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
       },
       back: () => {
-        goBack();
+        handleSystemBack();
       },
       openFile: (ev) => {
         if (ev.route) {
@@ -633,7 +773,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
 
     return unsubscribe;
-  }, [goBack, navigate, reconcileSyncTransition]);
+  }, [bumpAfterSync, handleSystemBack, navigate, reconcileSyncTransition]);
 
   const handleConfirmColpkg = async () => {
     if (!pendingColpkg || colpkgReplacing) return;
@@ -752,10 +892,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
           </>
         }
       >
-        <p className="amgi-prose" style={{ margin: 0 }}>
-          <strong>{pendingColpkg?.name || '선택한 파일'}</strong>로 현재 전체 컬렉션을
-          교체합니다. 교체하기 전에 현재 컬렉션의 안전 백업이 자동으로 생성됩니다.
-        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <p className="amgi-prose" style={{ margin: 0 }}>
+            <strong>{pendingColpkg?.name || '선택한 파일'}</strong>로 현재 전체 카드와 학습
+            기록을 교체합니다. 교체하기 전에 지금 상태의 자동 백업이 먼저 저장됩니다.
+          </p>
+          <p className="amgi-prose" style={{ margin: 0, color: 'var(--text-2)', fontSize: 13 }}>
+            교체 후 다음 동기화 때 서버와 방향을 고르는 창이 뜹니다. 방금 불러온 내용을
+            유지하려면 <strong>서버로 보내기</strong>를 선택해 주세요.
+          </p>
+        </div>
       </SheetOrDialog>
     </AppContext.Provider>
   );

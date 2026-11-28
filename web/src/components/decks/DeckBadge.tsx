@@ -227,17 +227,18 @@ export const DeckCategoryIcon: React.FC<{ deckName: string; size?: number }> = (
 export const DailyProgressRing: React.FC<{
   pct: number;
   done: boolean;
+  empty?: boolean;
   size?: number;
-}> = ({ pct, done, size = 48 }) => {
+}> = ({ pct, done, empty = false, size = 48 }) => {
   const stroke = size <= 48 ? 4 : 5;
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
-  const clamped = Math.max(0, Math.min(100, pct));
+  const clamped = empty ? 0 : Math.max(0, Math.min(100, pct));
   const offset = circumference - (clamped / 100) * circumference;
 
   return (
     <div
-      className={`amgi-ring-wrap ${done ? 'is-done' : ''}`}
+      className={`amgi-ring-wrap ${done ? 'is-done' : ''} ${empty ? 'is-empty' : ''}`.trim()}
       style={{ width: size, height: size }}
       aria-hidden="true"
     >
@@ -250,21 +251,23 @@ export const DailyProgressRing: React.FC<{
           fill="none"
           strokeWidth={stroke}
         />
-        <circle
-          className="amgi-ring-fill"
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          fill="none"
-          strokeWidth={stroke}
-          strokeDasharray={circumference}
-          strokeDashoffset={offset}
-          strokeLinecap="round"
-          transform={`rotate(-90 ${size / 2} ${size / 2})`}
-        />
+        {!empty && clamped > 0 && (
+          <circle
+            className="amgi-ring-fill"
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="none"
+            strokeWidth={stroke}
+            strokeDasharray={circumference}
+            strokeDashoffset={offset}
+            strokeLinecap="round"
+            transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          />
+        )}
       </svg>
       <span className="amgi-ring-label tabular">
-        {done ? '완료' : `${clamped}%`}
+        {empty ? '–' : done ? '완료' : `${clamped}%`}
       </span>
     </div>
   );

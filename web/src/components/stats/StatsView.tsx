@@ -13,7 +13,6 @@ import {
   IconPlay,
   IconStats,
 } from '../../ui';
-import { AnkiIframeView } from '../shared/AnkiIframeView';
 import './stats.css';
 
 type ReviewsEntry = AnkiTypes.stats.GraphsResponse.ReviewCountsAndTimes.Reviews.$Properties;
@@ -50,6 +49,17 @@ function calcTrueRetentionPct(tr: TrueRetention | null | undefined): string {
   const total = passed + failed;
   if (total === 0) return '—';
   return `${Math.round((passed / total) * 100)}%`;
+}
+
+/**
+ * Returns Anki's current logical study day adjusted by the collection's rollover hour
+ * (e.g. at 2 AM with a 4 AM rollover, Anki's day offset 0 is still yesterday's calendar date).
+ */
+function getAnkiTodayDate(rolloverHour: number): Date {
+  const now = new Date();
+  const safeRollover = ((Math.round(rolloverHour) % 24) + 24) % 24;
+  const shifted = new Date(now.getTime() - safeRollover * 3_600_000);
+  return new Date(shifted.getFullYear(), shifted.getMonth(), shifted.getDate());
 }
 
 function addDaysToDate(base: Date, offsetDays: number): Date {
@@ -89,15 +99,17 @@ function computeHeatLevel(count: number, maxCount: number): 0 | 1 | 2 | 3 | 4 {
 }
 
 export const StatsView: React.FC = () => {
-  const { resolvedTheme, collectionVersion, navigate, registerBackHandler } = useApp();
+  const { resolvedTheme, collectionVersion, navigate } = useApp();
   const isEink = resolvedTheme === 'eink';
 
   const [decks, setDecks] = useState<anki.DeckNameId[]>([]);
-  const [selectedDeck, setSelectedDeck] = useState<string | null>(null);
+  const [selectedDeckId, setSelectedDeckId] = useState<number | null>(null);
   const [deckPickerOpen, setDeckPickerOpen] = useState(false);
 
   const [graphsData, setGraphsData] = useState<anki.GraphsResponse | null>(null);
+  const [rolloverHour, setRolloverHour] = useState<number>(4);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadErrorLog, setLoadErrorLog] = useState<string | undefined>(undefined);
 
@@ -106,34 +118,57 @@ export const StatsView: React.FC = () => {
   const [selectedReviewDay, setSelectedReviewDay] = useState<number | null>(null);
   const [selectedHour, setSelectedHour] = useState<number | null>(null);
   const [includeInactive, setIncludeInactive] = useState(false);
-  const [showOfficialIframe, setShowOfficialIframe] = useState(false);
 
   const heatScrollRef = useRef<HTMLDivElement | null>(null);
+  const past30ScrollRef = useRef<HTMLDivElement | null>(null);
+  const loadSeqRef = useRef(0);
+  const hasLoadedOnceRef = useRef(false);
 
-  const searchQuery = selectedDeck ? `deck:"${selectedDeck}"` : '';
+  // Use numeric `did:` operator so deck names with quotes or special characters never break search.
+  const searchQuery = selectedDeckId !== null ? `did:${selectedDeckId}` : '';
+
+  const selectedDeckName = useMemo(() => {
+    if (selectedDeckId === null) return null;
+    return decks.find((d) => toNumber(d.id) === selectedDeckId)?.name ?? null;
+  }, [decks, selectedDeckId]);
 
   const loadStats = useCallback(async () => {
-    setLoading(true);
+    const seq = ++loadSeqRef.current;
+    if (!hasLoadedOnceRef.current) {
+      setLoading(true);
+    } else {
+      setRefreshing(true);
+    }
     setLoadError(null);
     setLoadErrorLog(undefined);
     try {
-      const [deckList, statsRes] = await Promise.all([
+      const [deckList, statsRes, ankiPrefs] = await Promise.all([
         anki.getDeckNames(false, true).catch(() => [] as anki.DeckNameId[]),
         anki.graphs(searchQuery, 365),
+        anki.getPreferences().catch(() => null),
       ]);
+      if (seq !== loadSeqRef.current) return;
+      hasLoadedOnceRef.current = true;
       setDecks(deckList);
       setGraphsData(statsRes);
+      if (ankiPrefs?.scheduling?.rollover !== undefined && ankiPrefs.scheduling.rollover !== null) {
+        setRolloverHour(ankiPrefs.scheduling.rollover);
+      }
       setSelectedHeatCell(null);
       setSelectedDueDay(null);
       setSelectedReviewDay(null);
       setSelectedHour(null);
     } catch (err) {
+      if (seq !== loadSeqRef.current) return;
       setLoadError(
         err instanceof Error ? err.message : '통계 데이터를 불러오는 중 오류가 발생했습니다.'
       );
       setLoadErrorLog(err instanceof Error ? err.stack || err.message : String(err));
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [searchQuery]);
 
@@ -141,26 +176,22 @@ export const StatsView: React.FC = () => {
     void loadStats();
   }, [loadStats, collectionVersion]);
 
+  // Auto-scroll 1-year heatmap and past-30-day chart to the rightmost (most recent) side
   useEffect(() => {
-    if (!showOfficialIframe) return;
-    return registerBackHandler(() => {
-      setShowOfficialIframe(false);
-      return true;
-    });
-  }, [showOfficialIframe, registerBackHandler]);
-
-  // Auto-scroll 1-year heatmap to the rightmost (most recent) week
-  useEffect(() => {
-    if (!loading && heatScrollRef.current) {
-      const el = heatScrollRef.current;
-      el.scrollLeft = el.scrollWidth;
+    if (!loading && graphsData) {
+      if (heatScrollRef.current) {
+        heatScrollRef.current.scrollLeft = heatScrollRef.current.scrollWidth;
+      }
+      if (past30ScrollRef.current) {
+        past30ScrollRef.current.scrollLeft = past30ScrollRef.current.scrollWidth;
+      }
     }
   }, [loading, graphsData]);
 
-  // Build 365-day calendar heatmap + streaks
+  // Build 365-day calendar heatmap + streaks using rollover-adjusted date
   const heatmapInfo = useMemo(() => {
     const countMap = graphsData?.reviews?.count ?? {};
-    const today = new Date();
+    const ankiToday = getAnkiTodayDate(rolloverHour);
     const dayCounts = new Map<number, number>();
     let totalYearReviews = 0;
     let activeDays = 0;
@@ -197,7 +228,7 @@ export const StatsView: React.FC = () => {
     }
 
     // Group into 53 Sunday..Saturday columns
-    const startDate = addDaysToDate(today, -364);
+    const startDate = addDaysToDate(ankiToday, -364);
     const startDow = startDate.getDay(); // 0=Sun..6=Sat
     const paddedSlots: Array<HeatCell | null> = [];
     for (let i = 0; i < startDow; i++) {
@@ -207,7 +238,7 @@ export const StatsView: React.FC = () => {
       const count = dayCounts.get(offset) ?? 0;
       paddedSlots.push({
         offset,
-        date: addDaysToDate(today, offset),
+        date: addDaysToDate(ankiToday, offset),
         count,
         level: computeHeatLevel(count, maxCount),
       });
@@ -249,12 +280,12 @@ export const StatsView: React.FC = () => {
       currentStreak,
       longestStreak,
     };
-  }, [graphsData]);
+  }, [graphsData, rolloverHour]);
 
   // Past 30-day Review Trend (offsets -29..0 stacked: learning / young / mature)
   const past30Reviews = useMemo(() => {
     const countMap = graphsData?.reviews?.count ?? {};
-    const today = new Date();
+    const ankiToday = getAnkiTodayDate(rolloverHour);
     const days = Array.from({ length: 30 }, (_, i) => {
       const offset = i - 29;
       const entry = countMap[String(offset)];
@@ -265,7 +296,7 @@ export const StatsView: React.FC = () => {
       return {
         idx: i,
         offset,
-        date: addDaysToDate(today, offset),
+        date: addDaysToDate(ankiToday, offset),
         learning,
         young,
         mature,
@@ -284,7 +315,7 @@ export const StatsView: React.FC = () => {
       maxVal,
       hasAny: sum30 > 0,
     };
-  }, [graphsData]);
+  }, [graphsData, rolloverHour]);
 
   // Answer Button Distribution (1-year or all-time fallback)
   const buttonStats = useMemo(() => {
@@ -310,7 +341,7 @@ export const StatsView: React.FC = () => {
     return { rows, grandTotal };
   }, [graphsData]);
 
-  // Hourly Breakdown (24 hours accuracy & volume)
+  // Hourly Breakdown (24 hours accuracy 0..100%)
   const hourlyStats = useMemo(() => {
     const raw =
       graphsData?.hours?.oneYear ??
@@ -328,7 +359,12 @@ export const StatsView: React.FC = () => {
     const maxTotal = Math.max(...hours.map((h) => h.total), 1);
     let bestHour: { hour: number; pct: number; total: number } | null = null;
     for (const h of activeHours) {
-      if (h.total >= 3 && (!bestHour || h.pct > bestHour.pct || (h.pct === bestHour.pct && h.total > bestHour.total))) {
+      if (
+        h.total >= 3 &&
+        (!bestHour ||
+          h.pct > bestHour.pct ||
+          (h.pct === bestHour.pct && h.total > bestHour.total))
+      ) {
         bestHour = h;
       }
     }
@@ -340,18 +376,19 @@ export const StatsView: React.FC = () => {
     };
   }, [graphsData]);
 
-  // Future Due (Next 30 days: keys 0..29)
+  // Future Due (Next 30 days: keys 0..29) using rollover-adjusted date
   const futureDueInfo = useMemo(() => {
     const fd = graphsData?.futureDue;
     const dueMap = fd?.futureDue ?? {};
+    const ankiToday = getAnkiTodayDate(rolloverHour);
     const days = Array.from({ length: 30 }, (_, day) => ({
       day,
       count: dueMap[String(day)] ?? 0,
-      date: addDaysToDate(new Date(), day),
+      date: addDaysToDate(ankiToday, day),
     }));
     const tomorrowCount = days[1]?.count ?? 0;
     const sum30Days = days.reduce((acc, d) => acc + d.count, 0);
-    const dailyLoad = Math.round(fd?.dailyLoad ?? (sum30Days / 30));
+    const dailyLoad = Math.round(fd?.dailyLoad ?? sum30Days / 30);
     const maxVal = Math.max(dailyLoad, ...days.map((d) => d.count), 1);
     const hasAny = sum30Days > 0;
     return {
@@ -363,7 +400,7 @@ export const StatsView: React.FC = () => {
       maxVal,
       hasAny,
     };
-  }, [graphsData]);
+  }, [graphsData, rolloverHour]);
 
   // Card Counts distribution
   const cardDist = useMemo(() => {
@@ -375,7 +412,8 @@ export const StatsView: React.FC = () => {
     const learning = (src?.learn ?? 0) + (src?.relearn ?? 0);
     const young = src?.young ?? 0;
     const mature = src?.mature ?? 0;
-    const suspended = graphsData?.cardCounts?.includingInactive?.suspended ?? src?.suspended ?? 0;
+    const suspended =
+      graphsData?.cardCounts?.includingInactive?.suspended ?? src?.suspended ?? 0;
     const buried = graphsData?.cardCounts?.includingInactive?.buried ?? src?.buried ?? 0;
 
     const activeTotal = newCards + learning + young + mature;
@@ -396,19 +434,6 @@ export const StatsView: React.FC = () => {
       pct,
     };
   }, [graphsData, includeInactive]);
-
-  if (showOfficialIframe) {
-    const officialPath = searchQuery
-      ? `/graphs?search=${encodeURIComponent(searchQuery)}`
-      : '/graphs';
-    return (
-      <AnkiIframeView
-        path={officialPath}
-        title="간편 통계로 돌아가기"
-        onClose={() => setShowOfficialIframe(false)}
-      />
-    );
-  }
 
   const today = graphsData?.today;
   const answerCount = today?.answerCount ?? 0;
@@ -453,32 +478,37 @@ export const StatsView: React.FC = () => {
         <div className="amgi-stats-scope-seg">
           <button
             type="button"
-            className={`amgi-stats-scope-btn ${selectedDeck === null ? 'active' : ''}`}
-            aria-pressed={selectedDeck === null}
-            onClick={() => setSelectedDeck(null)}
+            className={`amgi-stats-scope-btn ${selectedDeckId === null ? 'active' : ''}`}
+            aria-pressed={selectedDeckId === null}
+            onClick={() => setSelectedDeckId(null)}
           >
             전체 덱
           </button>
           <button
             type="button"
-            className={`amgi-stats-scope-btn ${selectedDeck !== null ? 'active' : ''}`}
-            aria-pressed={selectedDeck !== null}
+            className={`amgi-stats-scope-btn ${selectedDeckId !== null ? 'active' : ''}`}
+            aria-pressed={selectedDeckId !== null}
             onClick={() => setDeckPickerOpen(true)}
           >
             <span className="amgi-stats-scope-btn-label">
-              {selectedDeck ? `덱별: ${selectedDeck}` : '덱 선택'}
+              {selectedDeckName ? `덱별: ${selectedDeckName}` : '덱 선택'}
             </span>
             <IconChevronDown size={16} />
           </button>
         </div>
+        {refreshing && (
+          <span className="amgi-stats-refresh-pill" role="status">
+            불러오는 중…
+          </span>
+        )}
       </div>
 
-      {loading ? (
+      {loading && !graphsData ? (
         <div className="amgi-stats-loading">
           {!isEink && <div className="spinner" aria-hidden="true" />}
           <span>통계를 계산하는 중...</span>
         </div>
-      ) : loadError ? (
+      ) : loadError && !graphsData ? (
         <ErrorState
           title="통계를 불러오지 못했습니다"
           message={loadError}
@@ -487,6 +517,19 @@ export const StatsView: React.FC = () => {
         />
       ) : (
         <>
+          {loadError && (
+            <div className="amgi-stats-inline-error" role="alert">
+              <span>{loadError}</span>
+              <button
+                type="button"
+                className="amgi-btn amgi-btn-secondary amgi-btn-sm"
+                onClick={() => void loadStats()}
+              >
+                다시 시도
+              </button>
+            </div>
+          )}
+
           <div className="amgi-stats-grid">
             {/* Card 1: 오늘의 학습 요약 */}
             <section className="amgi-stats-card amgi-stats-span-2">
@@ -494,7 +537,7 @@ export const StatsView: React.FC = () => {
                 <div>
                   <h2 className="amgi-stats-card-title">오늘의 학습 요약</h2>
                 </div>
-                {selectedDeck && <span className="amgi-stats-badge">{selectedDeck}</span>}
+                {selectedDeckName && <span className="amgi-stats-badge">{selectedDeckName}</span>}
               </div>
 
               {answerCount === 0 ? (
@@ -515,8 +558,10 @@ export const StatsView: React.FC = () => {
               ) : (
                 <>
                   <p className="amgi-stats-summary-sentence">
-                    오늘 총 {answerCount.toLocaleString('ko-KR')}장을{' '}
-                    {formatDurationKo(answerMillis)} 동안 복습했어요.
+                    오늘 총{' '}
+                    <strong className="tabular">{answerCount.toLocaleString('ko-KR')}장</strong>을{' '}
+                    <strong className="tabular">{formatDurationKo(answerMillis)}</strong> 동안
+                    복습했어요.
                   </p>
                   <div className="amgi-stats-metric-grid">
                     <div className="amgi-stats-metric-box">
@@ -530,7 +575,7 @@ export const StatsView: React.FC = () => {
                       <span className="amgi-stats-metric-label">오늘 정답률</span>
                       <span className="amgi-stats-metric-val">{correctPct}%</span>
                       <span className="amgi-stats-metric-sub">
-                        {correctCount}/{answerCount}개 기억
+                        전체 {correctCount}/{answerCount}회 기억
                       </span>
                     </div>
                     <div className="amgi-stats-metric-box">
@@ -662,7 +707,7 @@ export const StatsView: React.FC = () => {
                 <span>·</span>
                 <span>30일 합계: {futureDueInfo.sum30Days.toLocaleString('ko-KR')}장</span>
                 {futureDueInfo.haveBacklog && (
-                  <span className="amgi-future-warn-chip">밀린 카드가 포함되어 있어요</span>
+                  <span className="amgi-future-warn-chip">밀린 카드 포함</span>
                 )}
               </div>
 
@@ -670,106 +715,101 @@ export const StatsView: React.FC = () => {
                 <div className="amgi-future-empty">앞으로 예정된 복습 카드가 없습니다.</div>
               ) : (
                 <>
-                  <div className="amgi-future-svg-wrap">
-                    <svg
-                      className="amgi-future-svg"
-                      viewBox="0 0 320 140"
-                      role="img"
-                      aria-label="앞으로 30일 복습 예정 막대 그래프"
-                    >
-                      {(() => {
-                        const plotLeft = 8;
-                        const plotRight = 312;
-                        const plotTop = 14;
-                        const plotBottom = 114;
-                        const plotH = plotBottom - plotTop;
-                        const plotW = plotRight - plotLeft;
-                        const slotW = plotW / 30;
-                        const barW = Math.max(4, slotW - 3);
-                        const avgY =
-                          plotBottom -
-                          Math.min(1, futureDueInfo.dailyLoad / futureDueInfo.maxVal) * plotH;
+                  <div className="amgi-chart-scroll">
+                    <div className="amgi-chart-inner amgi-chart-inner--30">
+                      <svg
+                        className="amgi-future-svg"
+                        viewBox="0 0 480 144"
+                        role="img"
+                        aria-label="앞으로 30일 복습 예정 막대 그래프"
+                      >
+                        {(() => {
+                          const plotLeft = 6;
+                          const plotRight = 474;
+                          const plotTop = 22;
+                          const plotBottom = 138;
+                          const plotH = plotBottom - plotTop;
+                          const plotW = plotRight - plotLeft;
+                          const slotW = plotW / 30;
+                          const barW = Math.max(8, slotW - 4);
+                          const avgY =
+                            plotBottom -
+                            Math.min(1, futureDueInfo.dailyLoad / futureDueInfo.maxVal) * plotH;
 
-                        return (
-                          <>
-                            <line
-                              x1={plotLeft}
-                              x2={plotRight}
-                              y1={avgY}
-                              y2={avgY}
-                              className="amgi-future-guide"
-                            />
-                            <text
-                              x={plotRight}
-                              y={Math.max(10, avgY - 4)}
-                              textAnchor="end"
-                              className="amgi-future-axis-text"
-                            >
-                              평균 {futureDueInfo.dailyLoad}장
-                            </text>
-
-                            {futureDueInfo.days.map((d, idx) => {
-                              const barH =
-                                d.count > 0
-                                  ? Math.max(3, (d.count / futureDueInfo.maxVal) * plotH)
-                                  : 0;
-                              const x = plotLeft + idx * slotW + 1.5;
-                              const y = plotBottom - barH;
-                              return (
-                                <g key={d.day}>
-                                  <rect
-                                    x={x}
-                                    y={y}
-                                    width={barW}
-                                    height={barH}
-                                    rx={isEink ? 0 : 2}
-                                    className={`amgi-future-bar ${
-                                      d.day === 0 ? 'is-today' : ''
-                                    } ${selectedDueDay === d.day ? 'is-selected' : ''}`}
-                                  />
-                                  {/* Invisible wider hit target for reliable touch tapping */}
-                                  <rect
-                                    x={plotLeft + idx * slotW}
-                                    y={plotTop}
-                                    width={slotW}
-                                    height={plotH + 10}
-                                    fill="transparent"
-                                    style={{ cursor: 'pointer' }}
-                                    onClick={() => setSelectedDueDay(d.day)}
-                                  />
-                                </g>
-                              );
-                            })}
-
-                            {[
-                              { idx: 0, label: '오늘' },
-                              { idx: 5, label: '+5일' },
-                              { idx: 10, label: '+10일' },
-                              { idx: 15, label: '+15일' },
-                              { idx: 20, label: '+20일' },
-                              { idx: 25, label: '+25일' },
-                              { idx: 29, label: '+30일' },
-                            ].map((tick) => (
+                          return (
+                            <>
+                              <line
+                                x1={plotLeft}
+                                x2={plotRight}
+                                y1={avgY}
+                                y2={avgY}
+                                className="amgi-future-guide"
+                              />
                               <text
-                                key={tick.idx}
-                                x={plotLeft + tick.idx * slotW + slotW / 2}
-                                y={132}
-                                textAnchor={
-                                  tick.idx === 0
-                                    ? 'start'
-                                    : tick.idx === 29
-                                      ? 'end'
-                                      : 'middle'
-                                }
-                                className="amgi-future-axis-text"
+                                x={plotRight}
+                                y={Math.max(14, avgY - 6)}
+                                textAnchor="end"
+                                className="amgi-chart-svg-label"
                               >
-                                {tick.label}
+                                평균 {futureDueInfo.dailyLoad}장
                               </text>
-                            ))}
-                          </>
-                        );
-                      })()}
-                    </svg>
+
+                              {futureDueInfo.days.map((d, idx) => {
+                                const barH =
+                                  d.count > 0
+                                    ? Math.max(4, (d.count / futureDueInfo.maxVal) * plotH)
+                                    : 0;
+                                const x = plotLeft + idx * slotW + (slotW - barW) / 2;
+                                const y = plotBottom - barH;
+                                return (
+                                  <g key={d.day}>
+                                    <rect
+                                      x={x}
+                                      y={y}
+                                      width={barW}
+                                      height={barH}
+                                      rx={isEink ? 0 : 3}
+                                      className={`amgi-future-bar ${
+                                        d.day === 0 ? 'is-today' : ''
+                                      } ${selectedDueDay === d.day ? 'is-selected' : ''}`}
+                                    />
+                                    <rect
+                                      x={plotLeft + idx * slotW}
+                                      y={0}
+                                      width={slotW}
+                                      height={144}
+                                      fill="transparent"
+                                      role="button"
+                                      tabIndex={0}
+                                      aria-label={`${
+                                        d.day === 0 ? '오늘' : `${d.day}일 뒤`
+                                      } (${formatKoShortDate(d.date)}) ${d.count}장 예정`}
+                                      style={{ cursor: 'pointer' }}
+                                      onClick={() => setSelectedDueDay(d.day)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter' || e.key === ' ') {
+                                          e.preventDefault();
+                                          setSelectedDueDay(d.day);
+                                        }
+                                      }}
+                                    />
+                                  </g>
+                                );
+                              })}
+                            </>
+                          );
+                        })()}
+                      </svg>
+                      <div className="amgi-chart-xaxis" aria-hidden="true">
+                        <span>오늘</span>
+                        <span>+5일</span>
+                        <span>+10일</span>
+                        <span>+15일</span>
+                        <span>+20일</span>
+                        <span>+25일</span>
+                        <span>+30일</span>
+                      </div>
+                    </div>
                   </div>
                   <div className="amgi-heat-inspect">
                     {selectedDueInfo
@@ -842,7 +882,8 @@ export const StatsView: React.FC = () => {
                     <span className="amgi-maturity-hint">아직 안 본 카드</span>
                   </span>
                   <span className="amgi-maturity-count">
-                    {cardDist.newCards.toLocaleString('ko-KR')}장 ({cardDist.pct(cardDist.newCards)}%)
+                    {cardDist.newCards.toLocaleString('ko-KR')}장 ({cardDist.pct(cardDist.newCards)}
+                    %)
                   </span>
                 </div>
 
@@ -853,7 +894,8 @@ export const StatsView: React.FC = () => {
                     <span className="amgi-maturity-hint">초기 암기 단계</span>
                   </span>
                   <span className="amgi-maturity-count">
-                    {cardDist.learning.toLocaleString('ko-KR')}장 ({cardDist.pct(cardDist.learning)}%)
+                    {cardDist.learning.toLocaleString('ko-KR')}장 ({cardDist.pct(cardDist.learning)}
+                    %)
                   </span>
                 </div>
 
@@ -894,7 +936,8 @@ export const StatsView: React.FC = () => {
                 <div>
                   <h2 className="amgi-stats-card-title">최근 30일 학습량 추이</h2>
                   <p className="amgi-stats-card-sub">
-                    총 {past30Reviews.sum30.toLocaleString('ko-KR')}회 복습 · {past30Reviews.activeDays30}일 활동
+                    총 {past30Reviews.sum30.toLocaleString('ko-KR')}회 복습 ·{' '}
+                    {past30Reviews.activeDays30}일 활동
                   </p>
                 </div>
                 <span className="amgi-stats-badge">
@@ -906,96 +949,102 @@ export const StatsView: React.FC = () => {
                 <div className="amgi-future-empty">최근 30일간 복습 기록이 없습니다.</div>
               ) : (
                 <>
-                  <div className="amgi-future-svg-wrap">
-                    <svg
-                      className="amgi-future-svg"
-                      viewBox="0 0 360 138"
-                      role="img"
-                      aria-label="최근 30일 학습량 막대 그래프"
-                    >
-                      {(() => {
-                        const plotLeft = 8;
-                        const plotRight = 352;
-                        const plotTop = 12;
-                        const plotBottom = 112;
-                        const plotH = plotBottom - plotTop;
-                        const plotW = plotRight - plotLeft;
-                        const slotW = plotW / 30;
-                        const barW = Math.max(5, slotW - 3);
+                  <div className="amgi-chart-scroll" ref={past30ScrollRef}>
+                    <div className="amgi-chart-inner amgi-chart-inner--30">
+                      <svg
+                        className="amgi-future-svg"
+                        viewBox="0 0 480 140"
+                        role="img"
+                        aria-label="최근 30일 학습량 막대 그래프"
+                      >
+                        {(() => {
+                          const plotLeft = 6;
+                          const plotRight = 474;
+                          const plotTop = 12;
+                          const plotBottom = 134;
+                          const plotH = plotBottom - plotTop;
+                          const plotW = plotRight - plotLeft;
+                          const slotW = plotW / 30;
+                          const barW = Math.max(8, slotW - 4);
 
-                        return (
-                          <>
-                            {past30Reviews.days.map((d) => {
-                              const x = plotLeft + d.idx * slotW + 1.5;
-                              const matureH = (d.mature / past30Reviews.maxVal) * plotH;
-                              const youngH = (d.young / past30Reviews.maxVal) * plotH;
-                              const learnH = (d.learning / past30Reviews.maxVal) * plotH;
-                              const yMature = plotBottom - matureH;
-                              const yYoung = yMature - youngH;
-                              const yLearn = yYoung - learnH;
-                              const isSel = selectedReviewDay === d.idx;
-                              return (
-                                <g key={d.offset}>
-                                  {matureH > 0 && (
+                          return (
+                            <>
+                              {past30Reviews.days.map((d) => {
+                                const x = plotLeft + d.idx * slotW + (slotW - barW) / 2;
+                                const matureH = (d.mature / past30Reviews.maxVal) * plotH;
+                                const youngH = (d.young / past30Reviews.maxVal) * plotH;
+                                const learnH = (d.learning / past30Reviews.maxVal) * plotH;
+                                const yMature = plotBottom - matureH;
+                                const yYoung = yMature - youngH;
+                                const yLearn = yYoung - learnH;
+                                const isSel = selectedReviewDay === d.idx;
+                                return (
+                                  <g key={d.offset}>
+                                    {matureH > 0 && (
+                                      <rect
+                                        x={x}
+                                        y={yMature}
+                                        width={barW}
+                                        height={Math.max(2, matureH)}
+                                        className={`amgi-rev-bar amgi-rev-bar--mature ${
+                                          isSel ? 'is-selected' : ''
+                                        }`}
+                                      />
+                                    )}
+                                    {youngH > 0 && (
+                                      <rect
+                                        x={x}
+                                        y={yYoung}
+                                        width={barW}
+                                        height={Math.max(2, youngH)}
+                                        className={`amgi-rev-bar amgi-rev-bar--young ${
+                                          isSel ? 'is-selected' : ''
+                                        }`}
+                                      />
+                                    )}
+                                    {learnH > 0 && (
+                                      <rect
+                                        x={x}
+                                        y={yLearn}
+                                        width={barW}
+                                        height={Math.max(2, learnH)}
+                                        className={`amgi-rev-bar amgi-rev-bar--learn ${
+                                          isSel ? 'is-selected' : ''
+                                        }`}
+                                      />
+                                    )}
                                     <rect
-                                      x={x}
-                                      y={yMature}
-                                      width={barW}
-                                      height={Math.max(2, matureH)}
-                                      className={`amgi-rev-bar amgi-rev-bar--mature ${isSel ? 'is-selected' : ''}`}
+                                      x={plotLeft + d.idx * slotW}
+                                      y={0}
+                                      width={slotW}
+                                      height={140}
+                                      fill="transparent"
+                                      role="button"
+                                      tabIndex={0}
+                                      aria-label={`${formatKoShortDate(d.date)} 총 ${d.total}회 복습`}
+                                      style={{ cursor: 'pointer' }}
+                                      onClick={() => setSelectedReviewDay(d.idx)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter' || e.key === ' ') {
+                                          e.preventDefault();
+                                          setSelectedReviewDay(d.idx);
+                                        }
+                                      }}
                                     />
-                                  )}
-                                  {youngH > 0 && (
-                                    <rect
-                                      x={x}
-                                      y={yYoung}
-                                      width={barW}
-                                      height={Math.max(2, youngH)}
-                                      className={`amgi-rev-bar amgi-rev-bar--young ${isSel ? 'is-selected' : ''}`}
-                                    />
-                                  )}
-                                  {learnH > 0 && (
-                                    <rect
-                                      x={x}
-                                      y={yLearn}
-                                      width={barW}
-                                      height={Math.max(2, learnH)}
-                                      className={`amgi-rev-bar amgi-rev-bar--learn ${isSel ? 'is-selected' : ''}`}
-                                    />
-                                  )}
-                                  <rect
-                                    x={plotLeft + d.idx * slotW}
-                                    y={plotTop}
-                                    width={slotW}
-                                    height={plotH + 10}
-                                    fill="transparent"
-                                    style={{ cursor: 'pointer' }}
-                                    onClick={() => setSelectedReviewDay(d.idx)}
-                                  />
-                                </g>
-                              );
-                            })}
-                            {[
-                              { idx: 0, label: '30일 전' },
-                              { idx: 14, label: '15일 전' },
-                              { idx: 29, label: '오늘' },
-                            ].map((tick) => (
-                              <text
-                                key={tick.idx}
-                                x={plotLeft + tick.idx * slotW + slotW / 2}
-                                y={130}
-                                textAnchor={
-                                  tick.idx === 0 ? 'start' : tick.idx === 29 ? 'end' : 'middle'
-                                }
-                                className="amgi-future-axis-text"
-                              >
-                                {tick.label}
-                              </text>
-                            ))}
-                          </>
-                        );
-                      })()}
-                    </svg>
+                                  </g>
+                                );
+                              })}
+                            </>
+                          );
+                        })()}
+                      </svg>
+                      <div className="amgi-chart-xaxis" aria-hidden="true">
+                        <span>30일 전</span>
+                        <span>20일 전</span>
+                        <span>10일 전</span>
+                        <span>오늘</span>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="amgi-heat-footer">
@@ -1008,9 +1057,18 @@ export const StatsView: React.FC = () => {
                         : '막대를 누르면 날짜별 세부 학습량을 볼 수 있어요'}
                     </span>
                     <span className="amgi-rev-legend">
-                      <span><i className="amgi-rev-dot amgi-rev-dot--learn" />학습</span>
-                      <span><i className="amgi-rev-dot amgi-rev-dot--young" />익힘</span>
-                      <span><i className="amgi-rev-dot amgi-rev-dot--mature" />장기</span>
+                      <span>
+                        <i className="amgi-rev-dot amgi-rev-dot--learn" />
+                        학습
+                      </span>
+                      <span>
+                        <i className="amgi-rev-dot amgi-rev-dot--young" />
+                        익힘
+                      </span>
+                      <span>
+                        <i className="amgi-rev-dot amgi-rev-dot--mature" />
+                        장기
+                      </span>
                     </span>
                   </div>
                 </>
@@ -1073,10 +1131,22 @@ export const StatsView: React.FC = () => {
                     </div>
                   ))}
                   <div className="amgi-rev-legend" style={{ marginTop: 2 }}>
-                    <span><i className="amgi-rev-dot amgi-btn-dot--again" />다시</span>
-                    <span><i className="amgi-rev-dot amgi-btn-dot--hard" />어려움</span>
-                    <span><i className="amgi-rev-dot amgi-btn-dot--good" />알맞음</span>
-                    <span><i className="amgi-rev-dot amgi-btn-dot--easy" />쉬움</span>
+                    <span>
+                      <i className="amgi-rev-dot amgi-btn-dot--again" />
+                      다시
+                    </span>
+                    <span>
+                      <i className="amgi-rev-dot amgi-btn-dot--hard" />
+                      어려움
+                    </span>
+                    <span>
+                      <i className="amgi-rev-dot amgi-btn-dot--good" />
+                      알맞음
+                    </span>
+                    <span>
+                      <i className="amgi-rev-dot amgi-btn-dot--easy" />
+                      쉬움
+                    </span>
                   </div>
                 </div>
               )}
@@ -1087,7 +1157,9 @@ export const StatsView: React.FC = () => {
               <div className="amgi-stats-card-head">
                 <div>
                   <h2 className="amgi-stats-card-title">시간대별 정답률</h2>
-                  <p className="amgi-stats-card-sub">어느 시간대에 집중력이 가장 높은지 보여줍니다</p>
+                  <p className="amgi-stats-card-sub">
+                    막대 높이는 각 시간대의 정답률(0~100%)을 뜻합니다
+                  </p>
                 </div>
                 {hourlyStats.bestHour && (
                   <span className="amgi-stats-badge">
@@ -1100,74 +1172,140 @@ export const StatsView: React.FC = () => {
                 <div className="amgi-future-empty">아직 시간대별 학습 기록이 없습니다.</div>
               ) : (
                 <>
-                  <div className="amgi-future-svg-wrap">
-                    <svg
-                      className="amgi-future-svg"
-                      viewBox="0 0 320 132"
-                      role="img"
-                      aria-label="시간대별 학습 정답률 막대 그래프"
-                    >
-                      {(() => {
-                        const plotLeft = 8;
-                        const plotRight = 312;
-                        const plotTop = 10;
-                        const plotBottom = 108;
-                        const plotH = plotBottom - plotTop;
-                        const plotW = plotRight - plotLeft;
-                        const slotW = plotW / 24;
-                        const barW = Math.max(5, slotW - 3);
-                        return (
-                          <>
-                            <line
-                              x1={plotLeft}
-                              x2={plotRight}
-                              y1={plotBottom - 0.8 * plotH}
-                              y2={plotBottom - 0.8 * plotH}
-                              className="amgi-future-guide"
-                            />
-                            {hourlyStats.hours.map((h) => {
-                              const barH = h.total > 0 ? Math.max(4, (h.pct / 100) * plotH) : 0;
-                              const x = plotLeft + h.hour * slotW + 1.5;
-                              const y = plotBottom - barH;
-                              return (
-                                <g key={h.hour}>
-                                  {barH > 0 && (
-                                    <rect
-                                      x={x}
-                                      y={y}
-                                      width={barW}
-                                      height={barH}
-                                      rx={isEink ? 0 : 2}
-                                      className={`amgi-hour-bar ${selectedHour === h.hour ? 'is-selected' : ''}`}
-                                    />
-                                  )}
-                                  <rect
-                                    x={plotLeft + h.hour * slotW}
-                                    y={plotTop}
-                                    width={slotW}
-                                    height={plotH + 8}
-                                    fill="transparent"
-                                    style={{ cursor: 'pointer' }}
-                                    onClick={() => setSelectedHour(h.hour)}
-                                  />
-                                </g>
-                              );
-                            })}
-                            {[0, 6, 12, 18, 23].map((hr) => (
+                  <div className="amgi-chart-scroll">
+                    <div className="amgi-chart-inner amgi-chart-inner--24">
+                      <svg
+                        className="amgi-future-svg"
+                        viewBox="0 0 420 144"
+                        role="img"
+                        aria-label="시간대별 학습 정답률 막대 그래프"
+                      >
+                        {(() => {
+                          const plotLeft = 38;
+                          const plotRight = 414;
+                          const plotTop = 14;
+                          const plotBottom = 134;
+                          const plotH = plotBottom - plotTop;
+                          const plotW = plotRight - plotLeft;
+                          const slotW = plotW / 24;
+                          const barW = Math.max(9, slotW - 4);
+                          const y100 = plotTop;
+                          const y80 = plotBottom - 0.8 * plotH;
+                          const y50 = plotBottom - 0.5 * plotH;
+                          return (
+                            <>
+                              {/* Explicit Y-axis guides so bar height semantics (0..100%) are unmistakable */}
+                              <line
+                                x1={plotLeft}
+                                x2={plotRight}
+                                y1={y100}
+                                y2={y100}
+                                className="amgi-future-guide amgi-future-guide--subtle"
+                              />
                               <text
-                                key={hr}
-                                x={plotLeft + hr * slotW + slotW / 2}
-                                y={125}
-                                textAnchor={hr === 0 ? 'start' : hr === 23 ? 'end' : 'middle'}
-                                className="amgi-future-axis-text"
+                                x={plotLeft - 6}
+                                y={y100 + 4}
+                                textAnchor="end"
+                                className="amgi-chart-svg-label"
                               >
-                                {hr}시
+                                100%
                               </text>
-                            ))}
-                          </>
-                        );
-                      })()}
-                    </svg>
+                              <line
+                                x1={plotLeft}
+                                x2={plotRight}
+                                y1={y80}
+                                y2={y80}
+                                className="amgi-future-guide"
+                              />
+                              <text
+                                x={plotLeft - 6}
+                                y={y80 + 4}
+                                textAnchor="end"
+                                className="amgi-chart-svg-label"
+                              >
+                                80%
+                              </text>
+                              <line
+                                x1={plotLeft}
+                                x2={plotRight}
+                                y1={y50}
+                                y2={y50}
+                                className="amgi-future-guide amgi-future-guide--subtle"
+                              />
+                              <text
+                                x={plotLeft - 6}
+                                y={y50 + 4}
+                                textAnchor="end"
+                                className="amgi-chart-svg-label"
+                              >
+                                50%
+                              </text>
+                              <text
+                                x={plotLeft - 6}
+                                y={plotBottom + 2}
+                                textAnchor="end"
+                                className="amgi-chart-svg-label"
+                              >
+                                0%
+                              </text>
+
+                              {hourlyStats.hours.map((h) => {
+                                const exactH = (h.pct / 100) * plotH;
+                                // Show a 3px baseline marker only when there are reviews with 0% accuracy
+                                const barH = h.total > 0 ? Math.max(3, exactH) : 0;
+                                const x = plotLeft + h.hour * slotW + (slotW - barW) / 2;
+                                const y = plotBottom - barH;
+                                return (
+                                  <g key={h.hour}>
+                                    {barH > 0 && (
+                                      <rect
+                                        x={x}
+                                        y={y}
+                                        width={barW}
+                                        height={barH}
+                                        rx={isEink ? 0 : 3}
+                                        className={`amgi-hour-bar ${
+                                          selectedHour === h.hour ? 'is-selected' : ''
+                                        }`}
+                                      />
+                                    )}
+                                    <rect
+                                      x={plotLeft + h.hour * slotW}
+                                      y={0}
+                                      width={slotW}
+                                      height={144}
+                                      fill="transparent"
+                                      role="button"
+                                      tabIndex={0}
+                                      aria-label={
+                                        h.total > 0
+                                          ? `${h.hour}시 정답률 ${h.pct}% (${h.correct}/${h.total}회)`
+                                          : `${h.hour}시 학습 기록 없음`
+                                      }
+                                      style={{ cursor: 'pointer' }}
+                                      onClick={() => setSelectedHour(h.hour)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter' || e.key === ' ') {
+                                          e.preventDefault();
+                                          setSelectedHour(h.hour);
+                                        }
+                                      }}
+                                    />
+                                  </g>
+                                );
+                              })}
+                            </>
+                          );
+                        })()}
+                      </svg>
+                      <div className="amgi-chart-xaxis amgi-chart-xaxis--hourly" aria-hidden="true">
+                        <span>0시</span>
+                        <span>6시</span>
+                        <span>12시</span>
+                        <span>18시</span>
+                        <span>23시</span>
+                      </div>
+                    </div>
                   </div>
                   <div className="amgi-heat-inspect">
                     {selectedHour !== null && hourlyStats.hours[selectedHour]
@@ -1183,18 +1321,20 @@ export const StatsView: React.FC = () => {
               )}
             </section>
 
-            {/* Card 8 (Optional): 최근 기억 유지율 */}
+            {/* Card 8 (Optional): 복습 카드 기억 유지율 */}
             {hasRetentionData && (
               <section className="amgi-stats-card amgi-stats-span-2">
                 <div className="amgi-stats-card-head">
                   <div>
-                    <h2 className="amgi-stats-card-title">최근 기억 유지율</h2>
-                    <p className="amgi-stats-card-sub">복습 카드를 얼마나 잘 기억하고 있는지 보여줍니다</p>
+                    <h2 className="amgi-stats-card-title">복습 카드 기억 유지율</h2>
+                    <p className="amgi-stats-card-sub">
+                      익힘·장기 복습 카드의 실제 기억 유지율입니다 (초기 학습 제외)
+                    </p>
                   </div>
                 </div>
                 <div className="amgi-retention-strip">
                   <div className="amgi-retention-cell">
-                    <span className="amgi-retention-label">오늘 정답률</span>
+                    <span className="amgi-retention-label">오늘</span>
                     <span className="amgi-retention-val">
                       {calcTrueRetentionPct(retention?.today)}
                     </span>
@@ -1222,14 +1362,19 @@ export const StatsView: React.FC = () => {
               <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>
                 Anki 상세 통계 원본 보기
               </div>
-              <div style={{ fontSize: 13, color: 'var(--text-2)', marginTop: 3 }}>
-                시간대별 정답률, 복습 간격 분포, 버튼 통계 등 세부 그래프를 봅니다.
+              <div style={{ fontSize: 13, color: 'var(--text-3)', marginTop: 3 }}>
+                복습 간격 분포, 카드 난이도, 연도별 세부 그래프를 봅니다.
               </div>
             </div>
             <button
               type="button"
               className="amgi-btn amgi-btn-secondary"
-              onClick={() => setShowOfficialIframe(true)}
+              onClick={() => {
+                const target = searchQuery
+                  ? `#/anki/graphs?search=${encodeURIComponent(searchQuery)}`
+                  : '#/anki/graphs';
+                navigate(target);
+              }}
             >
               <IconStats size={17} />
               <span>원본 보기</span>
@@ -1248,15 +1393,18 @@ export const StatsView: React.FC = () => {
           {
             id: '__all__',
             label: '전체 덱',
-            icon: selectedDeck === null ? <IconCheck size={18} /> : undefined,
-            onSelect: () => setSelectedDeck(null),
+            icon: selectedDeckId === null ? <IconCheck size={18} /> : undefined,
+            onSelect: () => setSelectedDeckId(null),
           },
-          ...decks.map((d) => ({
-            id: String(toNumber(d.id)),
-            label: d.name || '덱',
-            icon: selectedDeck === d.name ? <IconCheck size={18} /> : undefined,
-            onSelect: () => setSelectedDeck(d.name ?? null),
-          })),
+          ...decks.map((d) => {
+            const did = toNumber(d.id);
+            return {
+              id: String(did),
+              label: d.name || '덱',
+              icon: selectedDeckId === did ? <IconCheck size={18} /> : undefined,
+              onSelect: () => setSelectedDeckId(did),
+            };
+          }),
         ]}
       />
     </div>

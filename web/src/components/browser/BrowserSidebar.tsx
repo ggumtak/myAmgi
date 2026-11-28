@@ -77,6 +77,10 @@ export const BrowserSidebar: React.FC<BrowserSidebarProps> = ({
   };
 
   const normCurrent = currentQuery.trim();
+  const isDeckQueryActive = (name: string) =>
+    normCurrent === `deck:"${name}"` || normCurrent === `deck:${name}`;
+  const isTagQueryActive = (tag: string) =>
+    normCurrent === `tag:"${tag}"` || normCurrent === `tag:${tag}`;
 
   return (
     <aside className="amgi-browser-sidebar" aria-label="Anki 탐색 사이드바">
@@ -84,8 +88,8 @@ export const BrowserSidebar: React.FC<BrowserSidebarProps> = ({
       <div className="amgi-bs-section">
         <button
           type="button"
-          className="amgi-bs-heading compact"
-          data-compact="true"
+          className="amgi-bs-heading"
+          aria-expanded={openSections.quick}
           onClick={() => toggleSection('quick')}
         >
           {openSections.quick ? <IconChevronDown size={15} /> : <IconChevronRight size={15} />}
@@ -97,8 +101,7 @@ export const BrowserSidebar: React.FC<BrowserSidebarProps> = ({
               <button
                 key={item.id}
                 type="button"
-                className={`amgi-bs-item compact ${normCurrent === item.query ? 'active' : ''}`}
-                data-compact="true"
+                className={`amgi-bs-item ${normCurrent === item.query ? 'active' : ''}`}
                 onClick={() => onSelectQuery(item.query)}
               >
                 <span className="amgi-bs-item-label">{item.label}</span>
@@ -112,8 +115,8 @@ export const BrowserSidebar: React.FC<BrowserSidebarProps> = ({
       <div className="amgi-bs-section">
         <button
           type="button"
-          className="amgi-bs-heading compact"
-          data-compact="true"
+          className="amgi-bs-heading"
+          aria-expanded={openSections.decks}
           onClick={() => toggleSection('decks')}
         >
           {openSections.decks ? <IconChevronDown size={15} /> : <IconChevronRight size={15} />}
@@ -124,15 +127,14 @@ export const BrowserSidebar: React.FC<BrowserSidebarProps> = ({
           <div className="amgi-bs-items">
             {decks.map((d) => {
               const name = d.name ?? '';
-              const q = `deck:"${name}"`;
+              const q = `deck:"${name.replace(/"/g, '\\"')}"`;
               const depth = Math.min(3, name.split('::').length - 1);
               const short = name.split('::').pop() || name;
               return (
                 <button
                   key={anki.toNumber(d.id)}
                   type="button"
-                  className={`amgi-bs-item compact ${normCurrent === q ? 'active' : ''}`}
-                  data-compact="true"
+                  className={`amgi-bs-item ${isDeckQueryActive(name) ? 'active' : ''}`}
                   style={{ paddingLeft: `${12 + depth * 12}px` }}
                   title={name}
                   onClick={() => onSelectQuery(q)}
@@ -149,8 +151,8 @@ export const BrowserSidebar: React.FC<BrowserSidebarProps> = ({
       <div className="amgi-bs-section">
         <button
           type="button"
-          className="amgi-bs-heading compact"
-          data-compact="true"
+          className="amgi-bs-heading"
+          aria-expanded={openSections.flags}
           onClick={() => toggleSection('flags')}
         >
           {openSections.flags ? <IconChevronDown size={15} /> : <IconChevronRight size={15} />}
@@ -165,8 +167,7 @@ export const BrowserSidebar: React.FC<BrowserSidebarProps> = ({
                 <button
                   key={f.flag}
                   type="button"
-                  className={`amgi-bs-item compact ${normCurrent === q ? 'active' : ''}`}
-                  data-compact="true"
+                  className={`amgi-bs-item ${normCurrent === q ? 'active' : ''}`}
                   onClick={() => onSelectQuery(q)}
                 >
                   <span className={`amgi-flag-badge amgi-flag-${f.flag}`}>{f.flag}</span>
@@ -182,8 +183,8 @@ export const BrowserSidebar: React.FC<BrowserSidebarProps> = ({
       <div className="amgi-bs-section">
         <button
           type="button"
-          className="amgi-bs-heading compact"
-          data-compact="true"
+          className="amgi-bs-heading"
+          aria-expanded={openSections.notetypes}
           onClick={() => toggleSection('notetypes')}
         >
           {openSections.notetypes ? <IconChevronDown size={15} /> : <IconChevronRight size={15} />}
@@ -199,8 +200,7 @@ export const BrowserSidebar: React.FC<BrowserSidebarProps> = ({
                 <button
                   key={id}
                   type="button"
-                  className={`amgi-bs-item compact ${normCurrent === q ? 'active' : ''}`}
-                  data-compact="true"
+                  className={`amgi-bs-item ${normCurrent === q ? 'active' : ''}`}
                   onClick={() => onSelectQuery(q)}
                 >
                   <span className="amgi-bs-item-label">{nt.name}</span>
@@ -216,8 +216,8 @@ export const BrowserSidebar: React.FC<BrowserSidebarProps> = ({
         <div className="amgi-bs-section">
           <button
             type="button"
-            className="amgi-bs-heading compact"
-            data-compact="true"
+            className="amgi-bs-heading"
+            aria-expanded={openSections.tags}
             onClick={() => toggleSection('tags')}
           >
             {openSections.tags ? <IconChevronDown size={15} /> : <IconChevronRight size={15} />}
@@ -227,13 +227,12 @@ export const BrowserSidebar: React.FC<BrowserSidebarProps> = ({
           {openSections.tags && (
             <div className="amgi-bs-items">
               {tags.slice(0, 60).map((t) => {
-                const q = `tag:"${t}"`;
+                const q = `tag:"${t.replace(/"/g, '\\"')}"`;
                 return (
                   <button
                     key={t}
                     type="button"
-                    className={`amgi-bs-item compact ${normCurrent === q ? 'active' : ''}`}
-                    data-compact="true"
+                    className={`amgi-bs-item ${isTagQueryActive(t) ? 'active' : ''}`}
                     onClick={() => onSelectQuery(q)}
                   >
                     <span className="amgi-bs-item-label">{t}</span>

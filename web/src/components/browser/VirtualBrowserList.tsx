@@ -108,6 +108,11 @@ export interface VirtualBrowserListProps {
   sortReverse: boolean;
   cacheGeneration: number;
   loadingSearch: boolean;
+  /** Changes when the user runs a distinct query/sort/mode and scroll should reset to top. */
+  scrollResetKey?: string;
+  /** Optional scroll offset to restore after initial results load (e.g. edit round-trip). */
+  initialScrollTop?: number;
+  onScrollTopChange?: (scrollTop: number) => void;
   onTapItem: (id: number, e: MouseEvent) => void;
   onToggleSelect: (id: number, shiftKey: boolean) => void;
   onEnterSelectionMode: (initialId: number) => void;
@@ -128,17 +133,26 @@ export function VirtualBrowserList({
   sortReverse,
   cacheGeneration,
   loadingSearch,
+  scrollResetKey,
+  initialScrollTop,
+  onScrollTopChange,
   onTapItem,
   onToggleSelect,
   onEnterSelectionMode,
   onSortColumn,
 }: VirtualBrowserListProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
   const [viewportH, setViewportH] = useState(520);
   const [scrollTop, setScrollTop] = useState(0);
   const [, setRenderTick] = useState(0);
 
-  const rowHeight = isWide ? 48 : isEink ? 84 : 76;
+  const attachScrollRef = useCallback((node: HTMLDivElement | null) => {
+    scrollRef.current = node;
+    setScrollEl(node);
+  }, []);
+
+  const rowHeight = isWide ? (isEink ? 56 : 48) : isEink ? 88 : 76;
 
   // Effective columns requested from backend (must match setActiveBrowserColumns)
   const effectiveColumns = useMemo(() => {
@@ -159,6 +173,9 @@ export function VirtualBrowserList({
   const fetchTokenRef = useRef(0);
   const longPressTimerRef = useRef<number | null>(null);
   const longPressFiredRef = useRef(false);
+  const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
+  const restoredScrollRef = useRef(false);
+  const prevResetKeyRef = useRef(scrollResetKey);
 
   if (cacheSigRef.current !== columnSignature) {
     cacheRef.current.clear();
@@ -167,42 +184,81 @@ export function VirtualBrowserList({
     fetchTokenRef.current += 1;
   }
 
-  // Measure scroll viewport height
+  // Measure live scroll viewport height (re-attaches whenever scrollEl remounts after empty state)
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
+    if (!scrollEl) return;
     const measure = () => {
-      if (el.clientHeight > 0) {
-        setViewportH(el.clientHeight);
+      if (scrollEl.clientHeight > 0) {
+        setViewportH(scrollEl.clientHeight);
       }
     };
     measure();
     if (typeof ResizeObserver !== 'undefined') {
       const ro = new ResizeObserver(measure);
-      ro.observe(el);
+      ro.observe(scrollEl);
       return () => ro.disconnect();
     }
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
-  }, []);
+  }, [scrollEl]);
 
-  // Reset scroll when result list changes drastically
+  // Reset scroll when the query/sort/mode changes or when results become empty
   useEffect(() => {
-    const el = scrollRef.current;
-    if (el && el.scrollTop > ids.length * rowHeight) {
-      el.scrollTop = 0;
+    const keyChanged = prevResetKeyRef.current !== scrollResetKey;
+    prevResetKeyRef.current = scrollResetKey;
+
+    if (ids.length === 0 || keyChanged) {
+      if (scrollEl && scrollEl.scrollTop !== 0) {
+        scrollEl.scrollTop = 0;
+      }
       setScrollTop(0);
+      if (keyChanged && ids.length > 0) {
+        restoredScrollRef.current = true;
+      }
+      return;
     }
-  }, [ids.length, rowHeight]);
+
+    const maxScroll = scrollEl
+      ? Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight)
+      : Math.max(0, ids.length * rowHeight - viewportH);
+
+    // Restore saved scroll offset once after initial results load (e.g. edit round-trip)
+    if (!restoredScrollRef.current && initialScrollTop && initialScrollTop > 0 && scrollEl) {
+      const clamped = Math.min(initialScrollTop, maxScroll);
+      restoredScrollRef.current = true;
+      scrollEl.scrollTop = clamped;
+      setScrollTop(clamped);
+      return;
+    }
+
+    // Clamp scrollTop only when list shrinks below current offset (never while user scrolls)
+    const currentTop = scrollEl ? scrollEl.scrollTop : 0;
+    if (currentTop > maxScroll) {
+      if (scrollEl) scrollEl.scrollTop = maxScroll;
+      setScrollTop(maxScroll);
+    }
+  }, [ids, ids.length, rowHeight, viewportH, scrollEl, scrollResetKey, initialScrollTop]);
+
+  // Cleanup any pending long-press timer on unmount
+  useEffect(() => {
+    return () => {
+      if (longPressTimerRef.current !== null) {
+        window.clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const { startIdx, visibleIds } = useMemo(() => {
     if (ids.length === 0) {
       return { startIdx: 0, visibleIds: [] as number[] };
     }
-    const start = Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN);
+    const maxScroll = Math.max(0, ids.length * rowHeight - viewportH);
+    const effectiveScrollTop = Math.max(0, Math.min(scrollTop, maxScroll));
+    const start = Math.max(0, Math.floor(effectiveScrollTop / rowHeight) - OVERSCAN);
     const end = Math.min(
       ids.length - 1,
-      Math.ceil((scrollTop + viewportH) / rowHeight) + OVERSCAN
+      Math.ceil((effectiveScrollTop + viewportH) / rowHeight) + OVERSCAN
     );
     return {
       startIdx: start,
@@ -328,6 +384,7 @@ export function VirtualBrowserList({
       window.clearTimeout(longPressTimerRef.current);
       longPressTimerRef.current = null;
     }
+    pointerStartRef.current = null;
   };
 
   if (!loadingSearch && ids.length === 0) {
@@ -347,9 +404,13 @@ export function VirtualBrowserList({
 
   return (
     <div
-      ref={scrollRef}
+      ref={attachScrollRef}
       className="amgi-vlist-scroll"
-      onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+      onScroll={(e) => {
+        const nextTop = e.currentTarget.scrollTop;
+        setScrollTop(nextTop);
+        onScrollTopChange?.(nextTop);
+      }}
       data-testid="virtual-browser-scroll"
     >
       {isWide && (
@@ -392,7 +453,7 @@ export function VirtualBrowserList({
       )}
 
       <div
-        className="amgi-vlist-canvas"
+        className={`amgi-vlist-canvas ${!isWide ? 'is-mobile-card' : ''}`.trim()}
         style={{ height: totalHeight }}
       >
         <div
@@ -438,12 +499,25 @@ export function VirtualBrowserList({
                     if (e.pointerType === 'mouse' && e.button !== 0) return;
                     longPressFiredRef.current = false;
                     clearLongPress();
+                    pointerStartRef.current = { x: e.clientX, y: e.clientY };
                     longPressTimerRef.current = window.setTimeout(() => {
                       longPressFiredRef.current = true;
-                      onEnterSelectionMode(id);
+                      longPressTimerRef.current = null;
+                      pointerStartRef.current = null;
+                      if (selectionMode || selectedIds.size > 0) {
+                        onToggleSelect(id, false);
+                      } else {
+                        onEnterSelectionMode(id);
+                      }
                     }, 450);
                   }}
-                  onPointerMove={clearLongPress}
+                  onPointerMove={(e) => {
+                    const start = pointerStartRef.current;
+                    if (!start) return;
+                    if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > 10) {
+                      clearLongPress();
+                    }
+                  }}
                   onPointerUp={clearLongPress}
                   onPointerCancel={clearLongPress}
                   onClick={(e) => {

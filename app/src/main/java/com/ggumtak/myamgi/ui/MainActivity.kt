@@ -163,17 +163,17 @@ class MainActivity : AppCompatActivity() {
                 initialLightBars = true
             }
             savedTheme == "light" -> {
-                initialBgHex = "#F4F5F7"
+                initialBgHex = "#F2F4F6"
                 initialLightBars = true
             }
             savedTheme == "dark" -> {
-                initialBgHex = "#0B0E14"
+                initialBgHex = "#101114"
                 initialLightBars = false
             }
             else -> {
                 val isNight = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
                     Configuration.UI_MODE_NIGHT_YES
-                initialBgHex = if (isNight) "#0B0E14" else "#F4F5F7"
+                initialBgHex = if (isNight) "#101114" else "#F2F4F6"
                 initialLightBars = !isNight
             }
         }
@@ -535,9 +535,7 @@ class MainActivity : AppCompatActivity() {
             event.keyCode == KeyEvent.KEYCODE_MEDIA_NEXT ||
             event.keyCode == KeyEvent.KEYCODE_MEDIA_PREVIOUS ||
             event.keyCode == KeyEvent.KEYCODE_MEDIA_STOP
-        val isDpadKey = event.keyCode == KeyEvent.KEYCODE_DPAD_UP ||
-            event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN ||
-            event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
+        val isDpadKey = event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
             event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT ||
             event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER
         val isHanjaShortcut = event.keyCode == KeyEvent.KEYCODE_Q || event.keyCode == KeyEvent.KEYCODE_W
@@ -555,6 +553,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (isPageOrMediaKey) {
+            if (isInputFocused) {
+                return super.dispatchKeyEvent(event)
+            }
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                 publishKeyEvent(server, keyName, event)
             }
@@ -606,8 +607,6 @@ class MainActivity : AppCompatActivity() {
         KeyEvent.KEYCODE_VOLUME_DOWN -> "VolumeDown"
         KeyEvent.KEYCODE_PAGE_UP -> "PageUp"
         KeyEvent.KEYCODE_PAGE_DOWN -> "PageDown"
-        KeyEvent.KEYCODE_DPAD_UP -> "ArrowUp"
-        KeyEvent.KEYCODE_DPAD_DOWN -> "ArrowDown"
         KeyEvent.KEYCODE_DPAD_LEFT -> "ArrowLeft"
         KeyEvent.KEYCODE_DPAD_RIGHT -> "ArrowRight"
         KeyEvent.KEYCODE_DPAD_CENTER -> "Enter"
@@ -684,8 +683,8 @@ class MainActivity : AppCompatActivity() {
                     val eink = DeviceProfile.current(this@MainActivity).isEink
                     val bgHex = when {
                         eink -> "#FFFFFF"
-                        isNight -> "#0B0E14"
-                        else -> "#F4F5F7"
+                        isNight -> "#101114"
+                        else -> "#F2F4F6"
                     }
                     setupWebView(
                         restarted,

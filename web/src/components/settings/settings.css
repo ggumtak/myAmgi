@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Settings View Styles (Max-width 680px, 24px breathable section gaps)
+   Settings View Styles (Toss-like Calm Cards, Max-width 680px, Dark & E-Ink)
    ========================================================================== */
 
 .amgi-settings-page {
@@ -11,16 +11,41 @@
   gap: 24px;
 }
 
-.amgi-settings-loading {
-  padding: 40px 20px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  color: var(--text-2);
-  font-size: 14px;
-  font-weight: 600;
+.amgi-settings-page .amgi-setting-row {
+  min-height: 56px;
+}
+
+.amgi-settings-page .amgi-setting-desc {
+  color: var(--text-3);
+}
+
+:root[data-theme="eink"] .amgi-settings-page .amgi-setting-desc {
+  color: var(--text);
+}
+
+@media (hover: hover) {
+  .amgi-settings-page .amgi-setting-row-clickable:hover:not(:disabled) {
+    background: var(--fill-weak);
+  }
+}
+
+.amgi-settings-page .amgi-setting-row-clickable:active:not(:disabled) {
+  background: var(--fill-weak);
+}
+
+:root[data-theme="eink"] .amgi-settings-page .amgi-setting-row-clickable:active:not(:disabled) {
+  background: var(--surface);
+}
+
+.amgi-setting-row--danger .amgi-setting-label--danger,
+.amgi-setting-control--danger {
+  color: var(--danger);
+}
+
+:root[data-theme="eink"] .amgi-setting-row--danger .amgi-setting-label--danger,
+:root[data-theme="eink"] .amgi-setting-control--danger {
+  color: var(--text);
+  font-weight: 800;
 }
 
 .amgi-setting-value-trigger {
@@ -41,8 +66,96 @@
 }
 
 :root[data-theme="eink"] .amgi-setting-value-trigger {
-  color: #000000;
+  color: var(--text);
   font-weight: 700;
+}
+
+/* Collapsible Advanced (Anki) Section */
+.amgi-advanced-chevron {
+  color: var(--text-3);
+  transition: transform 0.16s ease;
+}
+
+.amgi-advanced-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+:root[data-theme="eink"] .amgi-advanced-chevron {
+  color: var(--text);
+}
+
+.amgi-advanced-body {
+  border-top: 1px solid var(--border-subtle);
+}
+
+:root[data-theme="eink"] .amgi-advanced-body {
+  border-top: 2px solid var(--border);
+}
+
+.amgi-advanced-subhead {
+  padding: 14px 20px 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+:root[data-theme="eink"] .amgi-advanced-subhead {
+  color: var(--text);
+  font-weight: 800;
+  border-top: 2px solid var(--border);
+}
+
+.amgi-anki-inline-loading {
+  padding: 24px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-3);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.amgi-anki-inline-error {
+  margin: 14px 16px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  background: var(--danger-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.amgi-anki-inline-error-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--danger);
+}
+
+.amgi-anki-inline-error-msg {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.48;
+  color: var(--text);
+}
+
+.amgi-anki-inline-error-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
+:root[data-theme="eink"] .amgi-anki-inline-error {
+  background: var(--surface);
+  border: 2px solid var(--border);
+}
+
+:root[data-theme="eink"] .amgi-anki-inline-error-title,
+:root[data-theme="eink"] .amgi-anki-inline-error-msg,
+:root[data-theme="eink"] .amgi-anki-inline-error-hint {
+  color: var(--text);
 }
 
 /* Visual 4-Card Theme Picker */
@@ -55,7 +168,7 @@
 }
 
 :root[data-theme="eink"] .amgi-theme-picker-wrap {
-  border-bottom: 2px solid #000000;
+  border-bottom: 2px solid var(--border);
 }
 
 .amgi-theme-picker-head {
@@ -72,7 +185,11 @@
 
 .amgi-theme-picker-desc {
   font-size: 13px;
-  color: var(--text-2);
+  color: var(--text-3);
+}
+
+:root[data-theme="eink"] .amgi-theme-picker-desc {
+  color: var(--text);
 }
 
 .amgi-theme-cards {
@@ -85,8 +202,8 @@
   min-height: 76px;
   padding: 8px 6px;
   border-radius: var(--radius-md);
-  border: var(--border-w) solid var(--border);
-  background: var(--surface-nested);
+  border: 2px solid transparent;
+  background: var(--fill-weak);
   color: var(--text);
   display: flex;
   flex-direction: column;
@@ -97,13 +214,18 @@
   transition: border-color 0.14s ease, background-color 0.14s ease;
 }
 
-.amgi-theme-card:hover {
-  border-color: var(--border-strong);
-  background: var(--surface-2);
+@media (hover: hover) {
+  .amgi-theme-card:hover {
+    background: var(--fill-strong);
+  }
+}
+
+.amgi-theme-card:active {
+  background: var(--fill-strong);
 }
 
 .amgi-theme-card.active {
-  border: 2px solid var(--primary);
+  border-color: var(--primary);
   background: var(--primary-soft);
   color: var(--primary);
 }
@@ -134,23 +256,24 @@
   opacity: 0.6;
 }
 
+/* Intentional preview swatch colors representing each theme */
 .amgi-theme-swatch--auto {
-  background: linear-gradient(135deg, #F4F5F7 50%, #0B0E14 50%);
+  background: linear-gradient(135deg, #F2F4F6 50%, #101114 50%);
 }
-.amgi-theme-swatch--auto .amgi-theme-swatch-bar { background: #2F5BFF; }
+.amgi-theme-swatch--auto .amgi-theme-swatch-bar { background: #3182F6; }
 .amgi-theme-swatch--auto .amgi-theme-swatch-line { background: #9AA3B2; }
 
 .amgi-theme-swatch--light {
-  background: #F4F5F7;
+  background: #F2F4F6;
 }
-.amgi-theme-swatch--light .amgi-theme-swatch-bar { background: #2F5BFF; }
+.amgi-theme-swatch--light .amgi-theme-swatch-bar { background: #3182F6; }
 .amgi-theme-swatch--light .amgi-theme-swatch-line { background: #CBD5E1; }
 
 .amgi-theme-swatch--dark {
   background: #141923;
   border-color: rgba(255, 255, 255, 0.14);
 }
-.amgi-theme-swatch--dark .amgi-theme-swatch-bar { background: #6C9EFF; }
+.amgi-theme-swatch--dark .amgi-theme-swatch-bar { background: #3F8CFF; }
 .amgi-theme-swatch--dark .amgi-theme-swatch-line { background: #334155; }
 
 .amgi-theme-swatch--eink {
@@ -216,42 +339,17 @@
   opacity: 1;
 }
 
-/* Anki Settings Import Box */
-.amgi-anki-import-box {
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border-subtle);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-:root[data-theme="eink"] .amgi-anki-import-box {
-  border-bottom: 2px solid #000000;
-}
-
-.amgi-anki-import-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-@media (min-width: 560px) {
-  .amgi-anki-import-actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
 /* Count / Status Pill inside SettingRow */
 .amgi-setting-pill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 5px;
   min-width: 28px;
-  padding: 3px 9px;
+  padding: 4px 10px;
   border-radius: var(--radius-pill);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
+  background: var(--fill-weak);
+  border: 0;
   color: var(--text-2);
   font-size: 12px;
   font-weight: 700;
@@ -261,15 +359,20 @@
 
 .amgi-setting-pill--accent {
   background: var(--primary-soft);
-  border-color: var(--primary);
   color: var(--primary);
 }
 
+.amgi-setting-pill--warn {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
 :root[data-theme="eink"] .amgi-setting-pill,
-:root[data-theme="eink"] .amgi-setting-pill--accent {
-  background: #FFFFFF;
-  color: #000000;
-  border: 2px solid #000000;
+:root[data-theme="eink"] .amgi-setting-pill--accent,
+:root[data-theme="eink"] .amgi-setting-pill--warn {
+  background: var(--surface);
+  color: var(--text);
+  border: 2px solid var(--border);
 }
 
 /* Segmented Font Scale Stepper */
@@ -281,14 +384,14 @@
 }
 
 .amgi-scale-btn {
-  min-width: 40px;
+  min-width: 44px;
   min-height: 44px;
   padding: 0 10px;
   border-radius: var(--radius-sm);
-  border: var(--border-w) solid var(--border);
-  background: var(--surface-2);
+  border: 0;
+  background: var(--fill-weak);
   color: var(--text);
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 700;
   display: inline-flex;
   align-items: center;
@@ -296,9 +399,14 @@
   cursor: pointer;
 }
 
-.amgi-scale-btn:hover:not(:disabled) {
-  background: var(--surface-active);
-  border-color: var(--border-strong);
+@media (hover: hover) {
+  .amgi-scale-btn:hover:not(:disabled) {
+    background: var(--fill-strong);
+  }
+}
+
+.amgi-scale-btn:active:not(:disabled) {
+  background: var(--fill-strong);
 }
 
 .amgi-scale-btn:disabled {
@@ -316,11 +424,16 @@
 }
 
 :root[data-theme="eink"] .amgi-scale-btn {
-  min-width: 44px;
-  min-height: 48px;
-  background: #FFFFFF;
-  color: #000000;
-  border: 2px solid #000000;
+  min-width: 56px;
+  min-height: 56px;
+  background: var(--surface);
+  color: var(--text);
+  border: 2px solid var(--border);
+}
+
+:root[data-theme="eink"] .amgi-scale-btn:disabled {
+  opacity: 1;
+  border-style: dashed;
 }
 
 /* Sub-sheet Lists (Backups, Media Check, Empty Cards, Info) */
@@ -334,7 +447,26 @@
   margin: 0;
   font-size: 13px;
   line-height: 1.5;
-  color: var(--text-2);
+  color: var(--text-3);
+}
+
+:root[data-theme="eink"] .amgi-sheet-note {
+  color: var(--text);
+}
+
+.amgi-sheet-sync-note {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: var(--warn-soft);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+:root[data-theme="eink"] .amgi-sheet-sync-note {
+  background: var(--surface);
+  border: 2px solid var(--border);
 }
 
 .amgi-backup-list {
@@ -348,15 +480,15 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 14px;
+  padding: 14px 16px;
   border-radius: var(--radius-md);
-  border: var(--border-w) solid var(--border);
-  background: var(--surface-nested);
+  border: 0;
+  background: var(--fill-weak);
 }
 
 :root[data-theme="eink"] .amgi-backup-row {
-  background: #FFFFFF;
-  border: 2px solid #000000;
+  background: var(--surface);
+  border: 2px solid var(--border);
 }
 
 .amgi-backup-meta {
@@ -376,8 +508,12 @@
 
 .amgi-backup-size {
   font-size: 12px;
-  color: var(--text-2);
+  color: var(--text-3);
   font-variant-numeric: tabular-nums;
+}
+
+:root[data-theme="eink"] .amgi-backup-size {
+  color: var(--text);
 }
 
 .amgi-stat-pair-grid {
@@ -389,26 +525,30 @@
 .amgi-stat-pair-box {
   padding: 14px;
   border-radius: var(--radius-md);
-  border: var(--border-w) solid var(--border-subtle);
-  background: var(--surface-nested);
+  border: 0;
+  background: var(--fill-weak);
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
 :root[data-theme="eink"] .amgi-stat-pair-box {
-  background: #FFFFFF;
-  border: 2px solid #000000;
+  background: var(--surface);
+  border: 2px solid var(--border);
 }
 
 .amgi-stat-pair-label {
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-2);
+  color: var(--text-3);
+}
+
+:root[data-theme="eink"] .amgi-stat-pair-label {
+  color: var(--text);
 }
 
 .amgi-stat-pair-val {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 800;
   color: var(--text);
   font-variant-numeric: tabular-nums;
@@ -416,10 +556,10 @@
 
 .amgi-file-sample-list {
   margin: 0;
-  padding: 10px 12px 10px 26px;
+  padding: 12px 14px 12px 28px;
   border-radius: var(--radius-md);
-  border: var(--border-w) solid var(--border-subtle);
-  background: var(--surface-nested);
+  border: 0;
+  background: var(--fill-weak);
   font-size: 12px;
   line-height: 1.55;
   color: var(--text-2);
@@ -428,17 +568,23 @@
 }
 
 :root[data-theme="eink"] .amgi-file-sample-list {
-  background: #FFFFFF;
-  border: 2px solid #000000;
-  color: #000000;
+  background: var(--surface);
+  border: 2px solid var(--border);
+  color: var(--text);
 }
 
 .amgi-info-kv-list {
   display: flex;
   flex-direction: column;
-  border: var(--border-w) solid var(--border);
+  border: 0;
   border-radius: var(--radius-md);
+  background: var(--fill-weak);
   overflow: hidden;
+}
+
+:root[data-theme="eink"] .amgi-info-kv-list {
+  background: var(--surface);
+  border: 2px solid var(--border);
 }
 
 .amgi-info-kv-row {
@@ -446,13 +592,13 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 14px;
+  padding: 13px 16px;
   border-bottom: 1px solid var(--border-subtle);
   font-size: 14px;
 }
 
 :root[data-theme="eink"] .amgi-info-kv-row {
-  border-bottom: 2px solid #000000;
+  border-bottom: 2px solid var(--border);
 }
 
 .amgi-info-kv-row:last-child,
@@ -474,6 +620,11 @@
 }
 
 /* Custom rollover hour grid */
+.amgi-rollover-back-btn {
+  align-self: flex-start;
+  padding-inline: 8px;
+}
+
 .amgi-rollover-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -484,8 +635,8 @@
   min-height: 48px;
   padding: 8px 6px;
   border-radius: var(--radius-sm);
-  border: var(--border-w) solid var(--border);
-  background: var(--surface-2);
+  border: 0;
+  background: var(--fill-weak);
   color: var(--text);
   font-size: 13px;
   font-weight: 600;
@@ -493,23 +644,32 @@
   cursor: pointer;
 }
 
+@media (hover: hover) {
+  .amgi-rollover-btn:hover {
+    background: var(--fill-strong);
+  }
+}
+
+.amgi-rollover-btn:active {
+  background: var(--fill-strong);
+}
+
 .amgi-rollover-btn.active {
   background: var(--primary-soft);
-  border-color: var(--primary);
   color: var(--primary);
   font-weight: 700;
 }
 
 :root[data-theme="eink"] .amgi-rollover-btn {
-  min-height: 52px;
-  background: #FFFFFF;
-  color: #000000;
-  border: 2px solid #000000;
+  min-height: 56px;
+  background: var(--surface);
+  color: var(--text);
+  border: 2px solid var(--border);
 }
 
 :root[data-theme="eink"] .amgi-rollover-btn.active {
-  background: #000000;
-  color: #FFFFFF;
+  background: var(--text);
+  color: var(--surface);
 }
 
 @media (max-width: 390px) {
