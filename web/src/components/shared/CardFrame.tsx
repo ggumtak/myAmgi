@@ -294,7 +294,7 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
           height: '100%',
           border: 'none',
           display: 'block',
-          background: theme === 'dark' ? '#121316' : '#FFFFFF',
+          background: theme === 'dark' ? '#141923' : '#FFFFFF',
           ...style,
         }}
       />

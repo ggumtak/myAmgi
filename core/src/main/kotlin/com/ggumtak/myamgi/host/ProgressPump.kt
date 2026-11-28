@@ -57,8 +57,10 @@ fun progressToJson(p: Progress): JsonObject = when (p.valueCase) {
     Progress.ValueCase.FULL_SYNC -> jsonOf(
         "kind" to "fullSync", "transferred" to p.fullSync.transferred, "total" to p.fullSync.total
     )
-    Progress.ValueCase.MEDIA_SYNC -> jsonOf(
-        "kind" to "mediaSync", "checked" to p.mediaSync.checked, "added" to p.mediaSync.added, "removed" to p.mediaSync.removed
+    Progress.ValueCase.MEDIA_SYNC -> buildMediaSyncProgressJson(
+        checked = p.mediaSync.checked.ifBlank { null },
+        added = p.mediaSync.added.ifBlank { null },
+        removed = p.mediaSync.removed.ifBlank { null }
     )
     Progress.ValueCase.IMPORTING -> jsonOf("kind" to "importing", "text" to p.importing)
     Progress.ValueCase.EXPORTING -> jsonOf("kind" to "exporting", "text" to p.exporting)
@@ -69,4 +71,27 @@ fun progressToJson(p: Progress): JsonObject = when (p.valueCase) {
     )
     Progress.ValueCase.NONE, Progress.ValueCase.VALUE_NOT_SET, null -> jsonOf("kind" to "none")
     else -> jsonOf("kind" to p.valueCase.name.lowercase())
+}
+
+/**
+ * Builds a consistent `mediaSync` progress payload, omitting unset fields rather than emitting
+ * JSON nulls so frontend string formatters never render `"null"`.
+ */
+internal fun buildMediaSyncProgressJson(
+    checked: String? = null,
+    added: String? = null,
+    removed: String? = null,
+    op: String? = null,
+    phase: String? = null,
+    error: String? = null
+): JsonObject {
+    val map = LinkedHashMap<String, kotlinx.serialization.json.JsonElement>()
+    if (op != null) map["op"] = toJson(op)
+    if (phase != null) map["phase"] = toJson(phase)
+    map["kind"] = toJson("mediaSync")
+    if (!checked.isNullOrBlank()) map["checked"] = toJson(checked)
+    if (!added.isNullOrBlank()) map["added"] = toJson(added)
+    if (!removed.isNullOrBlank()) map["removed"] = toJson(removed)
+    if (!error.isNullOrBlank()) map["error"] = toJson(error)
+    return JsonObject(map)
 }

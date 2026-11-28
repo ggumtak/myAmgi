@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './styles/main.css';
 import App from './App';
 
-if ('serviceWorker' in navigator) {
+if ('serviceWorker' in navigator && window.location.protocol === 'https:') {
   window.addEventListener('load', () => {
     const swUrl = `${import.meta.env.BASE_URL}sw.js`;
     navigator.serviceWorker.register(swUrl).catch(() => {

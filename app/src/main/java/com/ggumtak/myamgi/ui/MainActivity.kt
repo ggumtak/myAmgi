@@ -158,18 +158,22 @@ class MainActivity : AppCompatActivity() {
         val initialBgHex: String
         val initialLightBars: Boolean
         when {
-            initialEink || savedTheme == "light" -> {
+            initialEink -> {
                 initialBgHex = "#FFFFFF"
                 initialLightBars = true
             }
+            savedTheme == "light" -> {
+                initialBgHex = "#F4F5F7"
+                initialLightBars = true
+            }
             savedTheme == "dark" -> {
-                initialBgHex = "#161B24"
+                initialBgHex = "#0B0E14"
                 initialLightBars = false
             }
             else -> {
                 val isNight = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
                     Configuration.UI_MODE_NIGHT_YES
-                initialBgHex = if (isNight) "#161B24" else "#FFFFFF"
+                initialBgHex = if (isNight) "#0B0E14" else "#F4F5F7"
                 initialLightBars = !isNight
             }
         }
@@ -249,6 +253,9 @@ class MainActivity : AppCompatActivity() {
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
             overScrollMode = View.OVER_SCROLL_NEVER
+            isVerticalScrollBarEnabled = false
+            isHorizontalScrollBarEnabled = false
+            scrollBarStyle = View.SCROLLBARS_INSIDE_OVERLAY
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
@@ -675,9 +682,14 @@ class MainActivity : AppCompatActivity() {
                     val isNight = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
                         Configuration.UI_MODE_NIGHT_YES
                     val eink = DeviceProfile.current(this@MainActivity).isEink
+                    val bgHex = when {
+                        eink -> "#FFFFFF"
+                        isNight -> "#0B0E14"
+                        else -> "#F4F5F7"
+                    }
                     setupWebView(
                         restarted,
-                        if (!eink && isNight) "#161B24" else "#FFFFFF",
+                        bgHex,
                         eink || !isNight
                     )
                     handleIncomingIntent(intent)

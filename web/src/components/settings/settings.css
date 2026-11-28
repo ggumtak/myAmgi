@@ -48,7 +48,7 @@
 /* Visual 4-Card Theme Picker */
 .amgi-theme-picker-wrap {
   padding: 16px 20px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -84,9 +84,9 @@
 .amgi-theme-card {
   min-height: 76px;
   padding: 8px 6px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   border: var(--border-w) solid var(--border);
-  background: var(--surface-2);
+  background: var(--surface-nested);
   color: var(--text);
   display: flex;
   flex-direction: column;
@@ -94,10 +94,12 @@
   justify-content: center;
   gap: 7px;
   cursor: pointer;
+  transition: border-color 0.14s ease, background-color 0.14s ease;
 }
 
 .amgi-theme-card:hover {
   border-color: var(--border-strong);
+  background: var(--surface-2);
 }
 
 .amgi-theme-card.active {
@@ -133,22 +135,22 @@
 }
 
 .amgi-theme-swatch--auto {
-  background: linear-gradient(135deg, #F3F5F9 50%, #0A0D13 50%);
+  background: linear-gradient(135deg, #F4F5F7 50%, #0B0E14 50%);
 }
-.amgi-theme-swatch--auto .amgi-theme-swatch-bar { background: #1D4ED8; }
-.amgi-theme-swatch--auto .amgi-theme-swatch-line { background: #9CA3AF; }
+.amgi-theme-swatch--auto .amgi-theme-swatch-bar { background: #2F5BFF; }
+.amgi-theme-swatch--auto .amgi-theme-swatch-line { background: #9AA3B2; }
 
 .amgi-theme-swatch--light {
-  background: #FFFFFF;
+  background: #F4F5F7;
 }
-.amgi-theme-swatch--light .amgi-theme-swatch-bar { background: #1D4ED8; }
+.amgi-theme-swatch--light .amgi-theme-swatch-bar { background: #2F5BFF; }
 .amgi-theme-swatch--light .amgi-theme-swatch-line { background: #CBD5E1; }
 
 .amgi-theme-swatch--dark {
-  background: #131822;
-  border-color: #2A3548;
+  background: #141923;
+  border-color: rgba(255, 255, 255, 0.14);
 }
-.amgi-theme-swatch--dark .amgi-theme-swatch-bar { background: #58A6FF; }
+.amgi-theme-swatch--dark .amgi-theme-swatch-bar { background: #6C9EFF; }
 .amgi-theme-swatch--dark .amgi-theme-swatch-line { background: #334155; }
 
 .amgi-theme-swatch--eink {
@@ -217,7 +219,7 @@
 /* Anki Settings Import Box */
 .amgi-anki-import-box {
   padding: 16px 20px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -347,9 +349,9 @@
   justify-content: space-between;
   gap: 12px;
   padding: 12px 14px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   border: var(--border-w) solid var(--border);
-  background: var(--surface-2);
+  background: var(--surface-nested);
 }
 
 :root[data-theme="eink"] .amgi-backup-row {
@@ -386,9 +388,9 @@
 
 .amgi-stat-pair-box {
   padding: 14px;
-  border-radius: var(--radius-sm);
-  border: var(--border-w) solid var(--border);
-  background: var(--surface-2);
+  border-radius: var(--radius-md);
+  border: var(--border-w) solid var(--border-subtle);
+  background: var(--surface-nested);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -415,9 +417,9 @@
 .amgi-file-sample-list {
   margin: 0;
   padding: 10px 12px 10px 26px;
-  border-radius: var(--radius-sm);
-  border: var(--border-w) solid var(--border);
-  background: var(--surface-2);
+  border-radius: var(--radius-md);
+  border: var(--border-w) solid var(--border-subtle);
+  background: var(--surface-nested);
   font-size: 12px;
   line-height: 1.55;
   color: var(--text-2);
@@ -435,7 +437,7 @@
   display: flex;
   flex-direction: column;
   border: var(--border-w) solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 
@@ -445,7 +447,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 12px 14px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-subtle);
   font-size: 14px;
 }
 

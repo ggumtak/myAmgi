@@ -7,7 +7,6 @@ import {
   type ActionMenuItem,
   ErrorState,
   IconCheck,
-  IconChevronDown,
   IconChevronRight,
   IconClose,
   IconDeck,
@@ -56,11 +55,17 @@ interface FlatDeckRow {
   filtered: boolean;
 }
 
+interface DeckGroup {
+  root: FlatDeckRow;
+  descendants: FlatDeckRow[];
+}
+
 function flattenDeckTree(
   node: anki.DeckTreeNode,
   depth = 0,
   parentFullName = '',
-  out: FlatDeckRow[] = []
+  out: FlatDeckRow[] = [],
+  includeCollapsed = false
 ): FlatDeckRow[] {
   const children = (node.children ?? []) as anki.DeckTreeNode[];
   for (const child of children) {
@@ -86,11 +91,29 @@ function flattenDeckTree(
       filtered: Boolean(child.filtered),
     });
 
-    if (hasChildren && !collapsed) {
-      flattenDeckTree(child, depth + 1, fullName, out);
+    if (hasChildren && (includeCollapsed || !collapsed)) {
+      flattenDeckTree(child, depth + 1, fullName, out, includeCollapsed);
     }
   }
   return out;
+}
+
+function groupFlatDeckRows(rows: FlatDeckRow[]): DeckGroup[] {
+  const groups: DeckGroup[] = [];
+  for (const row of rows) {
+    if (row.depth === 0 || groups.length === 0) {
+      groups.push({ root: row, descendants: [] });
+    } else {
+      groups[groups.length - 1].descendants.push(row);
+    }
+  }
+  return groups;
+}
+
+function getParentBreadcrumb(fullName: string): string | null {
+  const parts = fullName.split('::');
+  if (parts.length <= 1) return null;
+  return parts.slice(0, -1).join(' › ');
 }
 
 function pickInitialSelectedDeck(rows: FlatDeckRow[], preferredId?: number): number | null {
@@ -292,6 +315,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
     if (
       !menuDeck &&
       !renameTarget &&
+      !moveTarget &&
       !subdeckParent &&
       !deleteTarget &&
       !customDeck &&
@@ -327,6 +351,10 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
         setSubdeckParent(null);
         return true;
       }
+      if (moveTarget) {
+        setMoveTarget(null);
+        return true;
+      }
       if (renameTarget) {
         setRenameTarget(null);
         return true;
@@ -340,6 +368,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
   }, [
     menuDeck,
     renameTarget,
+    moveTarget,
     subdeckParent,
     deleteTarget,
     customDeck,
@@ -351,17 +380,22 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
   ]);
 
   const rows = useMemo(
-    () => (treeRoot ? flattenDeckTree(treeRoot) : []),
+    () => (treeRoot ? flattenDeckTree(treeRoot, 0, '', [], false) : []),
+    [treeRoot]
+  );
+
+  const allRows = useMemo(
+    () => (treeRoot ? flattenDeckTree(treeRoot, 0, '', [], true) : []),
     [treeRoot]
   );
 
   // Maintain selectedDeckId for wide 2-pane layout
   useEffect(() => {
     if (rows.length === 0) return;
-    if (!selectedDeckId || !rows.some((r) => r.deckId === selectedDeckId)) {
+    if (!selectedDeckId || !allRows.some((r) => r.deckId === selectedDeckId)) {
       setSelectedDeckId(pickInitialSelectedDeck(rows, initialSelectedDeckId));
     }
-  }, [rows, selectedDeckId, initialSelectedDeckId]);
+  }, [rows, allRows, selectedDeckId, initialSelectedDeckId]);
 
   const topLevelNodes = useMemo(
     () => ((treeRoot?.children ?? []) as anki.DeckTreeNode[]),
@@ -812,17 +846,23 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
     [rows]
   );
 
-  const visibleRows = useMemo(() => {
+  const deckGroups = useMemo(() => groupFlatDeckRows(rows), [rows]);
+
+  const isFiltering = deckFilterQuery.trim().length > 0;
+
+  const filteredRows = useMemo(() => {
     const q = deckFilterQuery.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(
+    if (!q) return [];
+    return allRows.filter(
       (r) =>
         r.shortName.toLowerCase().includes(q) ||
         r.fullName.toLowerCase().includes(q)
     );
-  }, [rows, deckFilterQuery]);
+  }, [allRows, deckFilterQuery]);
 
-  // Personal Dashboard Hero Card (inspired by MalhaeVoca / Mochi Cards)
+  const anyHasChildren = useMemo(() => rows.some((r) => r.hasChildren), [rows]);
+
+  // Compact, Serene Today Focus Header Card
   const renderSummaryCard = () => {
     const todayTotalGoal = todayStats.answerCount + totalDue;
     const progressPct =
@@ -836,8 +876,8 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
     if (totalDue > 0) {
       statSummary =
         todayStats.answerCount > 0
-          ? `남은 ${totalDue.toLocaleString()}장 · 오늘 ${todayStats.answerCount.toLocaleString()}장 완료 · ${formatDurationKo(todayStats.answerMillis)}`
-          : `오늘 학습 대기 ${totalDue.toLocaleString()}장`;
+          ? `남은 ${totalDue.toLocaleString()}장 · 오늘 ${todayStats.answerCount.toLocaleString()}장 완료`
+          : `남은 ${totalDue.toLocaleString()}장`;
     } else if (todayStats.answerCount > 0) {
       statSummary = `오늘 ${todayStats.answerCount.toLocaleString()}장 완료 · ${formatDurationKo(todayStats.answerMillis)}`;
     } else {
@@ -846,25 +886,27 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
 
     return (
       <section className="amgi-summary-card" aria-label="오늘의 학습 요약">
-        <div className="amgi-summary-hero-head">
+        <div className="amgi-summary-lead">
+          <DailyProgressRing pct={progressPct} done={allDone} size={48} />
+
           <div className="amgi-summary-body">
-            <div className="amgi-summary-eyebrow">
-              <span>오늘의 학습</span>
+            <div className="amgi-summary-title-row">
+              <span className="amgi-summary-primary">{greeting}</span>
               {todayStats.streakDays > 0 && (
-                <span className="amgi-streak-pill">
-                  <IconFlame size={12} />
-                  <span>{todayStats.streakDays}일 연속</span>
+                <span
+                  className="amgi-streak-pill"
+                  title={`${todayStats.streakDays}일 연속 학습`}
+                >
+                  <IconFlame size={11} />
+                  <span>{todayStats.streakDays}일</span>
                 </span>
               )}
             </div>
-            <div className="amgi-summary-primary">{greeting}</div>
             <div className="amgi-summary-secondary tabular">{statSummary}</div>
           </div>
-
-          <DailyProgressRing pct={progressPct} done={allDone} size={58} />
         </div>
 
-        <div className="amgi-summary-cta-row">
+        <div className="amgi-summary-actions">
           {firstDueDeck ? (
             <button
               type="button"
@@ -875,8 +917,8 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
                 });
               }}
             >
-              <IconPlay size={16} />
-              <span>바로 학습하기</span>
+              <IconPlay size={15} />
+              <span>학습 시작</span>
             </button>
           ) : (
             <button
@@ -884,21 +926,189 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
               className="amgi-btn amgi-btn-secondary amgi-summary-play-btn"
               onClick={() => openAddSheet()}
             >
-              <IconEdit size={16} />
-              <span>새 노트 추가</span>
+              <IconEdit size={15} />
+              <span>노트 추가</span>
             </button>
           )}
           <button
             type="button"
-            className="amgi-btn amgi-btn-secondary amgi-btn-icon"
+            className="amgi-summary-refresh-btn"
             onClick={() => void loadDecks(true)}
             aria-label="카운트 새로고침"
             title="카운트 새로고침"
           >
-            <IconRefresh size={18} />
+            <IconRefresh size={16} />
           </button>
         </div>
       </section>
+    );
+  };
+
+  const renderDeckRow = (
+    row: FlatDeckRow,
+    mode: 'root' | 'child' | 'search',
+    showChevronSlot: boolean
+  ) => {
+    const isSelected = isWide && selectedDeckId === row.deckId;
+    const rowDue = row.newCount + row.learnCount + row.reviewCount;
+    const themeMeta = resolveDeckTheme(row.fullName);
+    const breadcrumb = mode === 'search' ? getParentBreadcrumb(row.fullName) : null;
+
+    let rowVariantClass = 'amgi-deck-row--root';
+    let indentStyle: React.CSSProperties | undefined;
+    if (mode === 'search') {
+      rowVariantClass = 'amgi-deck-row--search';
+    } else if (mode === 'child') {
+      const clampedDepth = Math.min(Math.max(row.depth - 1, 0), 3);
+      const indentPx = 20 + clampedDepth * 16;
+      indentStyle = { '--deck-indent': `${indentPx}px` } as React.CSSProperties;
+      rowVariantClass =
+        row.depth === 1
+          ? 'amgi-deck-row--child amgi-deck-row--d1'
+          : row.depth === 2
+            ? 'amgi-deck-row--child amgi-deck-row--d2'
+            : 'amgi-deck-row--child amgi-deck-row--deep';
+    }
+
+    const countsAria =
+      rowDue === 0
+        ? '오늘 학습 완료'
+        : `새 카드 ${row.newCount}장, 학습 중 ${row.learnCount}장, 복습 ${row.reviewCount}장`;
+
+    return (
+      <div
+        key={row.deckId}
+        role="listitem"
+        tabIndex={0}
+        data-deck-id={row.deckId}
+        className={`amgi-deck-row ${rowVariantClass} ${isSelected ? 'is-selected' : ''}`}
+        style={indentStyle}
+        onClick={() => {
+          if (longPressFiredRef.current) {
+            longPressFiredRef.current = false;
+            return;
+          }
+          void handleRowTap(row);
+        }}
+        onKeyDown={(e) => {
+          if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+            e.preventDefault();
+            void handleRowTap(row);
+          }
+        }}
+        onTouchStart={() => startLongPress(row)}
+        onTouchMove={cancelLongPress}
+        onTouchEnd={cancelLongPress}
+        onTouchCancel={cancelLongPress}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setMenuDeck(row);
+        }}
+      >
+        <div className="amgi-deck-row-left">
+          {mode === 'root' && (
+            <span
+              className={`amgi-deck-emblem amgi-deck-emblem--${
+                row.filtered ? 'blue' : themeMeta.tone
+              }`}
+              aria-hidden="true"
+            >
+              {row.filtered ? (
+                <IconSpark size={15} />
+              ) : (
+                <DeckCategoryIcon deckName={row.fullName} size={16} />
+              )}
+            </span>
+          )}
+
+          {mode === 'child' && row.depth >= 2 && (
+            <span
+              className={`amgi-deck-depth-dot ${row.depth >= 3 ? 'is-deep' : ''}`}
+              aria-hidden="true"
+            />
+          )}
+
+          <div className="amgi-deck-row-text">
+            {breadcrumb && <span className="amgi-deck-breadcrumb">{breadcrumb}</span>}
+            <div className="amgi-deck-title-wrap">
+              <span
+                className={`amgi-deck-title ${
+                  row.filtered ? 'amgi-deck-title-filtered' : ''
+                }`}
+              >
+                {row.shortName}
+              </span>
+              {row.filtered && <span className="amgi-filtered-pill">맞춤</span>}
+            </div>
+          </div>
+        </div>
+
+        <div className="amgi-deck-row-right">
+          <div className="amgi-deck-counts tabular" aria-label={countsAria}>
+            {rowDue === 0 ? (
+              <span className="amgi-deck-done-badge">
+                <IconCheck size={11} />
+                <span>완료</span>
+              </span>
+            ) : (
+              <>
+                <span
+                  className={`amgi-deck-count amgi-deck-count--new ${
+                    row.newCount === 0 ? 'is-zero' : ''
+                  }`}
+                >
+                  {row.newCount}
+                </span>
+                <span
+                  className={`amgi-deck-count amgi-deck-count--learn ${
+                    row.learnCount === 0 ? 'is-zero' : ''
+                  }`}
+                >
+                  {row.learnCount}
+                </span>
+                <span
+                  className={`amgi-deck-count amgi-deck-count--review ${
+                    row.reviewCount === 0 ? 'is-zero' : ''
+                  }`}
+                >
+                  {row.reviewCount}
+                </span>
+              </>
+            )}
+          </div>
+
+          <div className="amgi-deck-actions">
+            {showChevronSlot &&
+              (row.hasChildren ? (
+                <button
+                  type="button"
+                  className={`amgi-deck-chevron ${!row.collapsed ? 'is-expanded' : ''}`}
+                  aria-label={
+                    row.collapsed ? `${row.shortName} 펼치기` : `${row.shortName} 접기`
+                  }
+                  aria-expanded={!row.collapsed}
+                  onClick={(e) => void handleToggleCollapse(e, row)}
+                >
+                  <IconChevronRight size={16} />
+                </button>
+              ) : (
+                <span className="amgi-deck-chevron-spacer" aria-hidden="true" />
+              ))}
+
+            <button
+              type="button"
+              className="amgi-deck-more-btn"
+              aria-label={`${row.shortName} 덱 메뉴`}
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuDeck(row);
+              }}
+            >
+              <IconMore size={17} />
+            </button>
+          </div>
+        </div>
+      </div>
     );
   };
 
@@ -959,19 +1169,16 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
 
     const onlyEmptyDefault =
       rows.length === 1 && rows[0].deckId === 1 && totalCardsAll === 0;
+    const showChevronSlot = !isFiltering && anyHasChildren;
+    const deckCountDisplay = isFiltering ? filteredRows.length : allRows.length;
 
     return (
       <>
-        <div className="amgi-deck-section-head">
-          <h2 className="amgi-deck-section-title">내 암기장</h2>
-          <span className="amgi-deck-section-count tabular">{rows.length}개</span>
-        </div>
-
-        {rows.length >= 6 && (
+        {allRows.length >= 6 && (
           <div className="amgi-deck-filter-bar">
             <div className="amgi-deck-filter-input-wrap">
-              <span className="amgi-deck-filter-icon">
-                <IconSearch size={16} />
+              <span className="amgi-deck-filter-icon" aria-hidden="true">
+                <IconSearch size={15} />
               </span>
               <input
                 type="search"
@@ -981,134 +1188,86 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
                 placeholder="암기장 이름으로 빠르게 찾기..."
                 aria-label="덱 필터"
               />
+              {isFiltering && (
+                <button
+                  type="button"
+                  className="amgi-deck-filter-clear"
+                  onClick={() => setDeckFilterQuery('')}
+                  aria-label="검색어 지우기"
+                >
+                  <IconClose size={14} />
+                </button>
+              )}
             </div>
           </div>
         )}
 
-        <div className="amgi-deck-shelf" role="list" aria-label="덱 목록">
-          {visibleRows.length === 0 ? (
-            <div className="amgi-deck-empty-search">
-              검색 조건과 일치하는 덱이 없습니다.
+        <div className={`amgi-deck-list-shell ${showChevronSlot ? 'has-chevrons' : ''}`}>
+          <div className="amgi-deck-list-header">
+            <div className="amgi-deck-section-left">
+              <h2 className="amgi-deck-section-title">
+                {isFiltering ? '검색 결과' : '내 암기장'}
+              </h2>
+              <span className="amgi-deck-section-count tabular">
+                {!isFiltering && allRows.length > deckGroups.length
+                  ? `총 ${deckCountDisplay}개`
+                  : `${deckCountDisplay}개`}
+              </span>
             </div>
-          ) : (
-            visibleRows.map((row) => {
-              const isSelected = isWide && selectedDeckId === row.deckId;
-              const rowDue = row.newCount + row.learnCount + row.reviewCount;
-              const isSub = row.depth > 0;
-              const subIndent = Math.min(row.depth, 4) * 14;
-              const themeMeta = resolveDeckTheme(row.fullName);
 
-              return (
-                <div
-                  key={row.deckId}
-                  role="listitem"
-                  data-deck-id={row.deckId}
-                  className={`amgi-deck-card ${isSub ? 'amgi-deck-card--sub' : ''} ${
-                    isSelected ? 'is-selected' : ''
-                  }`}
-                  style={isSub ? { marginLeft: `${subIndent}px` } : undefined}
-                  onClick={() => {
-                    if (longPressFiredRef.current) {
-                      longPressFiredRef.current = false;
-                      return;
-                    }
-                    void handleRowTap(row);
-                  }}
-                  onTouchStart={() => startLongPress(row)}
-                  onTouchMove={cancelLongPress}
-                  onTouchEnd={cancelLongPress}
-                  onTouchCancel={cancelLongPress}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setMenuDeck(row);
-                  }}
-                >
-                  <div className="amgi-deck-card-left">
-                    {isSub && <span className="amgi-deck-branch" aria-hidden="true" />}
+            <div className="amgi-deck-legend-cols" aria-hidden="true">
+              <span className="amgi-deck-legend-col">
+                <span className="amgi-legend-dot amgi-legend-dot--new" />
+                <span>새</span>
+              </span>
+              <span className="amgi-deck-legend-col">
+                <span className="amgi-legend-dot amgi-legend-dot--learn" />
+                <span>학습</span>
+              </span>
+              <span className="amgi-deck-legend-col">
+                <span className="amgi-legend-dot amgi-legend-dot--review" />
+                <span>복습</span>
+              </span>
+            </div>
+          </div>
 
-                    {!isSub ? (
-                      <span
-                        className={`amgi-deck-emblem amgi-deck-emblem--${themeMeta.tone}`}
-                        aria-hidden="true"
-                      >
-                        <DeckCategoryIcon deckName={row.fullName} size={20} />
-                      </span>
-                    ) : null}
-
-                    <div className="amgi-deck-card-meta">
-                      <div className="amgi-deck-title-wrap">
-                        <span
-                          className={`amgi-deck-title ${
-                            row.filtered ? 'amgi-deck-title-filtered' : ''
-                          }`}
-                        >
-                          {row.shortName}
-                        </span>
-                        {row.filtered && <span className="amgi-filtered-pill">맞춤</span>}
-                      </div>
-
-                      <div className="amgi-deck-pills tabular">
-                        {rowDue === 0 ? (
-                          <span className="amgi-dpill amgi-dpill--done">
-                            <IconCheck size={11} />
-                            <span>완료</span>
-                          </span>
-                        ) : (
-                          <>
-                            {row.newCount > 0 && (
-                              <span className="amgi-dpill amgi-dpill--new">
-                                새 {row.newCount}
-                              </span>
-                            )}
-                            {row.learnCount > 0 && (
-                              <span className="amgi-dpill amgi-dpill--learn">
-                                학습 {row.learnCount}
-                              </span>
-                            )}
-                            {row.reviewCount > 0 && (
-                              <span className="amgi-dpill amgi-dpill--review">
-                                복습 {row.reviewCount}
-                              </span>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="amgi-deck-card-right">
-                    {row.hasChildren && (
-                      <button
-                        type="button"
-                        className="amgi-deck-chevron compact"
-                        aria-label={row.collapsed ? `${row.shortName} 펼치기` : `${row.shortName} 접기`}
-                        aria-expanded={!row.collapsed}
-                        onClick={(e) => void handleToggleCollapse(e, row)}
-                      >
-                        {row.collapsed ? (
-                          <IconChevronRight size={17} />
-                        ) : (
-                          <IconChevronDown size={17} />
-                        )}
-                      </button>
-                    )}
-
-                    <button
-                      type="button"
-                      className="amgi-deck-more-btn amgi-btn-icon"
-                      aria-label={`${row.shortName} 덱 메뉴`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setMenuDeck(row);
-                      }}
-                    >
-                      <IconMore size={18} />
-                    </button>
-                  </div>
+          <div className="amgi-deck-groups" role="list" aria-label="덱 목록">
+            {isFiltering ? (
+              filteredRows.length === 0 ? (
+                <div className="amgi-deck-empty-search">
+                  검색 조건과 일치하는 덱이 없습니다.
                 </div>
-              );
-            })
-          )}
+              ) : (
+                <div className="amgi-deck-group amgi-deck-group--search" role="presentation">
+                  {filteredRows.map((row) => renderDeckRow(row, 'search', false))}
+                </div>
+              )
+            ) : (
+              deckGroups.map((group) => {
+                const hasVisibleChildren = group.descendants.length > 0;
+                return (
+                  <div
+                    key={group.root.deckId}
+                    role="presentation"
+                    className={`amgi-deck-group ${hasVisibleChildren ? 'is-expanded' : ''}`}
+                  >
+                    {renderDeckRow(group.root, 'root', showChevronSlot)}
+                    {hasVisibleChildren && (
+                      <div
+                        className="amgi-deck-children"
+                        role="group"
+                        aria-label={`${group.root.shortName} 하위 덱`}
+                      >
+                        {group.descendants.map((child) =>
+                          renderDeckRow(child, 'child', showChevronSlot)
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
         </div>
 
         {onlyEmptyDefault && (
@@ -1333,7 +1492,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
               onChange={(e) => setMoveParentId(Number(e.target.value))}
             >
               <option value={0}>최상위 (상위 덱 없음)</option>
-              {rows
+              {allRows
                 .filter(
                   (r) =>
                     !r.filtered &&

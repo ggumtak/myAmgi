@@ -16,7 +16,41 @@
 :where(body) {
   padding: 16px;
   box-sizing: border-box;
-  min-height: 100vh;
+}
+
+/* Unobtrusive scrollbars: hidden on touch/stylus devices, ultra-thin on pointer devices */
+@media (pointer: coarse), (hover: none) {
+  * {
+    scrollbar-width: none;
+  }
+  *::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
+}
+
+@media (pointer: fine) and (hover: hover) {
+  @supports not selector(::-webkit-scrollbar) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(128, 128, 128, 0.3) transparent;
+    }
+  }
+  *::-webkit-scrollbar {
+    width: 3px;
+    height: 3px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: rgba(128, 128, 128, 0.3);
+    border-radius: 999px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: rgba(128, 128, 128, 0.5);
+  }
 }
 
 :where(.card) {

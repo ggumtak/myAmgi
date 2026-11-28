@@ -34,11 +34,14 @@ export interface AppContextValue {
   setPrefs: (patch: Record<string, unknown>) => Promise<void>;
   syncStatus: SyncStatus | null;
   syncProgress: ProgressEvent | null;
+  mediaSyncProgress: ProgressEvent | null;
   refreshSyncStatus: () => Promise<void>;
   startBackgroundSync: (
     mode?: 'normal' | 'upload' | 'download',
-    opts?: { silentStartToast?: boolean }
+    opts?: { silentStartToast?: boolean; forceMedia?: boolean }
   ) => void;
+  startMediaSync: () => void;
+  abortMediaSync: () => Promise<void>;
   openSyncSheet: () => void;
   closeSyncSheet: () => void;
   syncSheetOpen: boolean;
@@ -106,6 +109,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [systemDark, setSystemDark] = useState<boolean>(getSystemPrefersDark);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [syncProgress, setSyncProgress] = useState<ProgressEvent | null>(null);
+  const [mediaSyncProgress, setMediaSyncProgress] = useState<ProgressEvent | null>(null);
   const [syncSheetOpen, setSyncSheetOpen] = useState(false);
   const [fullSyncOpen, setFullSyncOpen] = useState(false);
   const [addSheetOpen, setAddSheetOpen] = useState(false);
@@ -204,7 +208,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const startBackgroundSync = useCallback(
     (
       mode: 'normal' | 'upload' | 'download' = 'normal',
-      opts?: { silentStartToast?: boolean }
+      opts?: { silentStartToast?: boolean; forceMedia?: boolean }
     ) => {
       if (syncInFlightRef.current) return;
       syncInFlightRef.current = true;
@@ -226,32 +230,48 @@ export function AppProvider({ children }: { children: ReactNode }) {
             ? '백그라운드에서 서버 데이터를 가져옵니다. 다른 화면을 보셔도 계속 진행됩니다.'
             : mode === 'upload'
               ? '백그라운드에서 서버로 업로드합니다. 다른 화면을 보셔도 계속 진행됩니다.'
-              : '백그라운드에서 동기화를 시작했습니다.';
+              : '동기화를 시작했습니다.';
         showToast(startMsg, 'info');
       }
 
+      const runOpts =
+        opts?.forceMedia !== undefined ? { forceMedia: opts.forceMedia } : undefined;
+
       void host
-        .syncRun(mode)
+        .syncRun(mode, undefined, runOpts)
         .then(async (res) => {
           await refreshSyncStatus().catch(() => undefined);
           if (res.needsFullSync) {
             setFullSyncOpen(true);
             return;
           }
-          setCollectionVersion((v) => v + 1);
-          showToast(
-            mode === 'download'
-              ? '서버에서 카드와 학습 설정을 모두 가져왔습니다.'
-              : mode === 'upload'
-                ? '이 기기의 카드와 기록을 서버로 보냈습니다.'
-                : '동기화를 마쳤습니다.',
-            'success'
-          );
+          if (res.ok) {
+            setCollectionVersion((v) => v + 1);
+            const doneMsg =
+              mode === 'download'
+                ? res.mediaSyncStarted
+                  ? '서버 카드를 가져왔습니다 · 미디어는 백그라운드에서 이어서 맞춥니다.'
+                  : '서버에서 카드와 학습 설정을 모두 가져왔습니다.'
+                : mode === 'upload'
+                  ? res.mediaSyncStarted
+                    ? '서버로 업로드했습니다 · 미디어는 백그라운드에서 이어서 맞춥니다.'
+                    : '이 기기의 카드와 기록을 서버로 보냈습니다.'
+                  : res.mediaSyncStarted
+                    ? '카드 동기화 완료 · 미디어는 백그라운드에서 이어서 맞춥니다.'
+                    : '동기화를 마쳤습니다.';
+            showToast(doneMsg, 'success');
+          }
         })
         .catch(async (err) => {
           await refreshSyncStatus().catch(() => undefined);
           if (err instanceof HostApiError && err.status === 409) {
-            showToast('동기화를 중단했습니다.', 'info');
+            if (err.detail === 'aborted') {
+              showToast('동기화를 중단했습니다.', 'info');
+            } else if (err.detail === 'busy') {
+              showToast('이미 동기화가 진행 중입니다.', 'info');
+            } else {
+              showToast(err.message || '동기화를 중단했습니다.', 'info');
+            }
           } else {
             showToast(
               err instanceof Error ? err.message : '동기화를 끝내지 못했습니다.',
@@ -266,11 +286,86 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [refreshSyncStatus, showToast]
   );
 
+  const mediaSyncInFlightRef = useRef(false);
+  const startMediaSync = useCallback(() => {
+    if (mediaSyncInFlightRef.current) return;
+    mediaSyncInFlightRef.current = true;
+
+    setSyncStatus((prev) =>
+      prev
+        ? {
+            ...prev,
+            mediaRunning: true,
+            mediaError: null,
+          }
+        : prev
+    );
+
+    void host
+      .syncMediaRun()
+      .then((st) => {
+        setSyncStatus(st);
+        if (!st.mediaRunning && st.mediaError) {
+          showToast(st.mediaError, 'error');
+        } else {
+          showToast('백그라운드에서 미디어 확인을 시작했습니다.', 'info');
+        }
+      })
+      .catch(async (err) => {
+        await refreshSyncStatus().catch(() => undefined);
+        if (err instanceof HostApiError && err.status === 409) {
+          showToast('이미 미디어 동기화가 진행 중입니다.', 'info');
+        } else {
+          showToast(
+            err instanceof Error ? err.message : '미디어 동기화를 시작하지 못했습니다.',
+            'error'
+          );
+        }
+      })
+      .finally(() => {
+        mediaSyncInFlightRef.current = false;
+      });
+  }, [refreshSyncStatus, showToast]);
+
+  const abortMediaSync = useCallback(async () => {
+    try {
+      await host.syncMediaAbort();
+      setMediaSyncProgress(null);
+      await refreshSyncStatus().catch(() => undefined);
+      showToast('미디어 동기화를 중단했습니다.', 'info');
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : '미디어 동기화를 중단하지 못했습니다.',
+        'error'
+      );
+    }
+  }, [refreshSyncStatus, showToast]);
+
   // When returning from another Android app, refresh syncStatus & collection if sync finished in background
   const wasRunningRef = useRef(false);
+  const wasMediaRunningRef = useRef(false);
+  const reconcileSyncTransition = useCallback((st: SyncStatus) => {
+    if (wasRunningRef.current && !st.running) {
+      wasRunningRef.current = false;
+      if (!st.lastError && !st.needsFullSync) {
+        setCollectionVersion((v) => v + 1);
+      }
+    } else if (st.running) {
+      wasRunningRef.current = true;
+    }
+
+    if (wasMediaRunningRef.current && !st.mediaRunning) {
+      wasMediaRunningRef.current = false;
+      setMediaSyncProgress(null);
+    } else if (st.mediaRunning) {
+      wasMediaRunningRef.current = true;
+    }
+  }, []);
+
   useEffect(() => {
     wasRunningRef.current = Boolean(syncStatus?.running);
-  }, [syncStatus?.running]);
+    wasMediaRunningRef.current = Boolean(syncStatus?.mediaRunning);
+  }, [syncStatus?.running, syncStatus?.mediaRunning]);
 
   useEffect(() => {
     const onResume = () => {
@@ -279,9 +374,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         .syncStatus()
         .then((st) => {
           setSyncStatus(st);
-          if (wasRunningRef.current && !st.running) {
-            setCollectionVersion((v) => v + 1);
-          }
+          reconcileSyncTransition(st);
         })
         .catch(() => undefined);
     };
@@ -291,7 +384,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       document.removeEventListener('visibilitychange', onResume);
       window.removeEventListener('focus', onResume);
     };
-  }, []);
+  }, [reconcileSyncTransition]);
 
   const openSyncSheet = useCallback(() => setSyncSheetOpen(true), []);
   const closeSyncSheet = useCallback(() => setSyncSheetOpen(false), []);
@@ -342,8 +435,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     root.dataset.theme = resolvedTheme;
     root.classList.toggle('night_mode', resolvedTheme === 'dark');
 
-    const bgHex = resolvedTheme === 'dark' ? '#161B24' : '#FFFFFF';
+    const bgHex =
+      resolvedTheme === 'dark'
+        ? '#0B0E14'
+        : resolvedTheme === 'eink'
+          ? '#FFFFFF'
+          : '#F4F5F7';
     const isLight = resolvedTheme !== 'dark';
+    const themeColorMeta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    if (themeColorMeta) {
+      themeColorMeta.content = bgHex;
+    }
     try {
       const shell = (
         window as unknown as {
@@ -420,6 +522,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       if (
         !autoSyncAttemptedRef.current &&
+        !syncInFlightRef.current &&
         loadedSync &&
         loadedSync.loggedIn &&
         loadedPrefs['sync.auto'] === true &&
@@ -427,6 +530,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         !loadedSync.needsFullSync
       ) {
         autoSyncAttemptedRef.current = true;
+        syncInFlightRef.current = true;
         host
           .syncRun('normal')
           .then((res) => {
@@ -439,6 +543,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
           })
           .catch(() => {
             // Silently ignore startup auto-sync errors
+          })
+          .finally(() => {
+            syncInFlightRef.current = false;
           });
       }
     });
@@ -454,6 +561,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const unsubscribe = subscribeHostEvents({
       syncState: (ev) => {
         setSyncStatus(ev);
+        reconcileSyncTransition(ev);
+        if (!ev.mediaRunning) {
+          setMediaSyncProgress(null);
+        }
       },
       progress: (ev) => {
         if (ev.op === 'sync') {
@@ -464,6 +575,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
             }
           } else {
             setSyncProgress(ev);
+          }
+        } else if (ev.op === 'media-sync') {
+          if (ev.phase === 'done' || ev.phase === 'error') {
+            setMediaSyncProgress(null);
+            void host
+              .syncStatus()
+              .then((st) => setSyncStatus(st))
+              .catch(() => undefined);
+          } else {
+            setMediaSyncProgress(ev);
+            setSyncStatus((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    mediaRunning: true,
+                    ...(ev.checked !== undefined ? { mediaChecked: String(ev.checked) } : {}),
+                    ...(ev.added !== undefined ? { mediaAdded: String(ev.added) } : {}),
+                    ...(ev.removed !== undefined ? { mediaRemoved: String(ev.removed) } : {}),
+                  }
+                : prev
+            );
           }
         } else if (ev.op === 'import' || ev.op === 'restore') {
           if (ev.phase === 'done') {
@@ -501,7 +633,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
 
     return unsubscribe;
-  }, [goBack, navigate]);
+  }, [goBack, navigate, reconcileSyncTransition]);
 
   const handleConfirmColpkg = async () => {
     if (!pendingColpkg || colpkgReplacing) return;
@@ -536,8 +668,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setPrefs,
       syncStatus,
       syncProgress,
+      mediaSyncProgress,
       refreshSyncStatus,
       startBackgroundSync,
+      startMediaSync,
+      abortMediaSync,
       openSyncSheet,
       closeSyncSheet,
       syncSheetOpen,
@@ -563,8 +698,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setPrefs,
       syncStatus,
       syncProgress,
+      mediaSyncProgress,
       refreshSyncStatus,
       startBackgroundSync,
+      startMediaSync,
+      abortMediaSync,
       openSyncSheet,
       closeSyncSheet,
       syncSheetOpen,

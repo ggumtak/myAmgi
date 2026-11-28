@@ -18,6 +18,7 @@ import {
   Switch,
   useToast,
 } from '../../ui';
+import { DeckCategoryIcon, resolveDeckTheme } from './DeckBadge';
 import './decks.css';
 
 export interface DeckOverviewPaneProps {
@@ -589,7 +590,12 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
   }
 
   const displayName = deckInfo?.fullName || deckObj?.name || `덱 #${deckId}`;
+  const nameParts = displayName.split('::');
+  const shortTitle = nameParts[nameParts.length - 1] || displayName;
+  const parentBreadcrumb =
+    nameParts.length > 1 ? nameParts.slice(0, -1).join(' › ') : null;
   const isFiltered = Boolean(deckInfo?.filtered || deckObj?.filtered);
+  const themeMeta = resolveDeckTheme(displayName);
   const newCount = deckInfo?.newCount ?? 0;
   const learnCount = deckInfo?.learnCount ?? 0;
   const reviewCount = deckInfo?.reviewCount ?? 0;
@@ -597,6 +603,10 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
   const rawDescription = deckObj?.normal?.description ?? '';
   const sanitizedDescription = sanitizeDeckHtml(rawDescription);
   const filteredSearchTerm = deckObj?.filtered?.searchTerms?.[0]?.search ?? '';
+  const maturePct =
+    maturity && maturity.total > 0
+      ? Math.round((maturity.matureCount / maturity.total) * 100)
+      : 0;
 
   return (
     <div
@@ -604,26 +614,44 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
     >
       <div className="amgi-overview-card">
         <div className="amgi-overview-head">
-          <div className="amgi-overview-title-block">
-            <h2 className="amgi-overview-name">{displayName}</h2>
-            <div className="amgi-overview-meta">
-              {isFiltered && <span className="amgi-filtered-pill">맞춤 학습 덱</span>}
-              {deckInfo && (
-                <span className="tabular">
-                  전체 카드 {deckInfo.totalIncludingChildren.toLocaleString()}장
-                </span>
+          <div className="amgi-overview-identity">
+            <span
+              className={`amgi-deck-emblem amgi-deck-emblem--lg amgi-deck-emblem--${
+                isFiltered ? 'blue' : themeMeta.tone
+              }`}
+              aria-hidden="true"
+            >
+              {isFiltered ? (
+                <IconSpark size={18} />
+              ) : (
+                <DeckCategoryIcon deckName={displayName} size={19} />
               )}
+            </span>
+
+            <div className="amgi-overview-title-block">
+              {parentBreadcrumb && (
+                <div className="amgi-overview-breadcrumb">{parentBreadcrumb}</div>
+              )}
+              <h2 className="amgi-overview-name">{shortTitle}</h2>
+              <div className="amgi-overview-meta">
+                {isFiltered && <span className="amgi-filtered-pill">맞춤 학습 덱</span>}
+                {deckInfo && (
+                  <span className="tabular">
+                    전체 {deckInfo.totalIncludingChildren.toLocaleString()}장
+                  </span>
+                )}
+              </div>
             </div>
           </div>
 
           {!isFiltered && (
             <button
               type="button"
-              className="amgi-btn amgi-btn-secondary amgi-btn-sm"
+              className="amgi-btn amgi-btn-secondary amgi-btn-sm amgi-overview-settings-btn"
               onClick={() => navigate(`#/deck-options/${deckId}`)}
             >
-              <IconSettings size={16} />
-              <span>덱 설정</span>
+              <IconSettings size={15} />
+              <span>설정</span>
             </button>
           )}
         </div>
@@ -642,16 +670,25 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
         )}
 
         <div className="amgi-overview-tiles">
-          <div className="amgi-stat-tile amgi-stat-tile-new">
-            <span className="amgi-stat-tile-label">새 카드</span>
+          <div className={`amgi-stat-tile amgi-stat-tile-new ${newCount === 0 ? 'is-zero' : ''}`}>
+            <span className="amgi-stat-tile-label">
+              <span className="amgi-legend-dot amgi-legend-dot--new" aria-hidden="true" />
+              <span>새 카드</span>
+            </span>
             <span className="amgi-stat-tile-value tabular">{newCount}</span>
           </div>
-          <div className="amgi-stat-tile amgi-stat-tile-learn">
-            <span className="amgi-stat-tile-label">학습 중</span>
+          <div className={`amgi-stat-tile amgi-stat-tile-learn ${learnCount === 0 ? 'is-zero' : ''}`}>
+            <span className="amgi-stat-tile-label">
+              <span className="amgi-legend-dot amgi-legend-dot--learn" aria-hidden="true" />
+              <span>학습 중</span>
+            </span>
             <span className="amgi-stat-tile-value tabular">{learnCount}</span>
           </div>
-          <div className="amgi-stat-tile amgi-stat-tile-review">
-            <span className="amgi-stat-tile-label">복습</span>
+          <div className={`amgi-stat-tile amgi-stat-tile-review ${reviewCount === 0 ? 'is-zero' : ''}`}>
+            <span className="amgi-stat-tile-label">
+              <span className="amgi-legend-dot amgi-legend-dot--review" aria-hidden="true" />
+              <span>복습</span>
+            </span>
             <span className="amgi-stat-tile-value tabular">{reviewCount}</span>
           </div>
         </div>
@@ -663,15 +700,24 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
             disabled={busyAction === 'study'}
             onClick={() => void handleStartStudy()}
           >
-            <IconPlay size={18} />
-            <span>{busyAction === 'study' ? '준비 중...' : '학습 시작'}</span>
+            <IconPlay size={17} />
+            <span>
+              {busyAction === 'study'
+                ? '준비 중...'
+                : `학습 시작 · ${totalDue.toLocaleString()}장`}
+            </span>
           </button>
         ) : (
           <div className="amgi-congrats-box">
-            <div className="amgi-congrats-title">
-              {isFiltered
-                ? '현재 맞춤 학습 덱이 비어 있습니다'
-                : '오늘 이 덱의 복습을 모두 마쳤습니다!'}
+            <div className="amgi-congrats-head">
+              <span className="amgi-congrats-check" aria-hidden="true">
+                <IconCheck size={15} />
+              </span>
+              <div className="amgi-congrats-title">
+                {isFiltered
+                  ? '현재 맞춤 학습 덱이 비어 있습니다'
+                  : '오늘 이 덱의 복습을 모두 마쳤습니다'}
+              </div>
             </div>
             {congrats && congrats.secsUntilNextLearn > 0 && (
               <p className="amgi-congrats-sub">
@@ -696,13 +742,20 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
               className="amgi-btn amgi-btn-primary amgi-overview-cta"
               onClick={() => (isFiltered ? void handleRebuildFiltered() : void openCustomStudy())}
             >
-              {isFiltered ? <IconRefresh size={18} /> : <IconSpark size={18} />}
+              {isFiltered ? <IconRefresh size={17} /> : <IconSpark size={17} />}
               <span>{isFiltered ? '다시 만들기' : '맞춤 학습'}</span>
             </button>
           </div>
         )}
+
         {maturity && maturity.total > 0 && (
           <div className="amgi-overview-maturity" aria-label="덱 숙련도 분포">
+            <div className="amgi-overview-maturity-head">
+              <span className="amgi-overview-maturity-title">숙련도 분포</span>
+              <span className="amgi-overview-maturity-pct tabular">
+                장기 기억 {maturePct}%
+              </span>
+            </div>
             <div className="amgi-overview-maturity-bar">
               {maturity.newCount > 0 && (
                 <div
@@ -752,13 +805,13 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
       </div>
 
       <div className="amgi-overview-card">
-        <div className="amgi-section-title">빠른 도구</div>
+        <div className="amgi-overview-section-title">빠른 도구</div>
         <div className="amgi-overview-tools">
           {isFiltered ? (
             <>
               <button
                 type="button"
-                className="amgi-btn amgi-btn-secondary"
+                className="amgi-btn amgi-btn-secondary amgi-overview-tool-btn"
                 disabled={busyAction === 'rebuild'}
                 onClick={() => void handleRebuildFiltered()}
               >
@@ -767,7 +820,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
               </button>
               <button
                 type="button"
-                className="amgi-btn amgi-btn-secondary"
+                className="amgi-btn amgi-btn-secondary amgi-overview-tool-btn"
                 disabled={busyAction === 'empty'}
                 onClick={() => void handleEmptyFiltered()}
               >
@@ -776,7 +829,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
               </button>
               <button
                 type="button"
-                className="amgi-btn amgi-btn-secondary"
+                className="amgi-btn amgi-btn-secondary amgi-overview-tool-btn"
                 onClick={() => void openFilterConditionEditor()}
               >
                 <IconFilter size={16} />
@@ -787,7 +840,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
             <>
               <button
                 type="button"
-                className="amgi-btn amgi-btn-secondary"
+                className="amgi-btn amgi-btn-secondary amgi-overview-tool-btn"
                 onClick={() => void openCustomStudy()}
               >
                 <IconSpark size={16} />
@@ -795,7 +848,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
               </button>
               <button
                 type="button"
-                className="amgi-btn amgi-btn-secondary"
+                className="amgi-btn amgi-btn-secondary amgi-overview-tool-btn"
                 onClick={() => navigate(`#/note/new?deck=${deckId}`)}
               >
                 <IconEdit size={16} />
@@ -806,7 +859,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
 
           <button
             type="button"
-            className="amgi-btn amgi-btn-secondary"
+            className="amgi-btn amgi-btn-secondary amgi-overview-tool-btn"
             onClick={() =>
               navigate(`#/browse?q=${encodeURIComponent(`deck:"${displayName}"`)}`)
             }
@@ -818,7 +871,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
           {!isFiltered && (
             <button
               type="button"
-              className="amgi-btn amgi-btn-secondary"
+              className="amgi-btn amgi-btn-secondary amgi-overview-tool-btn"
               onClick={() => {
                 setExportResult(null);
                 setExportOpen(true);
@@ -832,7 +885,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
           {!isFiltered && (
             <button
               type="button"
-              className="amgi-btn amgi-btn-secondary"
+              className="amgi-btn amgi-btn-secondary amgi-overview-tool-btn"
               onClick={() => {
                 setDescDraft(rawDescription);
                 setDescEditOpen(true);

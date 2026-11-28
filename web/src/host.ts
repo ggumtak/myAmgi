@@ -42,6 +42,13 @@ export interface SyncStatus {
   needsFullSync: boolean;
   lastSync: number | null;
   lastError: string | null;
+  mediaRunning?: boolean;
+  mediaChecked?: string | null;
+  mediaAdded?: string | null;
+  mediaRemoved?: string | null;
+  mediaLastSync?: number | null;
+  mediaError?: string | null;
+  mediaSkipped?: boolean;
 }
 
 export interface SyncRunResult {
@@ -49,6 +56,8 @@ export interface SyncRunResult {
   needsFullSync: boolean;
   serverMessage?: string;
   lastSync?: number;
+  mediaSyncStarted?: boolean;
+  mediaSyncSkipped?: boolean;
 }
 
 export interface BackupEntry {
@@ -114,7 +123,7 @@ export interface ProgressEvent {
   stage?: string;
   added?: string | number;
   removed?: string | number;
-  checked?: number;
+  checked?: string | number;
   transferred?: number;
   total?: number;
   current?: number;
@@ -316,11 +325,23 @@ export const host = {
 
   syncRun: (
     mode: 'normal' | 'upload' | 'download' = 'normal',
-    signal?: AbortSignal
-  ) => postHost<{ mode: string }, SyncRunResult>('sync.run', { mode }, signal),
+    signal?: AbortSignal,
+    opts?: { forceMedia?: boolean }
+  ) =>
+    postHost<{ mode: string; forceMedia?: boolean }, SyncRunResult>(
+      'sync.run',
+      opts?.forceMedia !== undefined ? { mode, forceMedia: opts.forceMedia } : { mode },
+      signal
+    ),
 
   syncAbort: (signal?: AbortSignal) =>
     postHost<Record<string, never>, SyncStatus>('sync.abort', {}, signal),
+
+  syncMediaRun: (signal?: AbortSignal) =>
+    postHost<Record<string, never>, SyncStatus>('sync.mediaRun', {}, signal),
+
+  syncMediaAbort: (signal?: AbortSignal) =>
+    postHost<Record<string, never>, SyncStatus>('sync.mediaAbort', {}, signal),
 
   backupCreate: (signal?: AbortSignal) =>
     postHost<Record<string, never>, BackupEntry>('backup.create', {}, signal),

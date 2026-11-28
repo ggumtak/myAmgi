@@ -485,7 +485,37 @@ class HostServer(
                   font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Noto Sans CJK KR", "Noto Sans KR", system-ui, sans-serif;
                 }
                 html.night-mode, html.night-mode body {
-                  background: #161B24 !important;
+                  background: #0B0E14 !important;
+                }
+                @supports not selector(::-webkit-scrollbar) {
+                  * {
+                    scrollbar-width: thin;
+                    scrollbar-color: rgba(128, 128, 128, 0.32) transparent;
+                  }
+                }
+                ::-webkit-scrollbar {
+                  width: 4px;
+                  height: 4px;
+                }
+                ::-webkit-scrollbar-track {
+                  background: transparent;
+                }
+                ::-webkit-scrollbar-thumb {
+                  background: rgba(128, 128, 128, 0.32);
+                  border-radius: 999px;
+                }
+                ::-webkit-scrollbar-thumb:hover {
+                  background: rgba(128, 128, 128, 0.52);
+                }
+                @media (pointer: coarse), (hover: none) {
+                  * {
+                    scrollbar-width: none;
+                  }
+                  ::-webkit-scrollbar {
+                    width: 0;
+                    height: 0;
+                    display: none;
+                  }
                 }
                 html.eink-mode, html.eink-mode body {
                   background: #FFFFFF !important;
@@ -504,6 +534,8 @@ class HostServer(
                   transition: none !important;
                   animation: none !important;
                   box-shadow: none !important;
+                  backdrop-filter: none !important;
+                  -webkit-backdrop-filter: none !important;
                 }
                 html.eink-mode .card, html.eink-mode .bg-body-tertiary, html.eink-mode .list-group-item {
                   background: #FFFFFF !important;

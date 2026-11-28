@@ -8,8 +8,10 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import com.ggumtak.myamgi.R
 import com.ggumtak.myamgi.ui.MainActivity
 
@@ -18,6 +20,9 @@ import com.ggumtak.myamgi.ui.MainActivity
  * alive at full speed when the user switches to another app or turns off the screen.
  */
 class SyncForegroundService : Service() {
+
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -43,14 +48,71 @@ class SyncForegroundService : Service() {
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
+        }.onSuccess {
+            acquireLocks()
         }.onFailure {
+            releaseLocks()
             stopSelf()
         }
 
         return START_NOT_STICKY
     }
 
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        stopSelfCleanly()
+    }
+
+    override fun onDestroy() {
+        releaseLocks()
+        super.onDestroy()
+    }
+
+    private fun acquireLocks() {
+        runCatching {
+            val pm = getSystemService(PowerManager::class.java)
+            if (pm != null) {
+                val wl = wakeLock ?: pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG).apply {
+                    setReferenceCounted(false)
+                    wakeLock = this
+                }
+                wl.acquire(WAKE_LOCK_TIMEOUT_MS)
+            }
+        }
+        runCatching {
+            val wm = applicationContext.getSystemService(WifiManager::class.java)
+            if (wm != null) {
+                val lock = wifiLock ?: run {
+                    val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                    } else {
+                        @Suppress("DEPRECATION")
+                        WifiManager.WIFI_MODE_FULL_HIGH_PERF
+                    }
+                    wm.createWifiLock(mode, WIFI_LOCK_TAG).apply {
+                        setReferenceCounted(false)
+                        wifiLock = this
+                    }
+                }
+                if (!lock.isHeld) {
+                    lock.acquire()
+                }
+            }
+        }
+    }
+
+    private fun releaseLocks() {
+        runCatching {
+            wakeLock?.let { if (it.isHeld) it.release() }
+        }
+        wakeLock = null
+        runCatching {
+            wifiLock?.let { if (it.isHeld) it.release() }
+        }
+        wifiLock = null
+    }
+
     private fun stopSelfCleanly() {
+        releaseLocks()
         runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -100,6 +162,9 @@ class SyncForegroundService : Service() {
         private const val ACTION_START = "com.ggumtak.myamgi.sync.START"
         private const val ACTION_STOP = "com.ggumtak.myamgi.sync.STOP"
         private const val EXTRA_STATUS = "status"
+        private const val WAKE_LOCK_TAG = "myAmgi:SyncWakeLock"
+        private const val WIFI_LOCK_TAG = "myAmgi:SyncWifiLock"
+        private const val WAKE_LOCK_TIMEOUT_MS = 60L * 60L * 1000L
 
         fun update(context: Context, running: Boolean, statusText: String?) {
             val appCtx = context.applicationContext

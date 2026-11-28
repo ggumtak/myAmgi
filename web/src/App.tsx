@@ -6,6 +6,7 @@ import {
   ActionMenu,
   type ActionMenuItem,
   IconArrowLeft,
+  IconClose,
   IconDeck,
   IconMore,
   IconPlus,
@@ -34,7 +35,7 @@ import { DeckOptionsView } from './components/options/DeckOptionsView';
 import { StatsView } from './components/stats/StatsView';
 import { SettingsView } from './components/settings/SettingsView';
 import { SyncSheet } from './components/sync/SyncSheet';
-import { formatSyncProgressText } from './components/sync/SyncCard';
+import { formatMediaProgressText, formatSyncProgressText } from './components/sync/SyncCard';
 import { FullSyncDialog } from './components/sync/FullSyncDialog';
 import { AnkiIframeView } from './components/shared/AnkiIframeView';
 import { TagManagerSheet } from './components/shared/TagManagerSheet';
@@ -162,8 +163,10 @@ function AppShell() {
     prefs,
     syncStatus,
     syncProgress,
+    mediaSyncProgress,
     resolvedTheme,
     startBackgroundSync,
+    abortMediaSync,
     openSyncSheet,
     closeSyncSheet,
     syncSheetOpen,
@@ -187,12 +190,22 @@ function AppShell() {
   const [overflowOpen, setOverflowOpen] = useState(false);
   const [tagManagerOpen, setTagManagerOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
+  const [mediaBarDismissed, setMediaBarDismissed] = useState(false);
   const [emptyCardsReport, setEmptyCardsReport] = useState<anki.EmptyCardsReport | null>(
     null
   );
   const [checkingEmpty, setCheckingEmpty] = useState(false);
   const [cleaningEmpty, setCleaningEmpty] = useState(false);
   const [exportingColpkg, setExportingColpkg] = useState(false);
+
+  const isCollectionSyncing = Boolean(syncStatus?.running);
+  const isMediaSyncing = Boolean(syncStatus?.mediaRunning);
+
+  useEffect(() => {
+    if (isMediaSyncing) {
+      setMediaBarDismissed(false);
+    }
+  }, [isMediaSyncing]);
 
   useEffect(() => {
     const onHashChange = () => {
@@ -341,7 +354,7 @@ function AppShell() {
       openSyncSheet();
       return;
     }
-    if (syncStatus.running) {
+    if (syncStatus.running || syncStatus.mediaRunning) {
       openSyncSheet();
       return;
     }
@@ -349,7 +362,7 @@ function AppShell() {
       openFullSyncDialog();
       return;
     }
-    if (syncStatus.lastError) {
+    if (syncStatus.lastError || syncStatus.mediaError) {
       openSyncSheet();
       return;
     }
@@ -527,20 +540,29 @@ function AppShell() {
     { id: 'settings', label: '설정', hash: '#/settings', icon: IconSettings },
   ];
 
-  const isSyncing = Boolean(syncStatus?.running);
   const needsFullSync = Boolean(syncStatus?.needsFullSync);
   const hasSyncError = Boolean(syncStatus?.lastError);
+  const hasMediaError = Boolean(syncStatus?.mediaError);
   const isLoggedOut = syncStatus !== null && !syncStatus.loggedIn;
 
-  const syncAriaLabel = isSyncing
+  const syncAriaLabel = isCollectionSyncing
     ? '동기화 중'
-    : needsFullSync
-      ? '전체 동기화 필요'
-      : hasSyncError
-        ? '동기화 오류'
-        : isLoggedOut
-          ? '동기화 로그인 필요'
-          : '동기화';
+    : isMediaSyncing
+      ? '미디어 백그라운드 동기화 중'
+      : needsFullSync
+        ? '전체 동기화 필요'
+        : hasSyncError
+          ? '동기화 오류'
+          : hasMediaError
+            ? '미디어 동기화 오류'
+            : isLoggedOut
+              ? '동기화 로그인 필요'
+              : '동기화';
+
+  const showSyncBar =
+    !syncSheetOpen &&
+    (isCollectionSyncing || (isMediaSyncing && !mediaBarDismissed));
+  const isMediaOnlyBar = !isCollectionSyncing && isMediaSyncing;
 
   const fullWidthContainer =
     route.kind === 'browse' ||
@@ -572,7 +594,7 @@ function AppShell() {
               </button>
             ) : isDecksRoot ? (
               <span className="amgi-brand-mark" aria-hidden="true">
-                <IconDeck size={16} />
+                <IconDeck size={15} />
               </span>
             ) : null}
             <h1 className="amgi-topbar-title">{topbarMeta.title}</h1>
@@ -593,23 +615,34 @@ function AppShell() {
 
             <button
               type="button"
-              className={`amgi-sync-btn ${isSyncing ? 'is-syncing' : ''}`}
+              className={`amgi-sync-btn ${isCollectionSyncing ? 'is-syncing' : ''} ${
+                isMediaOnlyBar ? 'is-media-syncing' : ''
+              }`.trim()}
               aria-label={syncAriaLabel}
               onClick={() => void handleSyncPress()}
             >
-              <IconSync size={20} />
+              <IconSync size={19} />
               <span className="amgi-sync-chip">동기화 중</span>
-              {!isSyncing && hasSyncError && (
+              {!isCollectionSyncing && isMediaSyncing && (
+                <span className="amgi-sync-dot is-media" aria-hidden="true" />
+              )}
+              {!isCollectionSyncing && !isMediaSyncing && hasSyncError && (
                 <span className="amgi-sync-badge-error" aria-hidden="true">
                   !
                 </span>
               )}
-              {!isSyncing && !hasSyncError && needsFullSync && (
-                <span className="amgi-sync-dot is-warn" aria-hidden="true" />
-              )}
-              {!isSyncing && !hasSyncError && !needsFullSync && isLoggedOut && (
-                <span className="amgi-sync-dot" aria-hidden="true" />
-              )}
+              {!isCollectionSyncing &&
+                !isMediaSyncing &&
+                !hasSyncError &&
+                (needsFullSync || hasMediaError) && (
+                  <span className="amgi-sync-dot is-warn" aria-hidden="true" />
+                )}
+              {!isCollectionSyncing &&
+                !isMediaSyncing &&
+                !hasSyncError &&
+                !needsFullSync &&
+                !hasMediaError &&
+                isLoggedOut && <span className="amgi-sync-dot" aria-hidden="true" />}
             </button>
 
             {isDecksRoot && (
@@ -626,30 +659,64 @@ function AppShell() {
         </header>
       )}
 
-      {isSyncing && !syncSheetOpen && (
-        <div className="amgi-bg-sync-bar" role="status" aria-live="polite">
-          <button
-            type="button"
-            className="amgi-bg-sync-bar-main"
-            onClick={openSyncSheet}
-            data-compact="true"
+      {showSyncBar && (
+        <div className="amgi-bg-sync-wrap">
+          <div
+            className={`amgi-bg-sync-bar ${isMediaOnlyBar ? 'amgi-bg-sync-bar--media' : ''}`.trim()}
+            role="status"
+            aria-live="polite"
           >
-            <IconSync
-              size={15}
-              className={resolvedTheme === 'eink' ? undefined : 'amgi-spin'}
-            />
-            <span className="amgi-bg-sync-bar-text">
-              {formatSyncProgressText(syncStatus, syncProgress)}
-            </span>
-          </button>
-          <button
-            type="button"
-            className="amgi-bg-sync-bar-stop"
-            onClick={() => void host.syncAbort().catch(() => undefined)}
-            data-compact="true"
-          >
-            중단
-          </button>
+            <button
+              type="button"
+              className="amgi-bg-sync-bar-main"
+              onClick={openSyncSheet}
+              data-compact="true"
+            >
+              <span className="amgi-bg-sync-indicator" aria-hidden="true">
+                {isCollectionSyncing ? (
+                  <IconSync
+                    size={14}
+                    className={resolvedTheme === 'eink' ? undefined : 'amgi-spin'}
+                  />
+                ) : (
+                  <span className="amgi-bg-sync-dot" />
+                )}
+              </span>
+              <span className="amgi-bg-sync-bar-text">
+                {isCollectionSyncing
+                  ? formatSyncProgressText(syncStatus, syncProgress, mediaSyncProgress)
+                  : formatMediaProgressText(syncStatus, mediaSyncProgress)}
+              </span>
+            </button>
+            <div className="amgi-bg-sync-bar-actions">
+              <button
+                type="button"
+                className="amgi-bg-sync-bar-stop"
+                onClick={() => {
+                  if (isCollectionSyncing) {
+                    void host.syncAbort().catch(() => undefined);
+                  } else {
+                    void abortMediaSync();
+                  }
+                }}
+                data-compact="true"
+              >
+                중단
+              </button>
+              {isMediaOnlyBar && (
+                <button
+                  type="button"
+                  className="amgi-bg-sync-bar-hide"
+                  onClick={() => setMediaBarDismissed(true)}
+                  aria-label="미디어 동기화 상태 숨기기"
+                  title="숨기기"
+                  data-compact="true"
+                >
+                  <IconClose size={14} />
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -726,7 +793,7 @@ function AppShell() {
           onClick={openAddSheet}
           aria-label="추가"
         >
-          <IconPlus size={20} />
+          <IconPlus size={18} />
           <span>추가</span>
         </button>
       )}

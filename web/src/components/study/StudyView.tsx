@@ -1264,7 +1264,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
 
   return (
     <div className="amgi-study-screen">
-      {/* Slim 48px (46px E-Ink) Top Bar */}
+      {/* Calm 50px Studio Top Bar (56px E-Ink) */}
       <header className="amgi-study-topbar">
         <button
           type="button"
@@ -1283,6 +1283,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
           {queued && showRemainingCounts && (queued.cards?.length ?? 0) > 0 && (
             <div className="amgi-study-counts tabular" aria-label="남은 카드 수">
               <span
+                title="새 카드"
                 className={`amgi-study-q-num amgi-study-q-new ${
                   activeQueue === 0 ? 'amgi-study-q-active' : ''
                 }`}
@@ -1290,6 +1291,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                 {queued.newCount ?? 0}
               </span>
               <span
+                title="학습 중"
                 className={`amgi-study-q-num amgi-study-q-learn ${
                   activeQueue === 1 ? 'amgi-study-q-active' : ''
                 }`}
@@ -1297,6 +1299,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                 {queued.learningCount ?? 0}
               </span>
               <span
+                title="복습"
                 className={`amgi-study-q-num amgi-study-q-review ${
                   activeQueue === 2 ? 'amgi-study-q-active' : ''
                 }`}
@@ -1333,15 +1336,16 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
 
               <button
                 type="button"
-                className="amgi-study-top-btn amgi-btn-icon"
+                className={`amgi-study-top-btn amgi-btn-icon ${activeFlag > 0 ? 'has-flag' : ''}`}
                 aria-label="깃발 지정"
+                title="깃발 지정 (Ctrl+1~7)"
                 onClick={() => setFlagPickerOpen(true)}
               >
                 {activeFlag > 0 && resolvedTheme === 'eink' ? (
                   <span className="amgi-flag-badge">{activeFlag}</span>
                 ) : (
                   <IconFlag
-                    size={19}
+                    size={18}
                     style={
                       activeFlag > 0
                         ? { color: `var(--flag-${activeFlag})`, fill: `var(--flag-${activeFlag})` }
@@ -1364,7 +1368,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
         </div>
       </header>
 
-      {/* Session Progress Bar */}
+      {/* Whisper-thin Session Progress Bar */}
       {activeCard && queued && (
         <div
           className="amgi-study-progress-track"
@@ -1387,19 +1391,11 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
         </div>
       )}
 
-      {/* Flag Accent Stripe */}
-      {activeCard && activeFlag > 0 && (
-        <div
-          className={`amgi-study-flag-stripe amgi-study-flag-stripe-${activeFlag}`}
-          aria-hidden="true"
-        />
-      )}
-
       {/* Main Content Area: Loading / Error / Congrats / Card Stage */}
       {loading ? (
         <div className="amgi-study-loading-box">
           <strong>카드를 불러오는 중입니다...</strong>
-          <span style={{ fontSize: 13, color: 'var(--text-2)' }}>잠시만 기다려 주세요.</span>
+          <span className="amgi-study-loading-sub">잠시만 기다려 주세요.</span>
         </div>
       ) : error ? (
         <div className="amgi-study-congrats-wrap">
@@ -1418,18 +1414,24 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
         <div className="amgi-study-congrats-wrap">
           <div className="amgi-study-congrats-card">
             <CelebrationBadge size={44} />
-            <h2 className="amgi-study-congrats-title">오늘 학습을 모두 마쳤습니다!</h2>
-            <div style={{ fontSize: 14, color: 'var(--text-2)' }}>{deckName}</div>
+            <div className="amgi-study-congrats-header">
+              <h2 className="amgi-study-congrats-title">오늘 학습을 모두 마쳤습니다!</h2>
+              <div className="amgi-study-congrats-deck">{deckName}</div>
+            </div>
 
             {todayStats.answerCount > 0 && (
-              <div className="amgi-study-congrats-stats tabular">
-                오늘 {todayStats.answerCount.toLocaleString()}장 학습 ·{' '}
-                {formatDurationKo(todayStats.answerMillis)}
+              <div className="amgi-study-congrats-chips tabular">
+                <span className="amgi-study-congrats-chip">
+                  오늘 <strong>{todayStats.answerCount.toLocaleString()}</strong>장 학습
+                </span>
+                <span className="amgi-study-congrats-chip">
+                  <strong>{formatDurationKo(todayStats.answerMillis)}</strong> 집중
+                </span>
               </div>
             )}
 
             {congratsData && congratsData.secsUntilNextLearn > 0 && (
-              <p style={{ margin: 0, fontSize: 14, color: 'var(--text-2)' }}>
+              <p className="amgi-study-congrats-wait">
                 다음 학습 카드가 {formatWaitKo(congratsData.secsUntilNextLearn)} 뒤에 열립니다.
               </p>
             )}
@@ -1437,7 +1439,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
             {(congratsData?.haveSchedBuried || congratsData?.haveUserBuried) && (
               <button
                 type="button"
-                className="amgi-btn amgi-btn-secondary amgi-btn-sm"
+                className="amgi-btn amgi-btn-secondary amgi-btn-sm amgi-study-unbury-btn"
                 onClick={() => {
                   void anki
                     .unburyDeck(deckId, anki.UnburyDeckMode.ALL)
@@ -1478,16 +1480,23 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
         <>
           <main className="amgi-study-stage">
             <div className="amgi-study-card-shell">
+              {activeFlag > 0 && (
+                <div
+                  className={`amgi-study-flag-stripe amgi-study-flag-stripe-${activeFlag}`}
+                  aria-hidden="true"
+                />
+              )}
+
               {(currentSideAvTags.length > 0 || isMarked || showTimer) && (
                 <div className="amgi-study-stage-overlay">
                   <div className="amgi-study-overlay-left">
                     {currentSideAvTags.length > 0 && (
                       <button
                         type="button"
-                        className="amgi-audio-pill compact"
+                        className={`amgi-audio-pill compact ${isAudioPlaying ? 'is-playing' : ''}`}
                         onClick={handleReplayAudio}
                       >
-                        <IconVolume size={16} />
+                        <IconVolume size={15} />
                         <span>{isAudioPlaying ? '재생 중' : '다시 듣기'}</span>
                       </button>
                     )}
@@ -1546,10 +1555,9 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                 onClose={() => setWhiteboardOpen(false)}
               />
             </div>
-            <div className="amgi-study-card-stack-peek" aria-hidden="true" />
           </main>
 
-          {/* Bottom Answer Bar */}
+          {/* Bottom Answer & Rating Dock */}
           <footer className="amgi-answer-bar">
             <div className="amgi-answer-bar-inner">
               {!showAnswer ? (
@@ -1559,6 +1567,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                   onClick={() => void handleShowAnswer()}
                 >
                   <span>정답 보기</span>
+                  <span className="amgi-show-answer-key" aria-hidden="true">Space</span>
                 </button>
               ) : twoButtonMode ? (
                 <div
@@ -1574,7 +1583,10 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                     {showIntervals && intervals[0] && (
                       <span className="amgi-rate-ivl tabular">{intervals[0]}</span>
                     )}
-                    <span className="amgi-rate-label">모름</span>
+                    <span className="amgi-rate-label-row">
+                      <span className="amgi-rate-dot" aria-hidden="true" />
+                      <span className="amgi-rate-label">모름</span>
+                    </span>
                   </button>
                   <button
                     type="button"
@@ -1586,7 +1598,10 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                     {showIntervals && intervals[2] && (
                       <span className="amgi-rate-ivl tabular">{intervals[2]}</span>
                     )}
-                    <span className="amgi-rate-label">암기 완료</span>
+                    <span className="amgi-rate-label-row">
+                      <span className="amgi-rate-dot" aria-hidden="true" />
+                      <span className="amgi-rate-label">암기 완료</span>
+                    </span>
                   </button>
                 </div>
               ) : (
@@ -1601,7 +1616,10 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                     {showIntervals && intervals[0] && (
                       <span className="amgi-rate-ivl tabular">{intervals[0]}</span>
                     )}
-                    <span className="amgi-rate-label">다시</span>
+                    <span className="amgi-rate-label-row">
+                      <span className="amgi-rate-dot" aria-hidden="true" />
+                      <span className="amgi-rate-label">다시</span>
+                    </span>
                   </button>
                   <button
                     type="button"
@@ -1613,7 +1631,10 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                     {showIntervals && intervals[1] && (
                       <span className="amgi-rate-ivl tabular">{intervals[1]}</span>
                     )}
-                    <span className="amgi-rate-label">어려움</span>
+                    <span className="amgi-rate-label-row">
+                      <span className="amgi-rate-dot" aria-hidden="true" />
+                      <span className="amgi-rate-label">어려움</span>
+                    </span>
                   </button>
                   <button
                     type="button"
@@ -1625,7 +1646,10 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                     {showIntervals && intervals[2] && (
                       <span className="amgi-rate-ivl tabular">{intervals[2]}</span>
                     )}
-                    <span className="amgi-rate-label">알맞음</span>
+                    <span className="amgi-rate-label-row">
+                      <span className="amgi-rate-dot" aria-hidden="true" />
+                      <span className="amgi-rate-label">알맞음</span>
+                    </span>
                   </button>
                   <button
                     type="button"
@@ -1637,7 +1661,10 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                     {showIntervals && intervals[3] && (
                       <span className="amgi-rate-ivl tabular">{intervals[3]}</span>
                     )}
-                    <span className="amgi-rate-label">쉬움</span>
+                    <span className="amgi-rate-label-row">
+                      <span className="amgi-rate-dot" aria-hidden="true" />
+                      <span className="amgi-rate-label">쉬움</span>
+                    </span>
                   </button>
                 </div>
               )}

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   myAmgi Distraction-Free Reviewer (#/study/:id)
+   myAmgi Distraction-Free Studio Reviewer (#/study/:id)
    ========================================================================== */
 
 .amgi-study-screen {
@@ -14,58 +14,97 @@
   padding-right: var(--safe-right);
 }
 
-/* Slim 48px (46px E-Ink) Top Bar */
+/* Calm 50px Studio Top Bar (56px E-Ink) */
 .amgi-study-topbar {
   flex-shrink: 0;
-  min-height: calc(48px + var(--safe-top));
-  padding: var(--safe-top) 6px 0;
-  background: var(--surface);
-  border-bottom: var(--border-w) solid var(--border);
+  min-height: calc(50px + var(--safe-top));
+  padding: var(--safe-top) 8px 0;
+  background: var(--bg);
+  border-bottom: var(--border-w) solid var(--border-subtle, var(--border));
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 4px;
+  gap: 6px;
+}
+
+@media (min-width: 768px) {
+  .amgi-study-topbar {
+    padding: var(--safe-top) 18px 0;
+  }
 }
 
 :root[data-theme="eink"] .amgi-study-topbar {
   min-height: calc(56px + var(--safe-top));
   height: calc(56px + var(--safe-top));
+  padding: var(--safe-top) 6px 0;
+  background: #FFFFFF;
+  border-bottom: 2px solid #000000;
 }
 
-.amgi-study-top-btn {
-  width: 44px;
-  min-width: 44px;
-  height: 44px;
+.amgi-study-top-btn,
+.amgi-study-top-btn.amgi-btn-icon {
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
   padding: 0;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: 11px;
   background: transparent;
-  color: var(--text);
+  color: var(--text-2);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
+  transition: background-color 0.14s ease, color 0.14s ease, transform 0.1s ease;
 }
 
 .amgi-study-top-btn:hover:not(:disabled) {
   background: var(--surface-2);
+  color: var(--text);
+}
+
+.amgi-study-top-btn:active:not(:disabled) {
+  transform: scale(0.94);
 }
 
 .amgi-study-top-btn:disabled {
-  opacity: 0.35;
+  opacity: 0.32;
   cursor: not-allowed;
 }
 
-:root[data-theme="eink"] .amgi-study-top-btn {
+.amgi-study-top-btn.is-active {
+  background: var(--primary-soft, var(--surface-2));
+  color: var(--primary);
+}
+
+.amgi-study-top-btn.has-flag {
+  color: var(--text);
+}
+
+:root[data-theme="eink"] .amgi-study-top-btn,
+:root[data-theme="eink"] .amgi-study-top-btn.amgi-btn-icon {
   width: 48px;
   min-width: 48px;
   height: 48px;
+  color: #000000;
+  border-radius: var(--radius-sm);
+  transition: none;
 }
 
 :root[data-theme="eink"] .amgi-study-top-btn:hover:not(:disabled) {
   background: #FFFFFF;
+  color: #000000;
   border: 2px solid #000000;
+}
+
+:root[data-theme="eink"] .amgi-study-top-btn:active:not(:disabled) {
+  transform: none;
+}
+
+:root[data-theme="eink"] .amgi-study-top-btn.is-active {
+  background: #000000;
+  color: #FFFFFF;
 }
 
 .amgi-study-title-group {
@@ -73,7 +112,7 @@
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .amgi-study-deck-name {
@@ -81,24 +120,39 @@
   min-width: 0;
   font-size: 14px;
   font-weight: 700;
+  letter-spacing: -0.015em;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* Compact Refined Queue Indicators */
 .amgi-study-counts {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 600;
+  gap: 2px;
+  padding: 3px 4px;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  border: var(--border-w) solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .amgi-study-q-num {
-  padding: 2px 1px;
-  line-height: 1.2;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: var(--radius-pill);
+  line-height: 1;
+  opacity: 0.65;
+  transition: background-color 0.16s ease, opacity 0.16s ease;
 }
 
 .amgi-study-q-new {
@@ -113,15 +167,54 @@
   color: var(--count-review);
 }
 
-:root[data-theme="eink"] .amgi-study-q-num {
-  color: #000000;
+.amgi-study-q-active {
+  opacity: 1;
+  font-weight: 800;
 }
 
-.amgi-study-q-active {
-  font-weight: 800;
-  text-decoration: underline;
-  text-decoration-thickness: 2.5px;
-  text-underline-offset: 4px;
+.amgi-study-q-new.amgi-study-q-active {
+  background: var(--count-new-bg, var(--surface-2));
+}
+
+.amgi-study-q-learn.amgi-study-q-active {
+  background: var(--count-learn-bg, var(--surface-2));
+}
+
+.amgi-study-q-review.amgi-study-q-active {
+  background: var(--count-review-bg, var(--surface-2));
+}
+
+.amgi-study-q-active::after {
+  content: "";
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 10px;
+  height: 2px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+}
+
+:root[data-theme="eink"] .amgi-study-counts {
+  background: #FFFFFF;
+  border: 1.5px solid #000000;
+  padding: 2px 3px;
+}
+
+:root[data-theme="eink"] .amgi-study-q-num {
+  color: #000000;
+  opacity: 1;
+  transition: none;
+}
+
+:root[data-theme="eink"] .amgi-study-q-active {
+  background: #000000;
+  color: #FFFFFF;
+}
+
+:root[data-theme="eink"] .amgi-study-q-active::after {
+  display: none;
 }
 
 .amgi-study-actions {
@@ -131,10 +224,49 @@
   gap: 2px;
 }
 
-/* Session Progress Bar */
+@media (max-width: 440px) {
+  .amgi-study-topbar {
+    padding: var(--safe-top) 6px 0;
+    gap: 4px;
+  }
+
+  .amgi-study-top-btn,
+  .amgi-study-top-btn.amgi-btn-icon {
+    width: 36px;
+    min-width: 36px;
+    height: 38px;
+  }
+
+  .amgi-study-title-group {
+    gap: 6px;
+  }
+
+  .amgi-study-actions {
+    gap: 0;
+  }
+
+  .amgi-study-q-num {
+    min-width: 20px;
+    padding: 0 5px;
+  }
+
+  :root[data-theme="eink"] .amgi-study-topbar {
+    padding: var(--safe-top) 4px 0;
+    gap: 3px;
+  }
+
+  :root[data-theme="eink"] .amgi-study-top-btn,
+  :root[data-theme="eink"] .amgi-study-top-btn.amgi-btn-icon {
+    width: 40px;
+    min-width: 40px;
+    height: 44px;
+  }
+}
+
+/* Whisper-thin 2.5px Session Progress Bar */
 .amgi-study-progress-track {
   flex-shrink: 0;
-  height: 3px;
+  height: 2.5px;
   width: 100%;
   background: var(--surface-2);
   overflow: hidden;
@@ -143,40 +275,23 @@
 .amgi-study-progress-fill {
   height: 100%;
   background: var(--primary);
-  transition: width 0.25s ease;
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+  transition: width 0.35s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 :root[data-theme="eink"] .amgi-study-progress-track {
-  height: 4px;
+  height: 3px;
   background: #FFFFFF;
   border-bottom: 1px solid #000000;
 }
 
 :root[data-theme="eink"] .amgi-study-progress-fill {
   background: #000000;
+  border-radius: 0;
+  transition: none;
 }
 
-/* Flag accent stripe at top edge of card stage */
-.amgi-study-flag-stripe {
-  flex-shrink: 0;
-  height: 4px;
-  width: 100%;
-}
-
-.amgi-study-flag-stripe-1 { background: var(--flag-1); }
-.amgi-study-flag-stripe-2 { background: var(--flag-2); }
-.amgi-study-flag-stripe-3 { background: var(--flag-3); }
-.amgi-study-flag-stripe-4 { background: var(--flag-4); }
-.amgi-study-flag-stripe-5 { background: var(--flag-5); }
-.amgi-study-flag-stripe-6 { background: var(--flag-6); }
-.amgi-study-flag-stripe-7 { background: var(--flag-7); }
-
-:root[data-theme="eink"] .amgi-study-flag-stripe {
-  height: 3px;
-  background: #000000;
-}
-
-/* Card Stage — Framed Paper Reading Surface on Light/Dark, Full-Bleed Crisp White on E-Ink */
+/* Elevated Pure Paper Card Stage (Full-Bleed Crisp White on E-Ink) */
 .amgi-study-stage {
   flex: 1;
   min-height: 0;
@@ -184,12 +299,12 @@
   display: flex;
   flex-direction: column;
   background: var(--bg);
-  padding: 12px 12px 14px;
+  padding: 10px 12px 12px;
 }
 
 @media (min-width: 768px) {
   .amgi-study-stage {
-    padding: 20px 28px 18px;
+    padding: 18px 28px 16px;
   }
 }
 
@@ -210,24 +325,9 @@
   flex-direction: column;
   background: var(--surface);
   border: var(--border-w) solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: 20px;
   box-shadow: var(--shadow-sm);
   overflow: hidden;
-}
-
-/* Tactile stacked-card deck illusion underneath the active flashcard */
-.amgi-study-card-stack-peek {
-  flex-shrink: 0;
-  width: calc(100% - 28px);
-  max-width: 792px;
-  height: 7px;
-  margin: -1px auto 0;
-  background: var(--surface-2);
-  border: var(--border-w) solid var(--border);
-  border-top: none;
-  border-radius: 0 0 var(--radius-md) var(--radius-md);
-  opacity: 0.85;
-  pointer-events: none;
 }
 
 :root[data-theme="eink"] .amgi-study-card-shell {
@@ -238,15 +338,40 @@
   background: #FFFFFF;
 }
 
-:root[data-theme="eink"] .amgi-study-card-stack-peek {
-  display: none;
+/* Subtle 3px Rounded Flag Indicator inside Top Edge of Card Shell */
+.amgi-study-flag-stripe {
+  position: absolute;
+  top: 0;
+  left: 20px;
+  right: 20px;
+  height: 3px;
+  border-radius: 0 0 var(--radius-pill) var(--radius-pill);
+  z-index: 6;
+  pointer-events: none;
 }
 
+.amgi-study-flag-stripe-1 { background: var(--flag-1); }
+.amgi-study-flag-stripe-2 { background: var(--flag-2); }
+.amgi-study-flag-stripe-3 { background: var(--flag-3); }
+.amgi-study-flag-stripe-4 { background: var(--flag-4); }
+.amgi-study-flag-stripe-5 { background: var(--flag-5); }
+.amgi-study-flag-stripe-6 { background: var(--flag-6); }
+.amgi-study-flag-stripe-7 { background: var(--flag-7); }
+
+:root[data-theme="eink"] .amgi-study-flag-stripe {
+  left: 0;
+  right: 0;
+  height: 3px;
+  border-radius: 0;
+  background: #000000;
+}
+
+/* Floating Frosted-Glass Overlay Chips */
 .amgi-study-stage-overlay {
   position: absolute;
-  top: 10px;
-  left: 12px;
-  right: 12px;
+  top: 12px;
+  left: 14px;
+  right: 14px;
   z-index: 5;
   display: flex;
   align-items: center;
@@ -266,39 +391,75 @@
   pointer-events: auto;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-height: 40px;
+  gap: 5px;
+  min-height: 34px;
   padding: 0 12px;
   border-radius: var(--radius-pill);
-  border: var(--border-w) solid var(--border-strong);
-  background: var(--surface);
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 700;
+  border: var(--border-w) solid var(--border);
+  background: var(--surface-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 600;
   cursor: pointer;
-  box-shadow: var(--shadow-sm);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
+  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease, transform 0.1s ease;
+}
+
+.amgi-audio-pill:hover {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.amgi-audio-pill:active {
+  transform: scale(0.96);
+}
+
+.amgi-audio-pill.is-playing {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--primary-soft, var(--surface));
 }
 
 :root[data-theme="eink"] .amgi-audio-pill {
-  min-height: 46px;
+  min-height: 44px;
   background: #FFFFFF;
   color: #000000;
   border: 2px solid #000000;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+  transition: none;
+}
+
+:root[data-theme="eink"] .amgi-audio-pill:active {
+  transform: none;
+}
+
+:root[data-theme="eink"] .amgi-audio-pill.is-playing {
+  background: #000000;
+  color: #FFFFFF;
+  border-color: #000000;
 }
 
 .amgi-mark-pill {
-  pointer-events: auto;
+  pointer-events: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 30px;
-  padding: 2px 10px;
+  min-height: 28px;
+  min-width: 28px;
+  padding: 0 8px;
   border-radius: var(--radius-pill);
   border: var(--border-w) solid var(--border);
-  background: var(--surface);
+  background: var(--surface-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   color: var(--flag-2);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 :root[data-theme="eink"] .amgi-mark-pill {
@@ -306,6 +467,8 @@
   color: #000000;
   border: 2px solid #000000;
   border-radius: 4px;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .amgi-timer-pill {
@@ -314,19 +477,23 @@
   align-items: center;
   gap: 4px;
   min-height: 28px;
-  padding: 2px 9px;
+  padding: 0 10px;
   border-radius: var(--radius-pill);
   border: var(--border-w) solid var(--border);
-  background: var(--surface-2);
+  background: var(--surface-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   color: var(--text-2);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 :root[data-theme="eink"] .amgi-timer-pill {
   background: #FFFFFF;
   color: #000000;
   border: 2px solid #000000;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .amgi-study-frame-wrap {
@@ -344,7 +511,12 @@
   justify-content: center;
   padding: 24px;
   text-align: center;
-  gap: 10px;
+  gap: 8px;
+}
+
+.amgi-study-loading-sub {
+  font-size: 13px;
+  color: var(--text-2);
 }
 
 /* S-Pen & Touch Whiteboard Overlay */
@@ -365,7 +537,7 @@
 
 .amgi-wb-toolbar {
   position: absolute;
-  bottom: 12px;
+  bottom: 14px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 14;
@@ -378,7 +550,7 @@
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border: var(--border-w) solid var(--border-strong);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-md, var(--shadow-sm));
   max-width: calc(100% - 16px);
 }
 
@@ -386,6 +558,8 @@
   background: #FFFFFF;
   border: 2px solid #000000;
   border-radius: var(--radius-sm);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .amgi-wb-colors {
@@ -413,7 +587,7 @@
 
 .amgi-wb-swatch.active {
   border-color: var(--primary);
-  background: var(--primary-soft);
+  background: var(--primary-soft, var(--surface-2));
 }
 
 .amgi-wb-swatch-dot {
@@ -445,7 +619,7 @@
 }
 
 .amgi-wb-btn.active {
-  background: var(--primary-soft);
+  background: var(--primary-soft, var(--surface-2));
   border-color: var(--primary);
   color: var(--primary);
 }
@@ -472,63 +646,89 @@
   border-color: #000000;
 }
 
-/* Top bar active toggle highlight (e.g. Whiteboard or Mark active) */
-.amgi-study-top-btn.is-active {
-  background: var(--primary-soft);
-  color: var(--primary);
-}
-
-:root[data-theme="eink"] .amgi-study-top-btn.is-active {
-  background: #000000;
-  color: #FFFFFF;
-}
-
-/* Bottom Answer Bar */
+/* Seamless Tactile Bottom Answer & Rating Dock */
 .amgi-answer-bar {
   flex-shrink: 0;
-  background: var(--surface-glass);
-  backdrop-filter: blur(18px) saturate(1.3);
-  -webkit-backdrop-filter: blur(18px) saturate(1.3);
-  border-top: var(--border-w) solid var(--border);
-  padding: 10px 12px calc(10px + var(--safe-bottom));
+  background: var(--bg);
+  padding: 4px 12px calc(12px + var(--safe-bottom));
+}
+
+@media (min-width: 768px) {
+  .amgi-answer-bar {
+    padding: 4px 28px calc(18px + var(--safe-bottom));
+  }
 }
 
 :root[data-theme="eink"] .amgi-answer-bar {
   background: #FFFFFF;
+  border-top: 2px solid #000000;
+  padding: 10px 12px calc(10px + var(--safe-bottom));
 }
 
 .amgi-answer-bar-inner {
   width: 100%;
+  max-width: 820px;
   margin: 0 auto;
 }
 
-@media (min-width: 900px) {
-  .amgi-answer-bar-inner {
-    max-width: 720px;
-  }
+:root[data-theme="eink"] .amgi-answer-bar-inner {
+  max-width: none;
 }
 
+/* Primary Show Answer CTA */
 .amgi-show-answer-btn {
   width: 100%;
-  min-height: 56px;
-  border-radius: var(--radius-md);
+  min-height: 54px;
+  border-radius: 14px;
+  border: none;
   font-size: 16px;
   font-weight: 700;
+  letter-spacing: -0.01em;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
-  box-shadow: 0 3px 0 rgba(15, 23, 42, 0.16);
-  transition: transform 0.08s ease, box-shadow 0.08s ease;
+  background: var(--primary);
+  color: var(--on-primary);
+  box-shadow: 0 4px 16px var(--primary-glow, rgba(47, 91, 255, 0.22)), 0 1px 2px rgba(15, 23, 42, 0.08);
+  transition: transform 0.12s cubic-bezier(0.2, 0.8, 0.2, 1), background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.amgi-show-answer-btn:hover:not(:disabled) {
+  background: var(--primary-hover, var(--primary));
+  box-shadow: 0 6px 20px var(--primary-glow, rgba(47, 91, 255, 0.28)), 0 2px 4px rgba(15, 23, 42, 0.08);
 }
 
 .amgi-show-answer-btn:active:not(:disabled) {
-  transform: translateY(2px);
-  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.16);
+  transform: scale(0.985);
+  box-shadow: 0 2px 8px var(--primary-glow, rgba(47, 91, 255, 0.16));
+}
+
+.amgi-show-answer-key {
+  display: none;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 6px;
+  border: 1px solid currentColor;
+  opacity: 0.5;
+}
+
+@media (min-width: 900px) {
+  .amgi-show-answer-key {
+    display: inline-flex;
+    align-items: center;
+  }
 }
 
 :root[data-theme="eink"] .amgi-show-answer-btn {
-  min-height: 58px;
+  min-height: 56px;
+  border: 2px solid #000000;
+  border-radius: var(--radius-sm);
+  background: #000000;
+  color: #FFFFFF;
   box-shadow: none;
   transition: none;
 }
@@ -538,6 +738,11 @@
   box-shadow: none;
 }
 
+:root[data-theme="eink"] .amgi-show-answer-key {
+  display: none;
+}
+
+/* 2-Button & 4-Button Soft-Surface Rating Cards */
 .amgi-rate-grid-2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -555,7 +760,7 @@
 .amgi-rate-grid-4 {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 7px;
+  gap: 8px;
 }
 
 @media (min-width: 600px) {
@@ -566,34 +771,29 @@
 
 .amgi-rate-btn {
   position: relative;
-  min-height: 58px;
-  padding: 8px 4px 6px;
-  border-radius: var(--radius-md);
+  min-height: 60px;
+  padding: 9px 6px 10px;
+  border-radius: 14px;
   border: var(--border-w) solid var(--border);
-  border-bottom-width: 3px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 3px;
   cursor: pointer;
   text-align: center;
   overflow: hidden;
-  transition: transform 0.08s ease, filter 0.12s ease, border-bottom-width 0.08s ease;
+  transition: transform 0.12s cubic-bezier(0.2, 0.8, 0.2, 1), background-color 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
 }
 
-.amgi-rate-btn::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
+@media (hover: hover) {
+  .amgi-rate-btn:hover:not(:disabled) {
+    box-shadow: var(--shadow-sm);
+  }
 }
 
 .amgi-rate-btn:active:not(:disabled) {
-  transform: translateY(1px) scale(0.98);
-  border-bottom-width: 1px;
+  transform: scale(0.97);
 }
 
 .amgi-rate-btn:disabled {
@@ -601,29 +801,76 @@
   cursor: not-allowed;
 }
 
+.amgi-rate-grid-2 .amgi-rate-btn {
+  min-height: 62px;
+  padding: 10px 12px;
+}
+
 .amgi-rate-ivl {
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.2;
-  opacity: 0.88;
+  opacity: 0.82;
+  letter-spacing: -0.01em;
+}
+
+.amgi-rate-label-row {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  max-width: 100%;
+}
+
+.amgi-rate-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.amgi-rate-grid-4 .amgi-rate-dot {
+  width: 5px;
+  height: 5px;
 }
 
 .amgi-rate-label {
   font-size: 15px;
   font-weight: 800;
   line-height: 1.25;
+  letter-spacing: -0.015em;
   white-space: nowrap;
+}
+
+.amgi-rate-grid-2 .amgi-rate-label {
+  font-size: 16px;
+}
+
+@media (max-width: 380px) {
+  .amgi-rate-grid-4 {
+    gap: 6px;
+  }
+
+  .amgi-rate-grid-4 .amgi-rate-label-row {
+    gap: 4px;
+  }
+
+  .amgi-rate-grid-4 .amgi-rate-label {
+    font-size: 14px;
+  }
 }
 
 .amgi-rate-key {
   display: none;
   position: absolute;
-  top: 6px;
-  right: 7px;
+  top: 7px;
+  right: 8px;
   font-size: 10px;
   font-family: var(--font-mono);
   font-weight: 700;
-  opacity: 0.55;
+  opacity: 0.48;
 }
 
 @media (min-width: 900px) {
@@ -632,55 +879,51 @@
   }
 }
 
-.amgi-rate-grid-2 .amgi-rate-label {
-  font-size: 16px;
-}
-
 .amgi-rate-again {
   background: var(--again-bg);
   color: var(--again);
   border-color: var(--again-border);
 }
-.amgi-rate-again::before { background: var(--again); }
 
 .amgi-rate-hard {
   background: var(--hard-bg);
   color: var(--hard);
   border-color: var(--hard-border);
 }
-.amgi-rate-hard::before { background: var(--hard); }
 
 .amgi-rate-good {
   background: var(--good-bg);
   color: var(--good);
   border-color: var(--good-border);
 }
-.amgi-rate-good::before { background: var(--good); }
 
 .amgi-rate-easy {
   background: var(--easy-bg);
   color: var(--easy);
   border-color: var(--easy-border);
 }
-.amgi-rate-easy::before { background: var(--easy); }
 
-/* E-Ink rating contrast: outline for Again/Hard/Easy, solid black for Good (암기 완료 / 알맞음) */
+/* E-Ink Rating Contrast: crisp 2px outline for Again/Hard/Easy, solid black for Good */
 :root[data-theme="eink"] .amgi-rate-btn {
   min-height: 58px;
   background: #FFFFFF;
   color: #000000;
   border: 2px solid #000000;
   border-radius: var(--radius-sm);
+  box-shadow: none;
   transition: none;
 }
 
 :root[data-theme="eink"] .amgi-rate-btn:active:not(:disabled) {
   transform: none;
-  border-bottom-width: 2px;
 }
 
-:root[data-theme="eink"] .amgi-rate-btn::before {
+:root[data-theme="eink"] .amgi-rate-dot {
   display: none;
+}
+
+:root[data-theme="eink"] .amgi-rate-ivl {
+  opacity: 1;
 }
 
 :root[data-theme="eink"] .amgi-rate-grid-2 .amgi-rate-btn {
@@ -690,6 +933,7 @@
 :root[data-theme="eink"] .amgi-rate-good {
   background: #000000;
   color: #FFFFFF;
+  border-color: #000000;
 }
 
 /* Keyboard Shortcuts Cheat Sheet */
@@ -704,8 +948,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 10px;
-  border-radius: var(--radius-xs);
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
   font-size: 14px;
 }
@@ -721,31 +965,38 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px 16px;
+  padding: 24px 16px;
   overflow-y: auto;
 }
 
 .amgi-study-congrats-card {
   width: 100%;
-  max-width: 480px;
+  max-width: 460px;
   background: var(--surface);
   border: var(--border-w) solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: 20px;
   box-shadow: var(--shadow-sm);
-  padding: 28px 20px;
+  padding: 36px 24px 28px;
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 12px;
+  gap: 16px;
+}
+
+:root[data-theme="eink"] .amgi-study-congrats-card {
+  border: 2px solid #000000;
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+  background: #FFFFFF;
 }
 
 .amgi-celebration-badge {
   width: 72px;
   height: 72px;
   border-radius: 22px;
-  background: var(--ok-soft);
-  color: var(--ok);
+  background: var(--ok-soft, var(--surface-2));
+  color: var(--ok, var(--good));
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -763,8 +1014,8 @@
   width: 56px;
   height: 56px;
   border-radius: 50%;
-  background: var(--ok-soft);
-  color: var(--ok);
+  background: var(--ok-soft, var(--surface-2));
+  color: var(--ok, var(--good));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -776,28 +1027,73 @@
   border: 2px solid #000000;
 }
 
+.amgi-study-congrats-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
 .amgi-study-congrats-title {
-  font-size: 20px;
+  font-size: 21px;
   font-weight: 800;
+  letter-spacing: -0.02em;
   color: var(--text);
 }
 
+.amgi-study-congrats-deck {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.amgi-study-congrats-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.amgi-study-congrats-chip,
 .amgi-study-congrats-stats {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 6px 14px;
+  gap: 4px;
+  padding: 7px 14px;
   border-radius: var(--radius-pill);
   background: var(--surface-2);
   border: var(--border-w) solid var(--border);
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 600;
-  color: var(--text);
+  color: var(--text-2);
 }
 
+.amgi-study-congrats-chip strong {
+  color: var(--text);
+  font-weight: 800;
+}
+
+:root[data-theme="eink"] .amgi-study-congrats-chip,
 :root[data-theme="eink"] .amgi-study-congrats-stats {
   background: #FFFFFF;
+  color: #000000;
   border: 2px solid #000000;
+}
+
+:root[data-theme="eink"] .amgi-study-congrats-chip strong {
+  color: #000000;
+}
+
+.amgi-study-congrats-wait {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--text-2);
+}
+
+.amgi-study-unbury-btn {
+  border-radius: var(--radius-pill);
 }
 
 .amgi-study-congrats-actions {
@@ -806,16 +1102,18 @@
   justify-content: center;
   gap: 10px;
   width: 100%;
-  margin-top: 8px;
+  margin-top: 6px;
 }
 
 .amgi-study-congrats-actions .amgi-btn {
-  min-height: 52px;
-  flex: 1 1 160px;
+  min-height: 50px;
+  border-radius: 14px;
+  flex: 1 1 150px;
 }
 
 :root[data-theme="eink"] .amgi-study-congrats-actions .amgi-btn {
   min-height: 56px;
+  border-radius: var(--radius-sm);
 }
 
 @media (max-width: 420px) {
@@ -840,7 +1138,7 @@
   width: 100%;
   min-height: var(--target-min);
   padding: 10px 14px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   border: var(--border-w) solid var(--border);
   background: var(--surface);
   color: var(--text);
@@ -851,11 +1149,21 @@
   cursor: pointer;
   font-size: 15px;
   font-weight: 600;
+  transition: background-color 0.14s ease, border-color 0.14s ease;
+}
+
+.amgi-flag-option:hover {
+  background: var(--surface-2);
 }
 
 .amgi-flag-option.active {
   border-color: var(--primary);
-  background: var(--primary-soft);
+  background: var(--primary-soft, var(--surface-2));
+}
+
+:root[data-theme="eink"] .amgi-flag-option {
+  border-radius: var(--radius-sm);
+  transition: none;
 }
 
 :root[data-theme="eink"] .amgi-flag-option.active {
@@ -881,5 +1189,5 @@
   width: 100%;
   height: min(65dvh, 520px);
   border: var(--border-w) solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
 }

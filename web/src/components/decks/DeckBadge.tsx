@@ -1,6 +1,13 @@
 import type React from 'react';
 
-export type DeckBadgeTone = 'rose' | 'blue' | 'amber' | 'emerald' | 'indigo' | 'teal';
+export type DeckBadgeTone =
+  | 'rose'
+  | 'blue'
+  | 'amber'
+  | 'emerald'
+  | 'indigo'
+  | 'teal'
+  | 'slate';
 
 export interface DeckThemeMeta {
   tone: DeckBadgeTone;
@@ -8,11 +15,34 @@ export interface DeckThemeMeta {
   label: string;
 }
 
+const FALLBACK_TONES: readonly DeckBadgeTone[] = [
+  'slate',
+  'teal',
+  'blue',
+  'indigo',
+  'emerald',
+  'amber',
+  'rose',
+];
+
+function hashDeckRoot(name: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < name.length; i++) {
+    hash ^= name.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
 /**
- * Classifies a deck name into a personal study category for bespoke inline SVG artwork.
+ * Classifies a deck name into a study category and calm architectural accent tone.
+ * Unmatched decks deterministically hash their root deck name across muted tones
+ * so sibling decks remain visually distinguishable without clashing.
  */
 export function resolveDeckTheme(deckName: string): DeckThemeMeta {
+  const rootName = deckName.split('::')[0]?.trim() || deckName.trim();
   const s = deckName.toLowerCase();
+
   if (
     /일본|일어|jlpt|jpt|한자|히라가나|가타카나|japan|kanji|kana|nihongo|[\u3040-\u30ff]/.test(
       s
@@ -37,14 +67,21 @@ export function resolveDeckTheme(deckName: string): DeckThemeMeta {
     return { tone: 'indigo', kind: 'code', label: '개발·CS' };
   }
   if (/시험|자격|법|헌법|민법|형법|경제|금융|회계|세무|한국사|역사|공무원|임용|exam/.test(s)) {
-    return { tone: 'amber', kind: 'exam', label: '시험·자격' };
+    return { tone: 'teal', kind: 'exam', label: '시험·자격' };
   }
-  return { tone: 'teal', kind: 'cards', label: '암기장' };
+
+  const rootLower = rootName.toLowerCase();
+  if (!rootLower || rootLower === '기본' || rootLower === 'default') {
+    return { tone: 'slate', kind: 'cards', label: '암기장' };
+  }
+
+  const tone = FALLBACK_TONES[hashDeckRoot(rootLower) % FALLBACK_TONES.length];
+  return { tone, kind: 'cards', label: '암기장' };
 }
 
 export const DeckCategoryIcon: React.FC<{ deckName: string; size?: number }> = ({
   deckName,
-  size = 20,
+  size = 16,
 }) => {
   const { kind } = resolveDeckTheme(deckName);
 
@@ -52,7 +89,17 @@ export const DeckCategoryIcon: React.FC<{ deckName: string; size?: number }> = (
     case 'jp':
       // Torii gate inspired minimal line emblem
       return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <svg
+          width={size}
+          height={size}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.95"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
           <path d="M4 6.5c4.5 1.1 11.5 1.1 16 0" />
           <path d="M5.5 10.5h13" />
           <path d="M8 7v12" />
@@ -63,7 +110,17 @@ export const DeckCategoryIcon: React.FC<{ deckName: string; size?: number }> = (
     case 'en':
       // Speech & alphabet bubble emblem
       return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <svg
+          width={size}
+          height={size}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.95"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
           <path d="M4 18l4.5-12L13 18" />
           <path d="M5.8 14h5.4" />
           <circle cx="17.5" cy="14.5" r="3" />
@@ -73,7 +130,17 @@ export const DeckCategoryIcon: React.FC<{ deckName: string; size?: number }> = (
     case 'zh':
       // Classic scroll / character emblem
       return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <svg
+          width={size}
+          height={size}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.95"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
           <path d="M12 4v3" />
           <path d="M5 7h14" />
           <path d="M16 7c-1 5-4.5 9.5-10 12" />
@@ -83,14 +150,34 @@ export const DeckCategoryIcon: React.FC<{ deckName: string; size?: number }> = (
     case 'med':
       // Heartbeat pulse emblem
       return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <svg
+          width={size}
+          height={size}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.95"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
           <path d="M3 12h4l2.5-6 4 12 2.5-6h5" />
         </svg>
       );
     case 'code':
       // Code chevrons
       return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <svg
+          width={size}
+          height={size}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.95"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
           <polyline points="8 7 3 12 8 17" />
           <polyline points="16 7 21 12 16 17" />
           <line x1="13.5" y1="5" x2="10.5" y2="19" />
@@ -99,7 +186,17 @@ export const DeckCategoryIcon: React.FC<{ deckName: string; size?: number }> = (
     case 'exam':
       // Ribbon award medal
       return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <svg
+          width={size}
+          height={size}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.95"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
           <circle cx="12" cy="9" r="5" />
           <path d="M8.5 13.5L7 21l5-2.5L17 21l-1.5-7.5" />
         </svg>
@@ -107,7 +204,17 @@ export const DeckCategoryIcon: React.FC<{ deckName: string; size?: number }> = (
     default:
       // Layered flashcards emblem
       return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <svg
+          width={size}
+          height={size}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.95"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
           <rect x="4" y="6" width="13" height="14" rx="2.5" />
           <path d="M8 6V4.5A2 2 0 0 1 10 2.5h8.5a2 2 0 0 1 2 2V15a2 2 0 0 1-2 2H17" />
           <path d="M8 11h5" />
@@ -121,16 +228,20 @@ export const DailyProgressRing: React.FC<{
   pct: number;
   done: boolean;
   size?: number;
-}> = ({ pct, done, size = 58 }) => {
-  const stroke = 5;
+}> = ({ pct, done, size = 48 }) => {
+  const stroke = size <= 48 ? 4 : 5;
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
   const clamped = Math.max(0, Math.min(100, pct));
   const offset = circumference - (clamped / 100) * circumference;
 
   return (
-    <div className={`amgi-ring-wrap ${done ? 'is-done' : ''}`} style={{ width: size, height: size }}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+    <div
+      className={`amgi-ring-wrap ${done ? 'is-done' : ''}`}
+      style={{ width: size, height: size }}
+      aria-hidden="true"
+    >
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
         <circle
           className="amgi-ring-track"
           cx={size / 2}
@@ -152,7 +263,9 @@ export const DailyProgressRing: React.FC<{
           transform={`rotate(-90 ${size / 2} ${size / 2})`}
         />
       </svg>
-      <span className="amgi-ring-label tabular">{done ? '완료' : `${clamped}%`}</span>
+      <span className="amgi-ring-label tabular">
+        {done ? '완료' : `${clamped}%`}
+      </span>
     </div>
   );
 };
@@ -181,11 +294,11 @@ export const CelebrationBadge: React.FC<{ size?: number }> = ({ size = 56 }) => 
 );
 
 export function getPersonalGreeting(totalDue: number, doneToday: number): string {
-  if (totalDue === 0 && doneToday > 0) return '오늘 목표를 완벽히 마쳤어요';
+  if (totalDue === 0 && doneToday > 0) return '오늘 학습 완료';
   if (totalDue === 0) return '여유로운 하루예요';
   const hour = new Date().getHours();
-  if (hour >= 5 && hour < 12) return '좋은 아침, 가볍게 시작해 볼까요';
-  if (hour >= 12 && hour < 18) return '오후 집중 암기 타임';
-  if (hour >= 18 && hour < 23) return '오늘 분량 마무리해 볼까요';
-  return '고요한 밤, 짧은 복습 한 판';
+  if (hour >= 5 && hour < 12) return '가벼운 아침 복습';
+  if (hour >= 12 && hour < 18) return '오후 집중 복습';
+  if (hour >= 18 && hour < 23) return '오늘 복습 마무리';
+  return '고요한 밤 복습';
 }

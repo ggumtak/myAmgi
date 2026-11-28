@@ -13,39 +13,79 @@
     <style id="amgi-base-css">
       :root {
         --card-font-scale: 1;
-        --card-line-height: 1.55;
+        --card-line-height: 1.6;
       }
 
       html.night-mode {
-        --canvas: #131822;
-        --canvas-elevated: #1B2230;
-        --fg: #F1F5F9;
-        --border: #232C3C;
+        --canvas: #141923;
+        --canvas-elevated: #1C2333;
+        --fg: #F2F5FA;
+        --border: #252E3F;
       }
 
-      html,
-      body {
+      html {
         margin: 0;
         padding: 0;
+        overflow-x: clip;
         background-color: #ffffff;
-        color: #0f172a;
-        font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Noto Sans CJK KR", "Noto Sans KR", system-ui, sans-serif;
+        color: #111827;
+        -webkit-text-size-adjust: 100%;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      body {
+        margin: 0;
+        padding: 32px 22px 44px;
+        box-sizing: border-box;
+        overflow-x: clip;
+        background-color: #ffffff;
+        color: #111827;
+        font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", "Noto Sans CJK KR", "Noto Sans KR", system-ui, sans-serif;
         font-size: calc(19px * var(--card-font-scale, 1));
         line-height: var(--card-line-height, 1.6);
         word-break: keep-all;
         overflow-wrap: break-word;
-        -webkit-text-size-adjust: 100%;
-        -webkit-font-smoothing: antialiased;
       }
 
-      body {
-        padding: 36px 24px 48px;
-        box-sizing: border-box;
-        min-height: 100vh;
+      /* Safe default whisper-thin scrollbar (Chromium/WebKit use ::-webkit-scrollbar; Firefox falls back via @supports) */
+      @supports not selector(::-webkit-scrollbar) {
+        html,
+        body {
+          scrollbar-width: thin;
+          scrollbar-color: rgba(15, 23, 42, 0.14) transparent;
+        }
+      }
+
+      html::-webkit-scrollbar,
+      body::-webkit-scrollbar {
+        width: 4px;
+        height: 4px;
+      }
+
+      html::-webkit-scrollbar-track,
+      body::-webkit-scrollbar-track {
+        background: transparent;
+      }
+
+      html::-webkit-scrollbar-thumb,
+      body::-webkit-scrollbar-thumb {
+        background: rgba(15, 23, 42, 0.14);
+        border-radius: 999px;
+      }
+
+      html::-webkit-scrollbar-thumb:hover,
+      body::-webkit-scrollbar-thumb:hover {
+        background: rgba(15, 23, 42, 0.28);
+      }
+
+      :where(#qa) {
+        display: flow-root;
+        max-width: 100%;
       }
 
       :where(.card) {
-        font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Noto Sans CJK KR", "Noto Sans KR", system-ui, sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", "Noto Sans CJK KR", "Noto Sans KR", system-ui, sans-serif;
         font-size: calc(22px * var(--card-font-scale, 1));
         line-height: var(--card-line-height, 1.6);
         text-align: center;
@@ -56,7 +96,7 @@
       :where(img, svg, video, canvas) {
         max-width: 100%;
         height: auto;
-        border-radius: 8px;
+        border-radius: 10px;
       }
 
       :where(img) {
@@ -66,60 +106,86 @@
 
       :where(.cloze) {
         font-weight: 800;
-        color: #2563eb;
-        background-color: rgba(37, 99, 235, 0.1);
-        padding: 1px 7px;
-        border-radius: 6px;
+        color: #2f5bff;
+        background-color: rgba(47, 91, 255, 0.09);
+        padding: 1px 8px;
+        border-radius: 7px;
       }
 
       :where(.cloze-inactive) {
-        opacity: 0.65;
+        opacity: 0.62;
       }
 
-      :where(hr#answer) {
+      hr:where(#answer) {
         border: 0;
-        border-top: 1.5px dashed rgba(15, 23, 42, 0.16);
-        margin: 24px auto;
-        max-width: 82%;
+        border-top: 0;
+        height: 1px;
+        width: 100%;
+        max-width: 100%;
+        opacity: 1;
+        background: linear-gradient(
+          90deg,
+          transparent 0%,
+          rgba(15, 23, 42, 0.14) 16%,
+          rgba(15, 23, 42, 0.14) 84%,
+          transparent 100%
+        );
+        margin: 26px 0;
       }
 
       :where(input#typeans) {
         width: 100%;
         max-width: 480px;
         box-sizing: border-box;
-        padding: 12px 14px;
+        padding: 12px 15px;
         font-family: inherit;
         font-size: calc(16px * var(--card-font-scale, 1));
         line-height: 1.5;
-        color: #0f172a;
-        background-color: #f3f5f9;
+        color: #111827;
+        background-color: #f8fafc;
         border: 1.5px solid #cbd5e1;
         border-radius: 12px;
         outline: none;
+        transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
       }
 
       :where(input#typeans:focus) {
-        border-color: #2563eb;
+        border-color: #2f5bff;
         background-color: #ffffff;
+        box-shadow: 0 0 0 3px rgba(47, 91, 255, 0.12);
       }
 
       :where(.replay-button) {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-width: 42px;
-        min-height: 42px;
-        padding: 6px 10px;
+        width: 40px;
+        height: 40px;
+        min-width: 40px;
+        min-height: 40px;
+        padding: 0;
         margin: 6px;
         border-radius: 999px;
-        border: 1px solid rgba(15, 23, 42, 0.14);
-        background-color: rgba(15, 23, 42, 0.04);
-        color: inherit;
+        border: 1px solid rgba(15, 23, 42, 0.10);
+        background-color: #f8fafc;
+        color: #111827;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
         text-decoration: none;
         cursor: pointer;
         vertical-align: middle;
         box-sizing: border-box;
+        transition: transform 0.12s ease, background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
         -webkit-tap-highlight-color: transparent;
+      }
+
+      :where(.replay-button:hover) {
+        background-color: rgba(47, 91, 255, 0.08);
+        border-color: rgba(47, 91, 255, 0.28);
+        color: #2f5bff;
+      }
+
+      :where(.replay-button:active) {
+        transform: scale(0.94);
       }
 
       :where(.replay-button svg) {
@@ -130,49 +196,107 @@
 
       :where(.replay-button svg circle) {
         fill: transparent;
-        stroke: currentColor;
-        stroke-width: 2;
+        stroke: none;
       }
 
       :where(.replay-button svg path) {
         fill: currentColor;
       }
 
-      /* Dark theme */
+      /* Dark theme — synced cleanly to #141923 card surface for zero seam */
       html.night-mode,
       html.night-mode body,
       body.nightMode {
-        background-color: #131822;
-        color: #f1f5f9;
+        background-color: #141923;
+        color: #f2f5fa;
+      }
+
+      @supports not selector(::-webkit-scrollbar) {
+        html.night-mode,
+        html.night-mode body,
+        body.nightMode {
+          scrollbar-color: rgba(242, 245, 250, 0.15) transparent;
+        }
+      }
+
+      html.night-mode::-webkit-scrollbar-thumb,
+      html.night-mode body::-webkit-scrollbar-thumb,
+      body.nightMode::-webkit-scrollbar-thumb {
+        background: rgba(242, 245, 250, 0.15);
+      }
+
+      html.night-mode::-webkit-scrollbar-thumb:hover,
+      html.night-mode body::-webkit-scrollbar-thumb:hover,
+      body.nightMode::-webkit-scrollbar-thumb:hover {
+        background: rgba(242, 245, 250, 0.30);
       }
 
       :where(html.night-mode .card, body.nightMode .card) {
-        background-color: #131822;
-        color: #f1f5f9;
+        background-color: #141923;
+        color: #f2f5fa;
       }
 
       :where(html.night-mode .cloze, body.nightMode .cloze) {
-        color: #58a6ff;
-        background-color: rgba(88, 166, 255, 0.16);
+        color: #6c9eff;
+        background-color: rgba(108, 158, 255, 0.14);
       }
 
-      :where(html.night-mode hr#answer, body.nightMode hr#answer) {
-        border-top-color: rgba(255, 255, 255, 0.18);
+      html.night-mode hr:where(#answer),
+      body.nightMode hr:where(#answer) {
+        opacity: 1;
+        background: linear-gradient(
+          90deg,
+          transparent 0%,
+          rgba(255, 255, 255, 0.16) 16%,
+          rgba(255, 255, 255, 0.16) 84%,
+          transparent 100%
+        );
       }
 
       :where(html.night-mode input#typeans, body.nightMode input#typeans) {
-        color: #f1f5f9;
-        background-color: #1b2230;
-        border-color: #334155;
+        color: #f2f5fa;
+        background-color: #1c2333;
+        border-color: #2e3a50;
       }
 
       :where(html.night-mode input#typeans:focus, body.nightMode input#typeans:focus) {
-        border-color: #58a6ff;
+        border-color: #6c9eff;
+        background-color: #171d2b;
+        box-shadow: 0 0 0 3px rgba(108, 158, 255, 0.16);
       }
 
       :where(html.night-mode .replay-button, body.nightMode .replay-button) {
-        border-color: rgba(255, 255, 255, 0.22);
-        background-color: rgba(255, 255, 255, 0.08);
+        border-color: rgba(242, 245, 250, 0.14);
+        background-color: rgba(242, 245, 250, 0.06);
+        color: #f2f5fa;
+        box-shadow: none;
+      }
+
+      :where(html.night-mode .replay-button:hover, body.nightMode .replay-button:hover) {
+        background-color: rgba(108, 158, 255, 0.16);
+        border-color: rgba(108, 158, 255, 0.36);
+        color: #6c9eff;
+      }
+
+      /* Touch & stylus devices: completely hide Chromium scrollbar for distraction-free reading */
+      @media (pointer: coarse), (hover: none) {
+        html,
+        body,
+        html.night-mode,
+        html.night-mode body,
+        body.nightMode {
+          scrollbar-width: none;
+        }
+
+        html::-webkit-scrollbar,
+        body::-webkit-scrollbar,
+        html.night-mode::-webkit-scrollbar,
+        html.night-mode body::-webkit-scrollbar,
+        body.nightMode::-webkit-scrollbar {
+          width: 0;
+          height: 0;
+          display: none;
+        }
       }
 
       /* E-Ink theme: pure #FFFFFF bg, #000000 ink, zero transitions/animations, underlined .cloze */
@@ -181,6 +305,38 @@
       body.einkMode {
         background-color: #ffffff;
         color: #000000;
+        scrollbar-width: auto;
+        scrollbar-color: auto;
+      }
+
+      @supports not selector(::-webkit-scrollbar) {
+        html.eink-mode,
+        html.eink-mode body,
+        body.einkMode {
+          scrollbar-width: thin;
+          scrollbar-color: #000000 transparent;
+        }
+      }
+
+      html.eink-mode::-webkit-scrollbar,
+      html.eink-mode body::-webkit-scrollbar,
+      body.einkMode::-webkit-scrollbar {
+        width: 3px;
+        height: 3px;
+        display: block;
+      }
+
+      html.eink-mode::-webkit-scrollbar-track,
+      html.eink-mode body::-webkit-scrollbar-track,
+      body.einkMode::-webkit-scrollbar-track {
+        background: transparent;
+      }
+
+      html.eink-mode::-webkit-scrollbar-thumb,
+      html.eink-mode body::-webkit-scrollbar-thumb,
+      body.einkMode::-webkit-scrollbar-thumb {
+        background: #000000;
+        border-radius: 0;
       }
 
       html.eink-mode .card,
@@ -199,6 +355,8 @@
         animation: none !important;
         box-shadow: none !important;
         text-shadow: none !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
       }
 
       html.eink-mode .cloze,
@@ -222,7 +380,8 @@
         border-top: 2px solid #000000;
         background: transparent;
         height: 0;
-        margin: 18px 0;
+        max-width: 100%;
+        margin: 20px 0;
       }
 
       html.eink-mode input#typeans,
@@ -238,6 +397,7 @@
         background-color: #ffffff;
         color: #000000;
         border: 2px solid #000000;
+        transform: none !important;
       }
 
       html.eink-mode a,

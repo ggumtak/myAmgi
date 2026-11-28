@@ -182,8 +182,8 @@
 
 /* Alerts & Banners */
 .amgi-sync-banner {
-  padding: 12px 14px;
-  border-radius: var(--radius-sm);
+  padding: 13px 15px;
+  border-radius: var(--radius-md);
   border: var(--border-w) solid var(--border);
   font-size: 13px;
   line-height: 1.5;
@@ -205,8 +205,14 @@
 }
 
 .amgi-sync-banner--progress {
-  background: var(--primary-soft);
-  border-color: var(--easy-border);
+  background: var(--surface-nested);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.amgi-sync-banner--media {
+  background: var(--surface-nested);
+  border-color: var(--border);
   color: var(--text);
 }
 
@@ -229,13 +235,58 @@
   color: var(--text);
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
 }
 
 .amgi-sync-progress-text {
   font-size: 13px;
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
+}
+
+.amgi-sync-media-counters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.amgi-sync-media-stat {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--border-subtle);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.amgi-sync-media-stat-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+}
+
+.amgi-sync-media-stat-val {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.25;
+}
+
+.amgi-sync-media-note {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
+:root[data-theme="eink"] .amgi-sync-media-stat {
+  background: #FFFFFF;
+  border: 1.5px solid #000000;
+}
+
+:root[data-theme="eink"] .amgi-sync-media-stat-label,
+:root[data-theme="eink"] .amgi-sync-media-note {
+  color: #000000;
 }
 
 /* Connected State */
@@ -275,6 +326,12 @@
   color: var(--primary);
 }
 
+.amgi-sync-pill--media {
+  background: var(--surface-2);
+  color: var(--text-2);
+  border-color: var(--border);
+}
+
 .amgi-sync-pill--warn {
   background: var(--warn-soft);
   color: var(--warn);
@@ -286,11 +343,15 @@
 }
 
 .amgi-sync-pill-dot {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: currentColor;
   flex-shrink: 0;
+}
+
+.amgi-sync-pill--media .amgi-sync-pill-dot {
+  background: var(--primary);
 }
 
 :root[data-theme="eink"] .amgi-sync-pill {
@@ -306,6 +367,7 @@
 .amgi-sync-email {
   font-size: 15px;
   font-weight: 700;
+  letter-spacing: -0.015em;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -313,10 +375,39 @@
 }
 
 .amgi-sync-last-time {
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
+}
+
+.amgi-sync-last-sub {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+:root[data-theme="eink"] .amgi-sync-last-sub {
+  color: #000000;
+}
+
+.amgi-sync-row-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+:root[data-theme="eink"] .amgi-sync-row-badge {
+  background: #FFFFFF;
+  color: #000000;
+  border: 2px solid #000000;
 }
 
 .amgi-sync-now-btn {
@@ -330,7 +421,7 @@
 
 .amgi-sync-rows {
   margin: 0 -20px -20px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-subtle);
 }
 
 .amgi-sync-card--compact .amgi-sync-rows {

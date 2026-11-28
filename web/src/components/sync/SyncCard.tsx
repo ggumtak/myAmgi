@@ -65,32 +65,90 @@ function formatBytesMb(bytes: number): string {
   return `${mb.toFixed(1)} MB`;
 }
 
+export function extractCount(raw: string | number | null | undefined): number | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === 'number') {
+    return Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : null;
+  }
+  const trimmed = String(raw).trim();
+  if (!trimmed) return null;
+  const match = /(\d[\d,]*)/.exec(trimmed);
+  if (!match) return null;
+  const num = Number(match[1].replace(/,/g, ''));
+  return Number.isFinite(num) ? Math.max(0, Math.floor(num)) : null;
+}
+
+function formatMediaCounterSummary(
+  checkedRaw: string | number | null | undefined,
+  addedRaw: string | number | null | undefined,
+  removedRaw: string | number | null | undefined
+): string | null {
+  const checked = extractCount(checkedRaw);
+  const added = extractCount(addedRaw);
+  const removed = extractCount(removedRaw);
+
+  const parts: string[] = [];
+  if (checked !== null && checked > 0) {
+    parts.push(`확인 ${checked.toLocaleString('ko-KR')}`);
+  }
+  if (added !== null && added > 0) {
+    parts.push(`추가 ${added.toLocaleString('ko-KR')}`);
+  }
+  if (removed !== null && removed > 0) {
+    parts.push(`삭제 ${removed.toLocaleString('ko-KR')}`);
+  }
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
+export function formatMediaProgressText(
+  status: SyncStatus | null,
+  mediaProgress?: ProgressEvent | null
+): string {
+  const summary = formatMediaCounterSummary(
+    mediaProgress?.checked ?? status?.mediaChecked,
+    mediaProgress?.added ?? status?.mediaAdded,
+    mediaProgress?.removed ?? status?.mediaRemoved
+  );
+  if (summary) {
+    return `미디어 백그라운드 동기화 · ${summary}`;
+  }
+  return '미디어 백그라운드 동기화 중…';
+}
+
 export function formatSyncProgressText(
   status: SyncStatus | null,
-  progress: ProgressEvent | null
+  progress: ProgressEvent | null,
+  mediaProgress?: ProgressEvent | null
 ): string {
   const phase = status?.phase;
+  if (!status?.running && status?.mediaRunning) {
+    return formatMediaProgressText(status, mediaProgress ?? progress);
+  }
   if (phase === 'backup') {
-    return '혹시 모를 일을 대비해 안전 백업을 만드는 중…';
+    return '안전 백업을 만드는 중…';
   }
   if (phase === 'upload') {
     if (progress?.total && progress.total > 0 && progress.transferred !== undefined) {
       const pct = Math.min(100, Math.round((progress.transferred / progress.total) * 100));
-      return `내 기기의 카드를 서버로 올리는 중… (${pct}% · ${formatBytesMb(progress.transferred)})`;
+      return `서버로 업로드 중… (${pct}% · ${formatBytesMb(progress.transferred)})`;
     }
     return '내 기기의 카드를 서버로 올리는 중…';
   }
   if (phase === 'download') {
     if (progress?.total && progress.total > 0 && progress.transferred !== undefined) {
       const pct = Math.min(100, Math.round((progress.transferred / progress.total) * 100));
-      return `서버의 카드를 이 기기로 가져오는 중… (${pct}% · ${formatBytesMb(progress.transferred)})`;
+      return `서버에서 가져오는 중… (${pct}% · ${formatBytesMb(progress.transferred)})`;
     }
     return '서버의 카드를 이 기기로 가져오는 중…';
   }
   if (phase === 'media' || progress?.kind === 'mediaSync') {
-    const checked = progress?.checked ?? 0;
-    if (checked > 0 || progress?.added || progress?.removed) {
-      return `사진과 소리 확인 중… (${checked.toLocaleString('ko-KR')}개 확인)`;
+    const summary = formatMediaCounterSummary(
+      progress?.checked ?? mediaProgress?.checked ?? status?.mediaChecked,
+      progress?.added ?? mediaProgress?.added ?? status?.mediaAdded,
+      progress?.removed ?? mediaProgress?.removed ?? status?.mediaRemoved
+    );
+    if (summary) {
+      return `사진·소리 동기화 · ${summary}`;
     }
     return '카드 속 사진과 소리를 맞추는 중…';
   }
@@ -100,14 +158,17 @@ export function formatSyncProgressText(
     return `전체 기록을 맞추는 중… (${pct}%)`;
   }
   if (phase === 'collection' || progress?.kind === 'normalSync') {
-    const added = Number(progress?.added ?? 0);
-    const removed = Number(progress?.removed ?? 0);
-    if (added > 0 || removed > 0) {
-      return `카드 기록을 맞추는 중… (+${added}, -${removed})`;
+    const added = extractCount(progress?.added);
+    const removed = extractCount(progress?.removed);
+    const parts: string[] = [];
+    if (added !== null && added > 0) parts.push(`추가 ${added.toLocaleString('ko-KR')}`);
+    if (removed !== null && removed > 0) parts.push(`삭제 ${removed.toLocaleString('ko-KR')}`);
+    if (parts.length > 0) {
+      return `카드 기록 동기화 · ${parts.join(' · ')}`;
     }
-    return '바뀐 카드와 학습 기록을 확인하는 중…';
+    return '카드와 학습 기록을 맞추는 중…';
   }
-  return '바뀐 카드와 학습 기록을 확인하는 중…';
+  return '카드와 학습 기록을 맞추는 중…';
 }
 
 function mapLoginErrorMessage(err: unknown): string {
@@ -138,8 +199,11 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
     resolvedTheme,
     syncStatus,
     syncProgress,
+    mediaSyncProgress,
     refreshSyncStatus,
     startBackgroundSync,
+    startMediaSync,
+    abortMediaSync,
     openFullSyncDialog,
   } = useApp();
   const { showToast } = useToast();
@@ -152,6 +216,7 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
   const [loginError, setLoginError] = useState<string | null>(null);
 
   const [aborting, setAborting] = useState(false);
+  const [mediaAborting, setMediaAborting] = useState(false);
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
@@ -159,6 +224,7 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
   const isEink = resolvedTheme === 'eink';
   const isLoggedIn = Boolean(syncStatus?.loggedIn);
   const isRunning = Boolean(syncStatus?.running);
+  const isMediaRunning = Boolean(syncStatus?.mediaRunning);
 
   const autoSync = prefs['sync.auto'] === true;
   const mediaSync = prefs['sync.media'] !== false;
@@ -218,6 +284,16 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
       );
     } finally {
       setAborting(false);
+    }
+  };
+
+  const handleAbortMedia = async () => {
+    if (mediaAborting) return;
+    setMediaAborting(true);
+    try {
+      await abortMediaSync();
+    } finally {
+      setMediaAborting(false);
     }
   };
 
@@ -385,19 +461,27 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
 
   const pillClass = isRunning
     ? 'amgi-sync-pill amgi-sync-pill--running'
-    : syncStatus?.needsFullSync
-      ? 'amgi-sync-pill amgi-sync-pill--warn'
-      : syncStatus?.lastError
-        ? 'amgi-sync-pill amgi-sync-pill--error'
-        : 'amgi-sync-pill';
+    : isMediaRunning
+      ? 'amgi-sync-pill amgi-sync-pill--media'
+      : syncStatus?.needsFullSync
+        ? 'amgi-sync-pill amgi-sync-pill--warn'
+        : syncStatus?.lastError
+          ? 'amgi-sync-pill amgi-sync-pill--error'
+          : 'amgi-sync-pill';
 
   const pillLabel = isRunning
-    ? '동기화 중'
-    : syncStatus?.needsFullSync
-      ? '선택 필요'
-      : syncStatus?.lastError
-        ? '확인 필요'
-        : '연결됨';
+    ? '카드 동기화 중'
+    : isMediaRunning
+      ? '미디어 동기화 중'
+      : syncStatus?.needsFullSync
+        ? '선택 필요'
+        : syncStatus?.lastError
+          ? '확인 필요'
+          : '연결됨';
+
+  const mediaCheckedCount = extractCount(mediaSyncProgress?.checked ?? syncStatus?.mediaChecked);
+  const mediaAddedCount = extractCount(mediaSyncProgress?.added ?? syncStatus?.mediaAdded);
+  const mediaRemovedCount = extractCount(mediaSyncProgress?.removed ?? syncStatus?.mediaRemoved);
 
   return (
     <div className={`amgi-sync-card ${compact ? 'amgi-sync-card--compact' : ''}`}>
@@ -411,6 +495,11 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
           <div className="amgi-sync-last-time">
             마지막 동기화: {formatSyncTime(syncStatus?.lastSync)}
           </div>
+          {syncStatus?.mediaLastSync && (
+            <div className="amgi-sync-last-sub">
+              미디어 확인: {formatSyncTime(syncStatus.mediaLastSync)}
+            </div>
+          )}
         </div>
 
         {!isRunning && (
@@ -429,8 +518,8 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
         <div className="amgi-sync-banner amgi-sync-banner--progress" role="status">
           <div className="amgi-sync-progress-head">
             <span className="amgi-sync-progress-title">
-              {!isEink && <IconSync size={16} className="amgi-spin" />}
-              <span>동기화하는 중...</span>
+              {!isEink && <IconSync size={15} className="amgi-spin" />}
+              <span>카드 동기화 중</span>
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               {compact && onSuccess && (
@@ -453,7 +542,49 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
             </div>
           </div>
           <div className="amgi-sync-progress-text">
-            {formatSyncProgressText(syncStatus, syncProgress)}
+            {formatSyncProgressText(syncStatus, syncProgress, mediaSyncProgress)}
+          </div>
+        </div>
+      )}
+
+      {isMediaRunning && (
+        <div className="amgi-sync-banner amgi-sync-banner--media" role="status">
+          <div className="amgi-sync-progress-head">
+            <span className="amgi-sync-progress-title">
+              {!isEink && <IconSync size={15} className="amgi-spin" />}
+              <span>미디어 백그라운드 동기화</span>
+            </span>
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-secondary amgi-btn-sm"
+              onClick={() => void handleAbortMedia()}
+              disabled={mediaAborting}
+            >
+              {mediaAborting ? '중단 중...' : '중단'}
+            </button>
+          </div>
+          <div className="amgi-sync-media-counters">
+            <div className="amgi-sync-media-stat">
+              <span className="amgi-sync-media-stat-label">확인</span>
+              <span className="amgi-sync-media-stat-val tabular">
+                {mediaCheckedCount !== null ? mediaCheckedCount.toLocaleString('ko-KR') : '—'}
+              </span>
+            </div>
+            <div className="amgi-sync-media-stat">
+              <span className="amgi-sync-media-stat-label">추가</span>
+              <span className="amgi-sync-media-stat-val tabular">
+                {mediaAddedCount !== null ? mediaAddedCount.toLocaleString('ko-KR') : '0'}
+              </span>
+            </div>
+            <div className="amgi-sync-media-stat">
+              <span className="amgi-sync-media-stat-label">삭제</span>
+              <span className="amgi-sync-media-stat-val tabular">
+                {mediaRemovedCount !== null ? mediaRemovedCount.toLocaleString('ko-KR') : '0'}
+              </span>
+            </div>
+          </div>
+          <div className="amgi-sync-media-note">
+            카드는 바로 학습할 수 있으며, 사진·음성은 뒤에서 조용히 맞춰집니다.
           </div>
         </div>
       )}
@@ -481,6 +612,24 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
         </div>
       )}
 
+      {!isMediaRunning && syncStatus?.mediaError && (
+        <div className="amgi-sync-banner amgi-sync-banner--warn" role="alert">
+          <div>
+            <strong>미디어 동기화 중 문제가 생겼어요</strong>
+          </div>
+          <div>{syncStatus.mediaError}</div>
+          <button
+            type="button"
+            className="amgi-btn amgi-btn-secondary amgi-btn-sm"
+            onClick={() => startMediaSync()}
+            disabled={isRunning}
+            style={{ alignSelf: 'flex-start' }}
+          >
+            미디어 다시 시도
+          </button>
+        </div>
+      )}
+
       <div className="amgi-sync-rows">
         <SettingRow
           label="자동 동기화"
@@ -496,7 +645,7 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
         />
         <SettingRow
           label="사진·소리 함께 맞추기"
-          description="카드 속 이미지와 음성을 함께 동기화합니다"
+          description="카드 속 이미지와 음성을 백그라운드에서 함께 동기화합니다"
           htmlFor="pref-sync-media"
           control={
             <Switch
@@ -504,6 +653,25 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
               checked={mediaSync}
               onChange={(next) => void setPref('sync.media', next)}
             />
+          }
+        />
+        <SettingRow
+          label="미디어 지금 다시 확인"
+          description={
+            isMediaRunning
+              ? formatMediaProgressText(syncStatus, mediaSyncProgress)
+              : syncStatus?.mediaLastSync
+                ? `마지막 확인: ${formatSyncTime(syncStatus.mediaLastSync)}`
+                : '카드 속 사진과 음성을 지금 바로 점검합니다'
+          }
+          onClick={() => startMediaSync()}
+          disabled={isRunning || isMediaRunning}
+          control={
+            isMediaRunning ? (
+              <span className="amgi-sync-row-badge">진행 중</span>
+            ) : (
+              <IconChevronRight size={18} />
+            )
           }
         />
         <SettingRow

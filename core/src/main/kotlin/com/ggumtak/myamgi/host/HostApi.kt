@@ -46,12 +46,16 @@ class HostApi(
         "sync.status" to { _ -> sync.status() },
         "sync.login" to { a -> sync.login(a.str("user").orEmpty(), a.str("password").orEmpty(), a.str("endpoint")) },
         "sync.logout" to { _ -> sync.logout() },
-        "sync.run" to { a -> sync.run(a.str("mode") ?: "normal") },
+        "sync.run" to { a -> sync.run(a.str("mode") ?: "normal", forceMedia = a.bool("forceMedia", false)) },
         "sync.abort" to { _ -> sync.abort() },
+        "sync.mediaRun" to { _ -> sync.mediaRun() },
+        "sync.mediaAbort" to { _ -> sync.abortMedia() },
         "backup.create" to { _ -> entryJson(progress.run("backup") { backups.create("manual") }) },
         "backup.list" to { _ -> jsonOf("keep" to backups.keep(), "backups" to backups.list().map { entryJson(it) }) },
         "backup.restore" to { a ->
+            sync.abortMedia()
             val safety = progress.run("restore") { backups.restore(a.requireStr("name")) }
+            sync.invalidateMediaCache()
             jsonOf("ok" to true, "safetyBackup" to safety.name)
         },
         "import.file" to { a -> importFile(a) },
@@ -149,12 +153,14 @@ class HostApi(
                 if (!a.bool("replace", false)) {
                     jsonOf("kind" to "colpkg", "path" to file.absolutePath, "needsConfirm" to true, "route" to null)
                 } else {
+                    sync.abortMedia()
                     val safety = progress.run("import") {
                         val b = backups.create("before-colpkg-import", prune = false)
                         AnkiEngine.importColpkg(file.absolutePath)
                         backups.prune()
                         b
                     }
+                    sync.invalidateMediaCache()
                     log.info("collection replaced from $name")
                     jsonOf("kind" to "colpkg", "path" to file.absolutePath, "imported" to true, "safetyBackup" to safety.name, "route" to null)
                 }

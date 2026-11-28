@@ -41,6 +41,12 @@ import java.lang.reflect.Method
 import java.util.concurrent.ConcurrentHashMap
 
 /**
+ * Lightweight mtime snapshot of the local `collection.media` directory and `collection.media.db`
+ * database, used to detect local media changes without scanning thousands of files.
+ */
+data class MediaFingerprint(val dirMtime: Long, val dbMtime: Long)
+
+/**
  * Thread-safe singleton wrapper around official Anki 26.09.4 Rust backend.
  *
  * IMPORTANT: `Backend.isOpen()` only checks if the Rust backend handle is alive,
@@ -530,6 +536,37 @@ object AnkiEngine {
 
     fun mediaSyncStatus(): MediaSyncStatusResponse? =
         liveBackend()?.let { b -> runCatching { b.mediaSyncStatus() }.getOrNull() }
+
+    /**
+     * Lock-free media sync status that propagates real backend/network/auth errors from Rust's
+     * background media sync thread instead of swallowing them. Returns null only if no backend is live.
+     */
+    fun mediaSyncStatusOrThrow(): MediaSyncStatusResponse? =
+        liveBackend()?.mediaSyncStatus()
+
+    /**
+     * Lock-free mtime fingerprint of `collection.media` and `collection.media.db` (plus `-wal` if present).
+     * Returns null if the collection directory is not configured or neither file exists yet.
+     */
+    fun mediaFingerprint(): MediaFingerprint? {
+        val dir = collectionDir ?: return null
+        val mediaDir = File(dir, "collection.media")
+        val mediaDb = File(dir, "collection.media.db")
+        val mediaDbWal = File(dir, "collection.media.db-wal")
+        val dirMtime = if (mediaDir.exists()) mediaDir.lastModified() else 0L
+        val dbMtime = maxOf(
+            if (mediaDb.exists()) mediaDb.lastModified() else 0L,
+            if (mediaDbWal.exists()) mediaDbWal.lastModified() else 0L
+        )
+        if (dirMtime <= 0L && dbMtime <= 0L) return null
+        return MediaFingerprint(dirMtime, dbMtime)
+    }
+
+    /** Asks only a running background media sync to stop, leaving collection sync untouched. */
+    fun abortMediaSync() {
+        val b = liveBackend() ?: return
+        runCatching { b.abortMediaSync() }
+    }
 
     /** Asks a running collection sync, media sync and any abortable operation to stop. */
     fun abortAll() {

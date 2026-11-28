@@ -36,11 +36,11 @@
 .amgi-stats-scope-btn {
   min-height: 44px;
   padding: 0 14px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
   border: var(--border-w) solid var(--border);
-  background: var(--surface-2);
+  background: var(--surface);
   color: var(--text-2);
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 600;
   display: inline-flex;
   align-items: center;
@@ -50,6 +50,12 @@
   white-space: nowrap;
   max-width: 100%;
   overflow: hidden;
+  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+}
+
+.amgi-stats-scope-btn:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
 }
 
 .amgi-stats-scope-btn.active {
@@ -67,6 +73,7 @@
 
 :root[data-theme="eink"] .amgi-stats-scope-btn {
   min-height: 48px;
+  border-radius: var(--radius-sm);
   background: #FFFFFF;
   color: #000000;
   border: 2px solid #000000;
@@ -103,7 +110,7 @@
 .amgi-stats-grid {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 18px;
+  gap: 16px;
 }
 
 @media (min-width: 768px) {
@@ -119,7 +126,7 @@
 .amgi-stats-card {
   background: var(--surface);
   border: var(--border-w) solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   padding: 20px;
   box-shadow: var(--shadow-sm);
   display: flex;
@@ -160,7 +167,7 @@
   align-items: center;
   padding: 4px 10px;
   border-radius: var(--radius-pill);
-  background: var(--surface-2);
+  background: var(--surface-nested);
   border: 1px solid var(--border);
   font-size: 12px;
   font-weight: 700;
@@ -197,10 +204,10 @@
 }
 
 .amgi-stats-metric-box {
-  padding: 12px 14px;
-  border-radius: var(--radius-sm);
-  border: var(--border-w) solid var(--border);
-  background: var(--surface-2);
+  padding: 13px 14px;
+  border-radius: var(--radius-md);
+  border: var(--border-w) solid var(--border-subtle);
+  background: var(--surface-nested);
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -263,8 +270,8 @@
 .amgi-heat-chip {
   padding: 6px 10px;
   border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  border: var(--border-w) solid var(--border);
+  background: var(--surface-nested);
+  border: var(--border-w) solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -710,7 +717,7 @@
 
 .amgi-maturity-inactive {
   padding-top: 8px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-subtle);
   font-size: 12px;
   font-weight: 600;
   color: var(--text-2);
@@ -729,10 +736,10 @@
 }
 
 .amgi-retention-cell {
-  padding: 10px 8px;
-  border-radius: var(--radius-sm);
-  border: var(--border-w) solid var(--border);
-  background: var(--surface-2);
+  padding: 11px 8px;
+  border-radius: var(--radius-md);
+  border: var(--border-w) solid var(--border-subtle);
+  background: var(--surface-nested);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -761,7 +768,8 @@
 .amgi-stats-official-card {
   background: var(--surface);
   border: var(--border-w) solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
   padding: 18px 20px;
   display: flex;
   align-items: center;
