@@ -17,10 +17,10 @@
       }
 
       html.night-mode {
-        --canvas: #141923;
-        --canvas-elevated: #1C2333;
-        --fg: #F2F5FA;
-        --border: #252E3F;
+        --canvas: #1B1D22;
+        --canvas-elevated: #25282E;
+        --fg: #F2F4F6;
+        --border: rgba(255, 255, 255, 0.08);
       }
 
       html {
@@ -28,7 +28,7 @@
         padding: 0;
         overflow-x: clip;
         background-color: #ffffff;
-        color: #111827;
+        color: #191f28;
         -webkit-text-size-adjust: 100%;
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
@@ -36,12 +36,12 @@
 
       body {
         margin: 0;
-        padding: 32px 22px 44px;
+        padding: 28px 20px 40px;
         box-sizing: border-box;
         overflow-x: clip;
         background-color: #ffffff;
-        color: #111827;
-        font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", "Noto Sans CJK KR", "Noto Sans KR", system-ui, sans-serif;
+        color: #191f28;
+        font-family: "Pretendard Variable", "Pretendard", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans CJK KR", "Noto Sans KR", system-ui, sans-serif;
         font-size: calc(19px * var(--card-font-scale, 1));
         line-height: var(--card-line-height, 1.6);
         word-break: keep-all;
@@ -85,7 +85,7 @@
       }
 
       :where(.card) {
-        font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", "Noto Sans CJK KR", "Noto Sans KR", system-ui, sans-serif;
+        font-family: "Pretendard Variable", "Pretendard", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans CJK KR", "Noto Sans KR", system-ui, sans-serif;
         font-size: calc(22px * var(--card-font-scale, 1));
         line-height: var(--card-line-height, 1.6);
         text-align: center;
@@ -106,8 +106,8 @@
 
       :where(.cloze) {
         font-weight: 800;
-        color: #2f5bff;
-        background-color: rgba(47, 91, 255, 0.09);
+        color: #3182f6;
+        background-color: rgba(49, 130, 246, 0.1);
         padding: 1px 8px;
         border-radius: 7px;
       }
@@ -136,52 +136,52 @@
       :where(input#typeans) {
         width: 100%;
         max-width: 480px;
+        min-height: 48px;
         box-sizing: border-box;
         padding: 12px 15px;
         font-family: inherit;
         font-size: calc(16px * var(--card-font-scale, 1));
         line-height: 1.5;
-        color: #111827;
-        background-color: #f8fafc;
-        border: 1.5px solid #cbd5e1;
+        color: #191f28;
+        background-color: #f2f4f6;
+        border: 0;
         border-radius: 12px;
         outline: none;
-        transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+        transition: background-color 0.15s ease, box-shadow 0.15s ease;
       }
 
       :where(input#typeans:focus) {
-        border-color: #2f5bff;
         background-color: #ffffff;
-        box-shadow: 0 0 0 3px rgba(47, 91, 255, 0.12);
+        box-shadow: 0 0 0 2px #3182f6;
       }
 
       :where(.replay-button) {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 40px;
-        height: 40px;
-        min-width: 40px;
-        min-height: 40px;
+        width: 44px;
+        height: 44px;
+        min-width: 44px;
+        min-height: 44px;
         padding: 0;
         margin: 6px;
         border-radius: 999px;
-        border: 1px solid rgba(15, 23, 42, 0.10);
-        background-color: #f8fafc;
-        color: #111827;
-        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+        border: 0;
+        background-color: rgba(0, 29, 58, 0.055);
+        color: #191f28;
         text-decoration: none;
         cursor: pointer;
         vertical-align: middle;
         box-sizing: border-box;
-        transition: transform 0.12s ease, background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+        transition: transform 0.12s ease, background-color 0.15s ease, color 0.15s ease;
         -webkit-tap-highlight-color: transparent;
       }
 
-      :where(.replay-button:hover) {
-        background-color: rgba(47, 91, 255, 0.08);
-        border-color: rgba(47, 91, 255, 0.28);
-        color: #2f5bff;
+      @media (hover: hover) {
+        :where(.replay-button:hover) {
+          background-color: rgba(49, 130, 246, 0.1);
+          color: #3182f6;
+        }
       }
 
       :where(.replay-button:active) {
@@ -203,42 +203,42 @@
         fill: currentColor;
       }
 
-      /* Dark theme — synced cleanly to #141923 card surface for zero seam */
+      /* Dark theme — synced cleanly to #1B1D22 card surface for zero seam */
       html.night-mode,
       html.night-mode body,
       body.nightMode {
-        background-color: #141923;
-        color: #f2f5fa;
+        background-color: #1b1d22;
+        color: #f2f4f6;
       }
 
       @supports not selector(::-webkit-scrollbar) {
         html.night-mode,
         html.night-mode body,
         body.nightMode {
-          scrollbar-color: rgba(242, 245, 250, 0.15) transparent;
+          scrollbar-color: rgba(242, 244, 246, 0.15) transparent;
         }
       }
 
       html.night-mode::-webkit-scrollbar-thumb,
       html.night-mode body::-webkit-scrollbar-thumb,
       body.nightMode::-webkit-scrollbar-thumb {
-        background: rgba(242, 245, 250, 0.15);
+        background: rgba(242, 244, 246, 0.15);
       }
 
       html.night-mode::-webkit-scrollbar-thumb:hover,
       html.night-mode body::-webkit-scrollbar-thumb:hover,
       body.nightMode::-webkit-scrollbar-thumb:hover {
-        background: rgba(242, 245, 250, 0.30);
+        background: rgba(242, 244, 246, 0.30);
       }
 
       :where(html.night-mode .card, body.nightMode .card) {
-        background-color: #141923;
-        color: #f2f5fa;
+        background-color: #1b1d22;
+        color: #f2f4f6;
       }
 
       :where(html.night-mode .cloze, body.nightMode .cloze) {
-        color: #6c9eff;
-        background-color: rgba(108, 158, 255, 0.14);
+        color: #5aa2ff;
+        background-color: rgba(78, 155, 255, 0.15);
       }
 
       html.night-mode hr:where(#answer),
@@ -247,35 +247,35 @@
         background: linear-gradient(
           90deg,
           transparent 0%,
-          rgba(255, 255, 255, 0.16) 16%,
-          rgba(255, 255, 255, 0.16) 84%,
+          rgba(255, 255, 255, 0.14) 16%,
+          rgba(255, 255, 255, 0.14) 84%,
           transparent 100%
         );
       }
 
       :where(html.night-mode input#typeans, body.nightMode input#typeans) {
-        color: #f2f5fa;
-        background-color: #1c2333;
-        border-color: #2e3a50;
+        color: #f2f4f6;
+        background-color: rgba(255, 255, 255, 0.07);
+        border: 0;
       }
 
       :where(html.night-mode input#typeans:focus, body.nightMode input#typeans:focus) {
-        border-color: #6c9eff;
-        background-color: #171d2b;
-        box-shadow: 0 0 0 3px rgba(108, 158, 255, 0.16);
+        background-color: #25282e;
+        box-shadow: 0 0 0 2px #3f8cff;
       }
 
       :where(html.night-mode .replay-button, body.nightMode .replay-button) {
-        border-color: rgba(242, 245, 250, 0.14);
-        background-color: rgba(242, 245, 250, 0.06);
-        color: #f2f5fa;
+        border: 0;
+        background-color: rgba(255, 255, 255, 0.07);
+        color: #f2f4f6;
         box-shadow: none;
       }
 
-      :where(html.night-mode .replay-button:hover, body.nightMode .replay-button:hover) {
-        background-color: rgba(108, 158, 255, 0.16);
-        border-color: rgba(108, 158, 255, 0.36);
-        color: #6c9eff;
+      @media (hover: hover) {
+        :where(html.night-mode .replay-button:hover, body.nightMode .replay-button:hover) {
+          background-color: rgba(78, 155, 255, 0.15);
+          color: #5aa2ff;
+        }
       }
 
       /* Touch & stylus devices: completely hide Chromium scrollbar for distraction-free reading */
@@ -453,6 +453,7 @@
           lineHeight: 1.55,
           tapToFlip: true,
           hanjaEnabled: true,
+          forwardKeys: false,
           side: 'question',
           bodyClass: 'card',
         };
@@ -473,14 +474,84 @@
           '[contenteditable]',
         ].join(',');
 
+        var lastInputFocused = false;
+
+        function getTargetOrigin() {
+          try {
+            if (window.location && window.location.origin && window.location.origin !== 'null') {
+              return window.location.origin;
+            }
+          } catch (_) {
+            // Ignore location access errors
+          }
+          return '*';
+        }
+
         function postToParent(payload) {
           try {
             if (window.parent && window.parent !== window) {
-              window.parent.postMessage(payload, '*');
+              window.parent.postMessage(payload, getTargetOrigin());
             }
           } catch (_) {
             // Ignore cross-origin postMessage errors
           }
+        }
+
+        function isEditableElement(el) {
+          if (!el || el.nodeType !== 1) return false;
+          var tag = (el.tagName || '').toLowerCase();
+          if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+            return true;
+          }
+          if (el.isContentEditable) return true;
+          if (typeof el.closest === 'function' && el.closest('[contenteditable=""], [contenteditable="true"]')) {
+            return true;
+          }
+          return false;
+        }
+
+        function reportInputFocus(focused) {
+          var next = Boolean(focused);
+          if (next === lastInputFocused) return;
+          lastInputFocused = next;
+          postToParent({ type: 'inputFocus', focused: next });
+        }
+
+        function shouldPreventDefaultForStudyKey(event) {
+          if (event.altKey) return false;
+          var key = event.key || '';
+          var code = event.code || '';
+          var hasCtrl = Boolean(event.ctrlKey || event.metaKey);
+
+          if (!hasCtrl && !event.shiftKey) {
+            if (
+              key === ' ' ||
+              key === 'Spacebar' ||
+              code === 'Space' ||
+              key === 'Enter' ||
+              key === 'PageUp' ||
+              key === 'PageDown' ||
+              key === 'ArrowLeft' ||
+              key === 'ArrowRight'
+            ) {
+              return true;
+            }
+          }
+
+          if (hasCtrl) {
+            if (
+              code === 'KeyZ' ||
+              code === 'KeyY' ||
+              key.toLowerCase() === 'z' ||
+              key.toLowerCase() === 'y' ||
+              /^[0-7]$/.test(key) ||
+              /^(?:Digit|Numpad)[0-7]$/.test(code)
+            ) {
+              return true;
+            }
+          }
+
+          return false;
         }
 
         function resolveTheme(theme) {
@@ -635,6 +706,27 @@
 
         window.pycmd = window.bridgeCommand;
 
+        // Track focus of editable inputs (e.g. #typeans) so parent/AndroidShell can pause hardware shortcuts
+        document.addEventListener(
+          'focusin',
+          function (event) {
+            reportInputFocus(isEditableElement(event.target));
+          },
+          true
+        );
+
+        document.addEventListener(
+          'focusout',
+          function (event) {
+            reportInputFocus(isEditableElement(event.relatedTarget));
+          },
+          true
+        );
+
+        window.addEventListener('blur', function () {
+          reportInputFocus(false);
+        });
+
         // Intercept hanja lookup links and .replay-button / playsound: clicks in capture phase
         document.addEventListener(
           'click',
@@ -666,6 +758,7 @@
               if (tag || soundEl.matches('.replay-button, a[href^="playsound:"]')) {
                 event.preventDefault();
                 event.stopPropagation();
+                if (typeof soundEl.blur === 'function') soundEl.blur();
                 postToParent({ type: 'playSound', tag: tag });
                 return;
               }
@@ -674,16 +767,48 @@
           true
         );
 
-        // Also handle #typeans Enter even if a deck template didn't bind onkeypress="_typeAnsPress()"
+        // Handle #typeans Enter (with Korean IME guard) and forward non-editable study keys to parent
         document.addEventListener(
           'keydown',
           function (event) {
+            if (event.isComposing || event.keyCode === 229) return;
             var target = event.target;
-            if (target && target.id === 'typeans' && event.key === 'Enter' && !event.isComposing) {
+            if (target && target.id === 'typeans' && event.key === 'Enter') {
               event.preventDefault();
               event.stopPropagation();
               emitTypedAnswer(target.value || '');
+              return;
             }
+
+            if (!state.forwardKeys) return;
+            if (event.repeat) return;
+            if (isEditableElement(target)) return;
+            // Let Space/Enter activate focused interactive controls inside the card (links, replay buttons).
+            if (
+              (event.key === ' ' || event.key === 'Enter' || event.code === 'Space') &&
+              target &&
+              typeof target.closest === 'function' &&
+              target.closest('button, a[href], [role="button"], summary')
+            ) {
+              return;
+            }
+            // Allow vertical arrow keys to scroll the card natively
+            if (event.key === 'ArrowUp' || event.key === 'ArrowDown') return;
+
+            if (shouldPreventDefaultForStudyKey(event)) {
+              event.preventDefault();
+            }
+
+            postToParent({
+              type: 'keyDown',
+              key: event.key || '',
+              code: event.code || '',
+              shift: Boolean(event.shiftKey),
+              ctrl: Boolean(event.ctrlKey),
+              meta: Boolean(event.metaKey),
+              alt: Boolean(event.altKey),
+              repeat: Boolean(event.repeat),
+            });
           },
           true
         );
@@ -785,6 +910,9 @@
           if (typeof msg.hanjaEnabled === 'boolean') {
             state.hanjaEnabled = msg.hanjaEnabled;
           }
+          if (typeof msg.forwardKeys === 'boolean') {
+            state.forwardKeys = msg.forwardKeys;
+          }
           if (msg.theme !== undefined) {
             applyTheme(msg.theme);
           } else {
@@ -811,9 +939,13 @@
           };
 
           var runAfterUpdate = function () {
+            reportInputFocus(isEditableElement(document.activeElement));
             triggerHanjaTap();
             // Schedule a post-render scan after reviewer.js finishes its queued DOM update
-            setTimeout(triggerHanjaTap, 0);
+            setTimeout(function () {
+              reportInputFocus(isEditableElement(document.activeElement));
+              triggerHanjaTap();
+            }, 0);
             if (state.side === 'answer') {
               setTimeout(resetShortCardScroll, 0);
             }
@@ -826,9 +958,6 @@
               window.onShownHook.push(resetShortCardScroll);
             }
             window._showAnswer(html, nextBodyClass);
-            if (Array.isArray(window.onShownHook)) {
-              window.onShownHook.push(resetShortCardScroll);
-            }
             setTimeout(resetShortCardScroll, 0);
             runAfterUpdate();
           } else if (typeof window._showQuestion === 'function') {
@@ -846,6 +975,10 @@
         }
 
         window.addEventListener('message', function (event) {
+          if (event.source !== window.parent) return;
+          var myOrigin = getTargetOrigin();
+          if (myOrigin !== '*' && event.origin && event.origin !== myOrigin) return;
+
           var msg = event && event.data;
           if (!msg || typeof msg !== 'object') return;
 
@@ -861,6 +994,9 @@
               break;
             case 'setLineHeight':
               applyLineHeight(msg.lineHeight);
+              break;
+            case 'setForwardKeys':
+              state.forwardKeys = Boolean(msg.enabled);
               break;
             case 'hanjaKey': {
               var fnName =

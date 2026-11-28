@@ -80,6 +80,7 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
   const [renameFieldIdx, setRenameFieldIdx] = useState<number | null>(null);
   const [renameFieldInput, setRenameFieldInput] = useState('');
   const [optionFieldIdx, setOptionFieldIdx] = useState<number | null>(null);
+  const [fieldFontSizeDraft, setFieldFontSizeDraft] = useState('20');
   const [deleteFieldIdx, setDeleteFieldIdx] = useState<number | null>(null);
 
   // Template modals
@@ -89,12 +90,15 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
   const [renameTplInput, setRenameTplInput] = useState('');
   const [deleteTplOpen, setDeleteTplOpen] = useState(false);
 
-  // Discard confirm
+  // Discard & schema-change full-sync warning confirms
   const [discardOpen, setDiscardOpen] = useState(false);
+  const [schemaWarnOpen, setSchemaWarnOpen] = useState(false);
 
-  // Code editor ref + live preview state
+  // Code editor ref + live preview state + out-of-order request guards
   const codeEditorRef = useRef<ChunkedCodeEditorHandle | null>(null);
   const frameRef = useRef<CardFrameHandle | null>(null);
+  const loadSeqRef = useRef(0);
+  const previewSeqRef = useRef(0);
   const [showMobilePreview, setShowMobilePreview] = useState(false);
   const [previewSide, setPreviewSide] = useState<'question' | 'answer'>('question');
   const [sampleNote, setSampleNote] = useState<AnkiTypes.notes.Note.$Properties | null>(
@@ -103,64 +107,78 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
   const [rendered, setRendered] = useState<anki.RenderCardResponse | null>(null);
   const [codeDocVersion, setCodeDocVersion] = useState(0);
 
-  const loadNotetype = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const nt = await anki.getNotetype(notetypeId);
-      setNotetype(nt);
-      setFields(
-        (nt.fields ?? []).map((f) => ({
-          ord: f.ord ? { val: f.ord.val } : undefined,
-          name: f.name,
-          config: f.config ? { ...f.config } : { fontName: 'Arial', fontSize: 20 },
-        }))
-      );
-      setTemplates(
-        (nt.templates ?? []).map((t) => ({
-          ord: t.ord ? { val: t.ord.val } : undefined,
-          name: t.name,
-          mtimeSecs: t.mtimeSecs,
-          usn: t.usn,
-          config: t.config ? { ...t.config } : { qFormat: '', aFormat: '' },
-        }))
-      );
-      setCssText(nt.config?.css ?? '');
-      setSelectedTplIdx(0);
-      setDirty(false);
-      setCodeDocVersion((v) => v + 1);
+  const loadNotetype = useCallback(
+    async (opts?: { quiet?: boolean }) => {
+      const seq = ++loadSeqRef.current;
+      if (!opts?.quiet) {
+        setLoading(true);
+      }
+      setError(null);
+      try {
+        const nt = await anki.getNotetype(notetypeId);
+        if (seq !== loadSeqRef.current) return;
+        setNotetype(nt);
+        setFields(
+          (nt.fields ?? []).map((f) => ({
+            ord: f.ord ? { val: f.ord.val } : undefined,
+            name: f.name,
+            config: f.config ? { ...f.config } : { fontName: 'Arial', fontSize: 20 },
+          }))
+        );
+        setTemplates(
+          (nt.templates ?? []).map((t) => ({
+            ord: t.ord ? { val: t.ord.val } : undefined,
+            name: t.name,
+            mtimeSecs: t.mtimeSecs,
+            usn: t.usn,
+            config: t.config ? { ...t.config } : { qFormat: '', aFormat: '' },
+          }))
+        );
+        setCssText(nt.config?.css ?? '');
+        setSelectedTplIdx((prev) =>
+          Math.min(prev, Math.max(0, (nt.templates?.length ?? 1) - 1))
+        );
+        setDirty(false);
+        setCodeDocVersion((v) => v + 1);
 
-      // Load one real sample note of this notetype for live preview if available
-      const nids = await anki.searchNotes(`mid:${notetypeId}`).catch(() => []);
-      if (nids.length > 0) {
-        const realNote = await anki.getNote(nids[0]).catch(() => null);
-        if (realNote) {
-          setSampleNote(realNote);
-          return;
+        // Load one real sample note of this notetype for live preview if available
+        const nids = await anki.searchNotes(`mid:${notetypeId}`).catch(() => []);
+        if (seq !== loadSeqRef.current) return;
+        if (nids.length > 0) {
+          const realNote = await anki.getNote(nids[0]).catch(() => null);
+          if (seq !== loadSeqRef.current) return;
+          if (realNote) {
+            setSampleNote(realNote);
+            return;
+          }
+        }
+        const isCloze = nt.config?.kind === anki.NotetypeKind.KIND_CLOZE;
+        setSampleNote({
+          id: 0,
+          guid: 'sample',
+          notetypeId: nt.id,
+          mtimeSecs: 0,
+          usn: 0,
+          tags: ['예시'],
+          fields: (nt.fields ?? []).map((f, idx) =>
+            isCloze && idx === 0
+              ? '예시 {{c1::빈칸}} 문장입니다.'
+              : `${f.name || `필드 ${idx + 1}`} 예시 내용`
+          ),
+        });
+      } catch (err) {
+        if (seq !== loadSeqRef.current) return;
+        setError(
+          err instanceof Error ? err.message : '노트 유형을 불러오지 못했습니다.'
+        );
+      } finally {
+        if (seq === loadSeqRef.current) {
+          setLoading(false);
         }
       }
-      const isCloze = nt.config?.kind === anki.NotetypeKind.KIND_CLOZE;
-      setSampleNote({
-        id: 0,
-        guid: 'sample',
-        notetypeId: nt.id,
-        mtimeSecs: 0,
-        usn: 0,
-        tags: ['예시'],
-        fields: (nt.fields ?? []).map((f, idx) =>
-          isCloze && idx === 0
-            ? '예시 {{c1::빈칸}} 문장입니다.'
-            : `${f.name || `필드 ${idx + 1}`} 예시 내용`
-        ),
-      });
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : '노트 유형을 불러오지 못했습니다.'
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [notetypeId]);
+    },
+    [notetypeId]
+  );
 
   useEffect(() => {
     void loadNotetype();
@@ -249,6 +267,8 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
         showMobilePreview;
       if (!shouldShow) return;
 
+      const seq = ++previewSeqRef.current;
+
       let nextCss = cssText;
       let tplConfig = { ...(activeTemplate.config ?? {}) };
       if (overrideText !== undefined) {
@@ -282,6 +302,8 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
           true,
           false
         );
+        // Guard against out-of-order async preview renders overwriting newer keystrokes.
+        if (seq !== previewSeqRef.current) return;
         setRendered({
           questionNodes: res.questionNodes,
           answerNodes: res.answerNodes,
@@ -325,7 +347,34 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
     });
   }, [rendered, previewSide, resolvedTheme]);
 
-  const handleSave = async () => {
+  // Detect schema changes (field/template add, remove, or reorder) that force a full sync in Anki.
+  const schemaChangeInfo = useMemo(() => {
+    if (!notetype) return { requiresFullSync: false, hasDeletion: false };
+    const origFieldOrds = (notetype.fields ?? []).map((f, idx) => f.ord?.val ?? idx);
+    const curFieldOrds = fields.map((f, idx) => f.ord?.val ?? idx);
+    const origTplOrds = (notetype.templates ?? []).map((t, idx) => t.ord?.val ?? idx);
+    const curTplOrds = templates.map((t, idx) => t.ord?.val ?? idx);
+
+    const fieldsChanged =
+      origFieldOrds.length !== curFieldOrds.length ||
+      origFieldOrds.some((v, i) => v !== curFieldOrds[i]);
+    const templatesChanged =
+      origTplOrds.length !== curTplOrds.length ||
+      origTplOrds.some((v, i) => v !== curTplOrds[i]);
+
+    const curFieldSet = new Set(curFieldOrds);
+    const curTplSet = new Set(curTplOrds);
+    const hasDeletion =
+      origFieldOrds.some((ord) => !curFieldSet.has(ord)) ||
+      origTplOrds.some((ord) => !curTplSet.has(ord));
+
+    return {
+      requiresFullSync: fieldsChanged || templatesChanged,
+      hasDeletion,
+    };
+  }, [notetype, fields, templates]);
+
+  const performSave = async () => {
     if (!notetype || saving) return;
     setSaving(true);
     try {
@@ -361,10 +410,11 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
         templates: nextTemplates,
       };
       await anki.updateNotetype(payload);
+      setSchemaWarnOpen(false);
       bumpCollection();
       setDirty(false);
       showToast('노트 유형 변경 사항을 저장했습니다.', 'success');
-      await loadNotetype();
+      await loadNotetype({ quiet: true });
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : '노트 유형을 저장하지 못했습니다.',
@@ -373,6 +423,15 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSaveClick = () => {
+    if (!notetype || saving) return;
+    if (schemaChangeInfo.requiresFullSync) {
+      setSchemaWarnOpen(true);
+      return;
+    }
+    void performSave();
   };
 
   // --- Field operations (preserve each field's original ord!) ---
@@ -571,10 +630,7 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
             type="button"
             className="amgi-btn amgi-btn-ghost amgi-btn-icon"
             aria-label="뒤로 가기"
-            onClick={() => {
-              if (dirty) setDiscardOpen(true);
-              else goBack('#/notetypes');
-            }}
+            onClick={() => goBack('#/notetypes')}
           >
             <IconArrowLeft size={20} />
           </button>
@@ -602,7 +658,7 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
             type="button"
             disabled={saving}
             className="amgi-btn amgi-btn-primary amgi-btn-sm"
-            onClick={() => void handleSave()}
+            onClick={handleSaveClick}
           >
             <IconCheck size={16} />
             <span>{saving ? '저장 중...' : '저장'}</span>
@@ -705,7 +761,10 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
                 <button
                   type="button"
                   className="amgi-btn amgi-btn-secondary amgi-btn-sm"
-                  onClick={() => setOptionFieldIdx(idx)}
+                  onClick={() => {
+                    setFieldFontSizeDraft(String(f.config?.fontSize ?? 20));
+                    setOptionFieldIdx(idx);
+                  }}
                 >
                   옵션
                 </button>
@@ -977,13 +1036,51 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
       {/* Field Options Modal */}
       <SheetOrDialog
         open={editingOptionField !== null}
-        onClose={() => setOptionFieldIdx(null)}
+        onClose={() => {
+          if (optionFieldIdx !== null) {
+            const fallback = editingOptionField?.config?.fontSize ?? 20;
+            const parsed = Number(fieldFontSizeDraft.trim());
+            const committed = Number.isFinite(parsed) && fieldFontSizeDraft.trim() !== ''
+              ? Math.max(8, Math.min(72, Math.round(parsed)))
+              : fallback;
+            if (committed !== fallback) {
+              setFields((prev) =>
+                prev.map((f, idx) =>
+                  idx === optionFieldIdx
+                    ? { ...f, config: { ...(f.config ?? {}), fontSize: committed } }
+                    : f
+                )
+              );
+              setDirty(true);
+            }
+          }
+          setOptionFieldIdx(null);
+        }}
         title={`필드 옵션: ${editingOptionField?.name ?? ''}`}
         footer={
           <button
             type="button"
             className="amgi-btn amgi-btn-primary"
-            onClick={() => setOptionFieldIdx(null)}
+            onClick={() => {
+              if (optionFieldIdx !== null) {
+                const fallback = editingOptionField?.config?.fontSize ?? 20;
+                const parsed = Number(fieldFontSizeDraft.trim());
+                const committed = Number.isFinite(parsed) && fieldFontSizeDraft.trim() !== ''
+                  ? Math.max(8, Math.min(72, Math.round(parsed)))
+                  : fallback;
+                if (committed !== fallback) {
+                  setFields((prev) =>
+                    prev.map((f, idx) =>
+                      idx === optionFieldIdx
+                        ? { ...f, config: { ...(f.config ?? {}), fontSize: committed } }
+                        : f
+                    )
+                  );
+                  setDirty(true);
+                }
+              }
+              setOptionFieldIdx(null);
+            }}
           >
             완료
           </button>
@@ -994,21 +1091,28 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
             <label className="form-field">
               <span>기본 글꼴 크기 (px)</span>
               <input
-                type="number"
-                min={8}
-                max={72}
+                type="text"
+                inputMode="numeric"
                 className="amgi-input tabular"
-                value={editingOptionField.config?.fontSize ?? 20}
+                value={fieldFontSizeDraft}
                 onChange={(e) => {
-                  const val = Math.max(8, Math.min(72, Number(e.target.value) || 20));
+                  setFieldFontSizeDraft(e.target.value);
+                  setDirty(true);
+                }}
+                onBlur={() => {
+                  const fallback = editingOptionField.config?.fontSize ?? 20;
+                  const parsed = Number(fieldFontSizeDraft.trim());
+                  const committed = Number.isFinite(parsed) && fieldFontSizeDraft.trim() !== ''
+                    ? Math.max(8, Math.min(72, Math.round(parsed)))
+                    : fallback;
+                  setFieldFontSizeDraft(String(committed));
                   setFields((prev) =>
                     prev.map((f, idx) =>
                       idx === optionFieldIdx
-                        ? { ...f, config: { ...(f.config ?? {}), fontSize: val } }
+                        ? { ...f, config: { ...(f.config ?? {}), fontSize: committed } }
                         : f
                     )
                   );
-                  setDirty(true);
                 }}
               />
             </label>
@@ -1234,7 +1338,7 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
               onClick={() => {
                 setDiscardOpen(false);
                 setDirty(false);
-                goBack('#/notetypes');
+                goBack('#/notetypes', { force: true });
               }}
             >
               버리고 나가기
@@ -1245,6 +1349,44 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
         <p className="amgi-prose" style={{ margin: 0 }}>
           저장하지 않은 변경 사항을 버리고 나갈까요?
         </p>
+      </SheetOrDialog>
+
+      {/* Schema Change Full-Sync Warning Confirm */}
+      <SheetOrDialog
+        open={schemaWarnOpen}
+        onClose={() => {
+          if (!saving) setSchemaWarnOpen(false);
+        }}
+        title="전체 동기화가 필요한 변경입니다"
+        footer={
+          <>
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-secondary"
+              disabled={saving}
+              onClick={() => setSchemaWarnOpen(false)}
+            >
+              취소
+            </button>
+            <button
+              type="button"
+              className={`amgi-btn ${
+                schemaChangeInfo.hasDeletion ? 'amgi-btn-danger' : 'amgi-btn-primary'
+              }`}
+              disabled={saving}
+              onClick={() => void performSave()}
+            >
+              {saving ? '저장 중...' : '저장하기'}
+            </button>
+          </>
+        }
+      >
+        <div className="amgi-nt-schema-warn-box">
+          필드나 카드 템플릿을 추가·삭제·순서 변경하면 다음 AnkiWeb 동기화 시{' '}
+          <strong>전체 동기화(한쪽 기록으로 통일)</strong>가 필요합니다. 다른 기기에서 아직
+          동기화하지 않은 학습 기록이 있다면 먼저 동기화한 뒤 변경하는 것이 안전합니다.
+          계속 저장할까요?
+        </div>
       </SheetOrDialog>
     </div>
   );

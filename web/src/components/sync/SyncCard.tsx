@@ -276,7 +276,6 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
     try {
       await host.syncAbort();
       await refreshSyncStatus();
-      showToast('동기화를 중단했습니다.', 'info');
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : '동기화를 중단하지 못했습니다.',
@@ -633,7 +632,7 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
       <div className="amgi-sync-rows">
         <SettingRow
           label="자동 동기화"
-          description="앱을 열거나 닫을 때 자동으로 맞춥니다"
+          description="앱을 처음 열 때 자동으로 동기화합니다"
           htmlFor="pref-sync-auto"
           control={
             <Switch
@@ -644,8 +643,8 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
           }
         />
         <SettingRow
-          label="사진·소리 함께 맞추기"
-          description="카드 속 이미지와 음성을 백그라운드에서 함께 동기화합니다"
+          label="사진·음성(미디어) 함께 맞추기"
+          description="카드에 첨부된 이미지와 녹음 파일을 백그라운드에서 함께 동기화합니다"
           htmlFor="pref-sync-media"
           control={
             <Switch
@@ -656,13 +655,13 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
           }
         />
         <SettingRow
-          label="미디어 지금 다시 확인"
+          label="사진·음성 지금 다시 확인"
           description={
             isMediaRunning
               ? formatMediaProgressText(syncStatus, mediaSyncProgress)
               : syncStatus?.mediaLastSync
                 ? `마지막 확인: ${formatSyncTime(syncStatus.mediaLastSync)}`
-                : '카드 속 사진과 음성을 지금 바로 점검합니다'
+                : '카드 속 이미지와 음성이 빠진 곳은 없는지 지금 점검합니다'
           }
           onClick={() => startMediaSync()}
           disabled={isRunning || isMediaRunning}
@@ -676,7 +675,7 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
         />
         <SettingRow
           label="계정 및 전체 동기화"
-          description="연결 끊기 또는 한쪽으로 덮어쓰기"
+          description="한쪽 기록으로 통일(전체 동기화)하거나 계정 연결을 끊습니다"
           onClick={() => setActionsMenuOpen(true)}
           disabled={isRunning}
           control={<IconChevronRight size={18} />}
@@ -692,21 +691,23 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
           {
             id: 'download',
             label: '서버에서 전체 다시 가져오기',
-            description: '현재 기기를 자동 백업한 뒤 서버 내용으로 덮어씁니다',
+            description: '이 기기를 자동 백업한 뒤 서버 기록으로 완전히 교체합니다',
             icon: <IconDownload size={18} />,
+            destructive: true,
             onSelect: () => setConfirmAction('download'),
           },
           {
             id: 'upload',
             label: '서버로 전체 다시 보내기',
-            description: '이 기기의 내용으로 AnkiWeb 서버를 덮어씁니다',
+            description: 'AnkiWeb 서버 기록을 이 기기의 내용으로 완전히 교체합니다',
             icon: <IconUpload size={18} />,
+            destructive: true,
             onSelect: () => setConfirmAction('upload'),
           },
           {
             id: 'logout',
             label: '계정 연결 끊기',
-            description: '내 기기의 카드는 지워지지 않고 연결만 해제됩니다',
+            description: '이 기기의 카드는 그대로 두고 AnkiWeb 연결만 해제합니다',
             icon: <IconTrash size={18} />,
             destructive: true,
             onSelect: () => setConfirmAction('logout'),
@@ -721,9 +722,9 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
         }}
         title={
           confirmAction === 'download'
-            ? '서버에서 전체 다시 가져올까요?'
+            ? '이 기기를 서버 내용으로 덮어쓸까요?'
             : confirmAction === 'upload'
-              ? '서버로 전체 다시 보낼까요?'
+              ? '서버를 이 기기 내용으로 덮어쓸까요?'
               : 'AnkiWeb 연결을 끊을까요?'
         }
         footer={
@@ -738,18 +739,16 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
             </button>
             <button
               type="button"
-              className={`amgi-btn ${
-                confirmAction === 'logout' ? 'amgi-btn-danger' : 'amgi-btn-primary'
-              }`}
+              className="amgi-btn amgi-btn-danger"
               disabled={confirmBusy}
               onClick={() => void handleExecuteConfirm()}
             >
               {confirmBusy
                 ? '처리 중...'
                 : confirmAction === 'download'
-                  ? '가져오기'
+                  ? '서버 내용으로 교체'
                   : confirmAction === 'upload'
-                    ? '보내기'
+                    ? '이 기기 내용으로 교체'
                     : '연결 끊기'}
             </button>
           </>
@@ -757,9 +756,9 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
       >
         <p className="amgi-prose" style={{ margin: 0 }}>
           {confirmAction === 'download' &&
-            '지금 기기의 상태를 먼저 안전 백업으로 저장한 뒤, AnkiWeb 서버의 최신 카드와 기록으로 이 기기를 덮어씁니다.'}
+            '지금 이 기기에만 남아 있는 변경 사항은 사라지고, AnkiWeb 서버의 카드와 기록으로 완전히 교체됩니다. 진행 전 이 기기 상태는 안전 백업으로 자동 저장됩니다.'}
           {confirmAction === 'upload' &&
-            '지금 이 기기에 저장된 카드와 학습 기록으로 AnkiWeb 서버 내용을 덮어씁니다. 다른 기기에만 있던 변경 사항은 사라집니다.'}
+            'AnkiWeb 서버에 저장된 카드와 학습 기록이 지금 이 기기의 내용으로 완전히 교체됩니다. 다른 기기에만 있던 변경 사항은 복구할 수 없습니다.'}
           {confirmAction === 'logout' &&
             'AnkiWeb 계정 연결만 해제합니다. 이 기기에 저장된 카드와 학습 기록은 그대로 유지됩니다.'}
         </p>

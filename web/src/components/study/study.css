@@ -1,5 +1,6 @@
 /* ==========================================================================
-   myAmgi Distraction-Free Studio Reviewer (#/study/:id)
+   myAmgi Study / Reviewer Screen (#/study/:id) — Toss-style Calm Flat UI
+   Tokens only (no hard-coded hex); light, dark, and pure B&W e-ink variants.
    ========================================================================== */
 
 .amgi-study-screen {
@@ -14,13 +15,15 @@
   padding-right: var(--safe-right);
 }
 
-/* Calm 50px Studio Top Bar (56px E-Ink) */
+/* ==========================================================================
+   Slim Top Bar (Zero overflow at 360px; pen & flag move to ⋮ below 440px)
+   ========================================================================== */
+
 .amgi-study-topbar {
   flex-shrink: 0;
-  min-height: calc(50px + var(--safe-top));
+  min-height: calc(52px + var(--safe-top));
   padding: var(--safe-top) 8px 0;
   background: var(--bg);
-  border-bottom: var(--border-w) solid var(--border-subtle, var(--border));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -29,26 +32,25 @@
 
 @media (min-width: 768px) {
   .amgi-study-topbar {
-    padding: var(--safe-top) 18px 0;
+    padding: var(--safe-top) 20px 0;
   }
 }
 
 :root[data-theme="eink"] .amgi-study-topbar {
   min-height: calc(56px + var(--safe-top));
-  height: calc(56px + var(--safe-top));
-  padding: var(--safe-top) 6px 0;
-  background: #FFFFFF;
-  border-bottom: 2px solid #000000;
+  padding: var(--safe-top) 4px 0;
+  background: var(--surface);
+  border-bottom: 2px solid var(--border);
+  gap: 4px;
 }
 
-.amgi-study-top-btn,
-.amgi-study-top-btn.amgi-btn-icon {
-  width: 42px;
-  min-width: 42px;
-  height: 42px;
+.amgi-study-top-btn {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
   padding: 0;
-  border: none;
-  border-radius: 11px;
+  border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-2);
   display: inline-flex;
@@ -56,16 +58,19 @@
   justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
-  transition: background-color 0.14s ease, color 0.14s ease, transform 0.1s ease;
+  transition: background-color 0.12s ease, color 0.12s ease;
 }
 
-.amgi-study-top-btn:hover:not(:disabled) {
-  background: var(--surface-2);
-  color: var(--text);
+@media (hover: hover) {
+  .amgi-study-top-btn:hover:not(:disabled) {
+    background: var(--fill-weak);
+    color: var(--text);
+  }
 }
 
 .amgi-study-top-btn:active:not(:disabled) {
-  transform: scale(0.94);
+  background: var(--fill-strong);
+  color: var(--text);
 }
 
 .amgi-study-top-btn:disabled {
@@ -74,7 +79,7 @@
 }
 
 .amgi-study-top-btn.is-active {
-  background: var(--primary-soft, var(--surface-2));
+  background: var(--primary-soft);
   color: var(--primary);
 }
 
@@ -82,29 +87,38 @@
   color: var(--text);
 }
 
-:root[data-theme="eink"] .amgi-study-top-btn,
-:root[data-theme="eink"] .amgi-study-top-btn.amgi-btn-icon {
-  width: 48px;
-  min-width: 48px;
-  height: 48px;
-  color: #000000;
+:root[data-theme="eink"] .amgi-study-top-btn {
+  width: 56px;
+  min-width: 56px;
+  height: 56px;
+  color: var(--text);
+  border: 2px solid transparent;
   border-radius: var(--radius-sm);
   transition: none;
 }
 
-:root[data-theme="eink"] .amgi-study-top-btn:hover:not(:disabled) {
-  background: #FFFFFF;
-  color: #000000;
-  border: 2px solid #000000;
+@media (hover: hover) {
+  :root[data-theme="eink"] .amgi-study-top-btn:hover:not(:disabled) {
+    background: var(--surface);
+    color: var(--text);
+    border-color: var(--border);
+  }
 }
 
 :root[data-theme="eink"] .amgi-study-top-btn:active:not(:disabled) {
-  transform: none;
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+:root[data-theme="eink"] .amgi-study-top-btn:disabled {
+  opacity: 1;
+  border: 2px dashed var(--border);
 }
 
 :root[data-theme="eink"] .amgi-study-top-btn.is-active {
-  background: #000000;
-  color: #FFFFFF;
+  background: var(--primary);
+  color: var(--on-primary);
+  border-color: var(--primary);
 }
 
 .amgi-study-title-group {
@@ -112,33 +126,30 @@
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .amgi-study-deck-name {
   flex: 1;
   min-width: 0;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
-  letter-spacing: -0.015em;
+  letter-spacing: -0.02em;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* Compact Refined Queue Indicators */
+/* Compact Colored Tabular Queue Counts (in top bar — never overlaps card) */
 .amgi-study-counts {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  padding: 3px 4px;
-  border-radius: var(--radius-pill);
-  background: var(--surface);
-  border: var(--border-w) solid var(--border);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .amgi-study-q-num {
@@ -146,13 +157,11 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 24px;
-  height: 22px;
-  padding: 0 7px;
+  min-width: 22px;
+  height: 24px;
+  padding: 0 6px;
   border-radius: var(--radius-pill);
   line-height: 1;
-  opacity: 0.65;
-  transition: background-color 0.16s ease, opacity 0.16s ease;
 }
 
 .amgi-study-q-new {
@@ -168,20 +177,19 @@
 }
 
 .amgi-study-q-active {
-  opacity: 1;
   font-weight: 800;
 }
 
 .amgi-study-q-new.amgi-study-q-active {
-  background: var(--count-new-bg, var(--surface-2));
+  background: var(--count-new-bg);
 }
 
 .amgi-study-q-learn.amgi-study-q-active {
-  background: var(--count-learn-bg, var(--surface-2));
+  background: var(--count-learn-bg);
 }
 
 .amgi-study-q-review.amgi-study-q-active {
-  background: var(--count-review-bg, var(--surface-2));
+  background: var(--count-review-bg);
 }
 
 .amgi-study-q-active::after {
@@ -197,20 +205,22 @@
 }
 
 :root[data-theme="eink"] .amgi-study-counts {
-  background: #FFFFFF;
-  border: 1.5px solid #000000;
-  padding: 2px 3px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1px 2px;
+  gap: 1px;
 }
 
 :root[data-theme="eink"] .amgi-study-q-num {
-  color: #000000;
-  opacity: 1;
-  transition: none;
+  color: var(--text);
+  border-radius: var(--radius-xs);
+  min-width: 20px;
+  padding: 0 4px;
 }
 
 :root[data-theme="eink"] .amgi-study-q-active {
-  background: #000000;
-  color: #FFFFFF;
+  background: var(--primary);
+  color: var(--on-primary);
 }
 
 :root[data-theme="eink"] .amgi-study-q-active::after {
@@ -224,51 +234,37 @@
   gap: 2px;
 }
 
+/* Move Pen & Flag into ⋮ overflow menu below 440px width */
 @media (max-width: 440px) {
+  .amgi-study-top-wide-only {
+    display: none;
+  }
+
   .amgi-study-topbar {
     padding: var(--safe-top) 6px 0;
     gap: 4px;
-  }
-
-  .amgi-study-top-btn,
-  .amgi-study-top-btn.amgi-btn-icon {
-    width: 36px;
-    min-width: 36px;
-    height: 38px;
   }
 
   .amgi-study-title-group {
     gap: 6px;
   }
 
-  .amgi-study-actions {
-    gap: 0;
+  .amgi-study-counts {
+    font-size: 12px;
   }
 
   .amgi-study-q-num {
     min-width: 20px;
     padding: 0 5px;
   }
-
-  :root[data-theme="eink"] .amgi-study-topbar {
-    padding: var(--safe-top) 4px 0;
-    gap: 3px;
-  }
-
-  :root[data-theme="eink"] .amgi-study-top-btn,
-  :root[data-theme="eink"] .amgi-study-top-btn.amgi-btn-icon {
-    width: 40px;
-    min-width: 40px;
-    height: 44px;
-  }
 }
 
-/* Whisper-thin 2.5px Session Progress Bar */
+/* Whisper-thin Session Progress Bar */
 .amgi-study-progress-track {
   flex-shrink: 0;
-  height: 2.5px;
+  height: 2px;
   width: 100%;
-  background: var(--surface-2);
+  background: var(--fill-weak);
   overflow: hidden;
 }
 
@@ -276,22 +272,25 @@
   height: 100%;
   background: var(--primary);
   border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
-  transition: width 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: width 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 :root[data-theme="eink"] .amgi-study-progress-track {
   height: 3px;
-  background: #FFFFFF;
-  border-bottom: 1px solid #000000;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
 
 :root[data-theme="eink"] .amgi-study-progress-fill {
-  background: #000000;
+  background: var(--primary);
   border-radius: 0;
   transition: none;
 }
 
-/* Elevated Pure Paper Card Stage (Full-Bleed Crisp White on E-Ink) */
+/* ==========================================================================
+   Maximized Card Stage (Flat Borderless Surface Card; Full-Bleed on E-Ink)
+   ========================================================================== */
+
 .amgi-study-stage {
   flex: 1;
   min-height: 0;
@@ -299,17 +298,17 @@
   display: flex;
   flex-direction: column;
   background: var(--bg);
-  padding: 10px 12px 12px;
+  padding: 8px 12px 10px;
 }
 
 @media (min-width: 768px) {
   .amgi-study-stage {
-    padding: 18px 28px 16px;
+    padding: 12px 24px 12px;
   }
 }
 
 :root[data-theme="eink"] .amgi-study-stage {
-  background: #FFFFFF;
+  background: var(--surface);
   padding: 0;
 }
 
@@ -324,30 +323,24 @@
   display: flex;
   flex-direction: column;
   background: var(--surface);
-  border: var(--border-w) solid var(--border);
-  border-radius: 20px;
-  box-shadow: var(--shadow-sm);
+  border: 0;
+  border-radius: var(--radius-lg);
+  box-shadow: none;
   overflow: hidden;
 }
 
 :root[data-theme="eink"] .amgi-study-card-shell {
   max-width: none;
-  border: none;
+  border: 0;
   border-radius: 0;
-  box-shadow: none;
-  background: #FFFFFF;
+  background: var(--surface);
 }
 
-/* Subtle 3px Rounded Flag Indicator inside Top Edge of Card Shell */
+/* In-flow Flag Indicator Bar (never overlaps card content) */
 .amgi-study-flag-stripe {
-  position: absolute;
-  top: 0;
-  left: 20px;
-  right: 20px;
+  flex-shrink: 0;
+  width: 100%;
   height: 3px;
-  border-radius: 0 0 var(--radius-pill) var(--radius-pill);
-  z-index: 6;
-  pointer-events: none;
 }
 
 .amgi-study-flag-stripe-1 { background: var(--flag-1); }
@@ -359,141 +352,111 @@
 .amgi-study-flag-stripe-7 { background: var(--flag-7); }
 
 :root[data-theme="eink"] .amgi-study-flag-stripe {
-  left: 0;
-  right: 0;
-  height: 3px;
-  border-radius: 0;
-  background: #000000;
+  height: 4px;
+  background: var(--border);
 }
 
-/* Floating Frosted-Glass Overlay Chips */
-.amgi-study-stage-overlay {
-  position: absolute;
-  top: 12px;
-  left: 14px;
-  right: 14px;
-  z-index: 5;
+/* In-flow Card Metadata Strip (audio / timer / star — never overlaps card top) */
+.amgi-study-card-meta {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  pointer-events: none;
+  padding: 10px 14px 4px;
 }
 
-.amgi-study-overlay-left,
-.amgi-study-overlay-right {
+.amgi-study-meta-left,
+.amgi-study-meta-right {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
 .amgi-audio-pill {
-  pointer-events: auto;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  min-height: 34px;
+  gap: 6px;
+  min-height: 36px;
   padding: 0 12px;
   border-radius: var(--radius-pill);
-  border: var(--border-w) solid var(--border);
-  background: var(--surface-glass);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  border: 0;
+  background: var(--fill-weak);
   color: var(--text-2);
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
-  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease, transform 0.1s ease;
+  transition: background-color 0.12s ease, color 0.12s ease;
 }
 
-.amgi-audio-pill:hover {
-  background: var(--surface);
-  border-color: var(--border-strong);
-  color: var(--text);
+@media (hover: hover) {
+  .amgi-audio-pill:hover {
+    background: var(--fill-strong);
+    color: var(--text);
+  }
 }
 
 .amgi-audio-pill:active {
-  transform: scale(0.96);
+  background: var(--fill-strong);
 }
 
 .amgi-audio-pill.is-playing {
+  background: var(--primary-soft);
   color: var(--primary);
-  border-color: var(--primary);
-  background: var(--primary-soft, var(--surface));
 }
 
 :root[data-theme="eink"] .amgi-audio-pill {
-  min-height: 44px;
-  background: #FFFFFF;
-  color: #000000;
-  border: 2px solid #000000;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  box-shadow: none;
+  min-height: 48px;
+  background: var(--surface);
+  color: var(--text);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
   transition: none;
 }
 
-:root[data-theme="eink"] .amgi-audio-pill:active {
-  transform: none;
-}
-
 :root[data-theme="eink"] .amgi-audio-pill.is-playing {
-  background: #000000;
-  color: #FFFFFF;
-  border-color: #000000;
+  background: var(--primary);
+  color: var(--on-primary);
+  border-color: var(--primary);
 }
 
 .amgi-mark-pill {
-  pointer-events: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-height: 28px;
   min-width: 28px;
-  padding: 0 8px;
+  padding: 0 7px;
   border-radius: var(--radius-pill);
-  border: var(--border-w) solid var(--border);
-  background: var(--surface-glass);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: var(--fill-weak);
   color: var(--flag-2);
-  font-size: 13px;
-  font-weight: 700;
 }
 
 :root[data-theme="eink"] .amgi-mark-pill {
-  background: #FFFFFF;
-  color: #000000;
-  border: 2px solid #000000;
-  border-radius: 4px;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  background: var(--surface);
+  color: var(--text);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
 }
 
 .amgi-timer-pill {
-  pointer-events: none;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
   min-height: 28px;
   padding: 0 10px;
   border-radius: var(--radius-pill);
-  border: var(--border-w) solid var(--border);
-  background: var(--surface-glass);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: var(--fill-weak);
   color: var(--text-2);
   font-size: 12px;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 :root[data-theme="eink"] .amgi-timer-pill {
-  background: #FFFFFF;
-  color: #000000;
-  border: 2px solid #000000;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  background: var(--surface);
+  color: var(--text);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
 }
 
 .amgi-study-frame-wrap {
@@ -512,14 +475,18 @@
   padding: 24px;
   text-align: center;
   gap: 8px;
+  font-size: 16px;
 }
 
 .amgi-study-loading-sub {
-  font-size: 13px;
-  color: var(--text-2);
+  font-size: 14px;
+  color: var(--text-3);
 }
 
-/* S-Pen & Touch Whiteboard Overlay */
+/* ==========================================================================
+   S-Pen & Touch Whiteboard Overlay
+   ========================================================================== */
+
 .amgi-wb-layer {
   position: absolute;
   inset: 0;
@@ -543,38 +510,35 @@
   z-index: 14;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
+  gap: 4px;
+  padding: 6px 8px;
   border-radius: var(--radius-pill);
-  background: var(--surface-glass);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border: var(--border-w) solid var(--border-strong);
-  box-shadow: var(--shadow-md, var(--shadow-sm));
+  background: var(--surface);
+  border: var(--border-w) solid var(--border);
+  box-shadow: var(--shadow-md);
   max-width: calc(100% - 16px);
 }
 
 :root[data-theme="eink"] .amgi-wb-toolbar {
-  background: #FFFFFF;
-  border: 2px solid #000000;
+  background: var(--surface);
+  border: 2px solid var(--border);
   border-radius: var(--radius-sm);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  box-shadow: none;
 }
 
 .amgi-wb-colors {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   padding-right: 4px;
   border-right: 1px solid var(--border);
 }
 
 .amgi-wb-swatch {
-  width: 36px;
-  height: 36px;
-  min-width: 36px;
-  min-height: 36px;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
   padding: 0;
   border: 2px solid transparent;
   border-radius: 50%;
@@ -587,22 +551,22 @@
 
 .amgi-wb-swatch.active {
   border-color: var(--primary);
-  background: var(--primary-soft, var(--surface-2));
+  background: var(--primary-soft);
 }
 
 .amgi-wb-swatch-dot {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  border: 1px solid rgba(15, 23, 42, 0.2);
+  border: 1px solid var(--border-strong);
 }
 
 .amgi-wb-btn {
-  min-width: 38px;
-  min-height: 38px;
-  padding: 0 8px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 10px;
   border-radius: var(--radius-pill);
-  border: var(--border-w) solid transparent;
+  border: 0;
   background: transparent;
   color: var(--text);
   font-size: 12px;
@@ -614,13 +578,18 @@
   cursor: pointer;
 }
 
-.amgi-wb-btn:hover:not(:disabled) {
-  background: var(--surface-2);
+@media (hover: hover) {
+  .amgi-wb-btn:hover:not(:disabled) {
+    background: var(--fill-weak);
+  }
+}
+
+.amgi-wb-btn:active:not(:disabled) {
+  background: var(--fill-strong);
 }
 
 .amgi-wb-btn.active {
-  background: var(--primary-soft, var(--surface-2));
-  border-color: var(--primary);
+  background: var(--primary-soft);
   color: var(--primary);
 }
 
@@ -635,33 +604,44 @@
 }
 
 :root[data-theme="eink"] .amgi-wb-btn {
-  min-width: 44px;
-  min-height: 44px;
-  color: #000000;
+  min-width: 48px;
+  min-height: 48px;
+  color: var(--text);
+  border: 2px solid transparent;
+  border-radius: var(--radius-sm);
 }
 
 :root[data-theme="eink"] .amgi-wb-btn.active {
-  background: #000000;
-  color: #FFFFFF;
-  border-color: #000000;
+  background: var(--primary);
+  color: var(--on-primary);
+  border-color: var(--primary);
 }
 
-/* Seamless Tactile Bottom Answer & Rating Dock */
+:root[data-theme="eink"] .amgi-wb-btn:disabled {
+  opacity: 1;
+  border: 2px dashed var(--border);
+}
+
+/* ==========================================================================
+   Bottom Answer & Rating Dock
+   Unified 56px height (64px e-ink) -> total bar ~74–84px (clears 104px toast)
+   ========================================================================== */
+
 .amgi-answer-bar {
   flex-shrink: 0;
   background: var(--bg);
-  padding: 4px 12px calc(12px + var(--safe-bottom));
+  padding: 6px 12px calc(12px + var(--safe-bottom));
 }
 
 @media (min-width: 768px) {
   .amgi-answer-bar {
-    padding: 4px 28px calc(18px + var(--safe-bottom));
+    padding: 6px 24px calc(16px + var(--safe-bottom));
   }
 }
 
 :root[data-theme="eink"] .amgi-answer-bar {
-  background: #FFFFFF;
-  border-top: 2px solid #000000;
+  background: var(--surface);
+  border-top: 2px solid var(--border);
   padding: 10px 12px calc(10px + var(--safe-bottom));
 }
 
@@ -675,33 +655,108 @@
   max-width: none;
 }
 
-/* Primary Show Answer CTA */
-.amgi-show-answer-btn {
+/* Same-height placeholder while twoButtonMode resolves from info */
+.amgi-answer-bar-placeholder {
+  height: 56px;
+  min-height: 56px;
   width: 100%;
-  min-height: 54px;
-  border-radius: 14px;
-  border: none;
+}
+
+:root[data-theme="eink"] .amgi-answer-bar-placeholder {
+  height: 64px;
+  min-height: 64px;
+}
+
+/* Question-side bottom row: primary CTA + thumb-reachable Undo chip after grading */
+.amgi-show-answer-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+}
+
+.amgi-study-undo-btn {
+  flex-shrink: 0;
+  height: 56px;
+  min-height: 56px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--fill-weak);
+  color: var(--text-2);
+  font-size: 14px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+@media (hover: hover) {
+  .amgi-study-undo-btn:hover:not(:disabled) {
+    background: var(--fill-strong);
+    color: var(--text);
+  }
+}
+
+.amgi-study-undo-btn:active:not(:disabled) {
+  background: var(--fill-strong);
+}
+
+.amgi-study-undo-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+:root[data-theme="eink"] .amgi-study-undo-btn {
+  height: 64px;
+  min-height: 64px;
+  background: var(--surface);
+  color: var(--text);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: none;
+}
+
+:root[data-theme="eink"] .amgi-study-undo-btn:disabled {
+  opacity: 1;
+  border-style: dashed;
+}
+
+/* Primary Show Answer CTA (flat Toss blue, unified 56px / 64px e-ink) */
+.amgi-show-answer-btn {
+  flex: 1;
+  width: 100%;
+  height: 56px;
+  min-height: 56px;
+  padding: 0 20px;
+  border-radius: var(--radius-md);
+  border: 0;
   font-size: 16px;
   font-weight: 700;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
   background: var(--primary);
   color: var(--on-primary);
-  box-shadow: 0 4px 16px var(--primary-glow, rgba(47, 91, 255, 0.22)), 0 1px 2px rgba(15, 23, 42, 0.08);
-  transition: transform 0.12s cubic-bezier(0.2, 0.8, 0.2, 1), background-color 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: none;
+  cursor: pointer;
+  transition: background-color 0.12s ease, transform 0.08s ease;
 }
 
-.amgi-show-answer-btn:hover:not(:disabled) {
-  background: var(--primary-hover, var(--primary));
-  box-shadow: 0 6px 20px var(--primary-glow, rgba(47, 91, 255, 0.28)), 0 2px 4px rgba(15, 23, 42, 0.08);
+@media (hover: hover) {
+  .amgi-show-answer-btn:hover:not(:disabled) {
+    background: var(--primary-hover);
+  }
 }
 
 .amgi-show-answer-btn:active:not(:disabled) {
   transform: scale(0.985);
-  box-shadow: 0 2px 8px var(--primary-glow, rgba(47, 91, 255, 0.16));
 }
 
 .amgi-show-answer-key {
@@ -711,9 +766,9 @@
   font-weight: 600;
   line-height: 1;
   padding: 3px 7px;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   border: 1px solid currentColor;
-  opacity: 0.5;
+  opacity: 0.6;
 }
 
 @media (min-width: 900px) {
@@ -724,29 +779,28 @@
 }
 
 :root[data-theme="eink"] .amgi-show-answer-btn {
-  min-height: 56px;
-  border: 2px solid #000000;
+  height: 64px;
+  min-height: 64px;
+  border: 2px solid var(--primary);
   border-radius: var(--radius-sm);
-  background: #000000;
-  color: #FFFFFF;
-  box-shadow: none;
+  background: var(--primary);
+  color: var(--on-primary);
   transition: none;
 }
 
 :root[data-theme="eink"] .amgi-show-answer-btn:active:not(:disabled) {
   transform: none;
-  box-shadow: none;
 }
 
 :root[data-theme="eink"] .amgi-show-answer-key {
   display: none;
 }
 
-/* 2-Button & 4-Button Soft-Surface Rating Cards */
+/* 2-Button & 4-Button Color-Coded Rating Grids (unified 56px / 64px e-ink) */
 .amgi-rate-grid-2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: 8px;
 }
 
 .amgi-rate-grid-2.is-left-handed .amgi-rate-again {
@@ -763,37 +817,32 @@
   gap: 8px;
 }
 
-@media (min-width: 600px) {
+@media (max-width: 380px) {
   .amgi-rate-grid-4 {
-    gap: 10px;
+    gap: 6px;
   }
 }
 
 .amgi-rate-btn {
   position: relative;
-  min-height: 60px;
-  padding: 9px 6px 10px;
-  border-radius: 14px;
-  border: var(--border-w) solid var(--border);
+  height: 56px;
+  min-height: 56px;
+  padding: 6px 6px;
+  border-radius: var(--radius-md);
+  border: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  gap: 2px;
   cursor: pointer;
   text-align: center;
   overflow: hidden;
-  transition: transform 0.12s cubic-bezier(0.2, 0.8, 0.2, 1), background-color 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
-}
-
-@media (hover: hover) {
-  .amgi-rate-btn:hover:not(:disabled) {
-    box-shadow: var(--shadow-sm);
-  }
+  transition: background-color 0.12s ease, transform 0.08s ease;
 }
 
 .amgi-rate-btn:active:not(:disabled) {
-  transform: scale(0.97);
+  transform: scale(0.975);
 }
 
 .amgi-rate-btn:disabled {
@@ -801,45 +850,19 @@
   cursor: not-allowed;
 }
 
-.amgi-rate-grid-2 .amgi-rate-btn {
-  min-height: 62px;
-  padding: 10px 12px;
-}
-
 .amgi-rate-ivl {
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
-  line-height: 1.2;
-  opacity: 0.82;
+  line-height: 1.15;
   letter-spacing: -0.01em;
-}
-
-.amgi-rate-label-row {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  max-width: 100%;
-}
-
-.amgi-rate-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-pill);
-  background: currentColor;
+  font-variant-numeric: tabular-nums;
   opacity: 0.85;
-  flex-shrink: 0;
-}
-
-.amgi-rate-grid-4 .amgi-rate-dot {
-  width: 5px;
-  height: 5px;
 }
 
 .amgi-rate-label {
   font-size: 15px;
-  font-weight: 800;
-  line-height: 1.25;
+  font-weight: 700;
+  line-height: 1.2;
   letter-spacing: -0.015em;
   white-space: nowrap;
 }
@@ -849,14 +872,6 @@
 }
 
 @media (max-width: 380px) {
-  .amgi-rate-grid-4 {
-    gap: 6px;
-  }
-
-  .amgi-rate-grid-4 .amgi-rate-label-row {
-    gap: 4px;
-  }
-
   .amgi-rate-grid-4 .amgi-rate-label {
     font-size: 14px;
   }
@@ -865,12 +880,12 @@
 .amgi-rate-key {
   display: none;
   position: absolute;
-  top: 7px;
+  top: 6px;
   right: 8px;
   font-size: 10px;
   font-family: var(--font-mono);
   font-weight: 700;
-  opacity: 0.48;
+  opacity: 0.5;
 }
 
 @media (min-width: 900px) {
@@ -879,36 +894,52 @@
   }
 }
 
+/* Soft tinted surfaces + strong semantic ink in light & dark */
 .amgi-rate-again {
   background: var(--again-bg);
   color: var(--again);
-  border-color: var(--again-border);
 }
 
 .amgi-rate-hard {
   background: var(--hard-bg);
   color: var(--hard);
-  border-color: var(--hard-border);
 }
 
 .amgi-rate-good {
   background: var(--good-bg);
   color: var(--good);
-  border-color: var(--good-border);
 }
 
 .amgi-rate-easy {
   background: var(--easy-bg);
   color: var(--easy);
-  border-color: var(--easy-border);
 }
 
-/* E-Ink Rating Contrast: crisp 2px outline for Again/Hard/Easy, solid black for Good */
+@media (hover: hover) {
+  .amgi-rate-again:hover:not(:disabled) {
+    box-shadow: inset 0 0 0 1.5px var(--again-border);
+  }
+
+  .amgi-rate-hard:hover:not(:disabled) {
+    box-shadow: inset 0 0 0 1.5px var(--hard-border);
+  }
+
+  .amgi-rate-good:hover:not(:disabled) {
+    box-shadow: inset 0 0 0 1.5px var(--good-border);
+  }
+
+  .amgi-rate-easy:hover:not(:disabled) {
+    box-shadow: inset 0 0 0 1.5px var(--easy-border);
+  }
+}
+
+/* E-Ink Rating Contrast: 64px height, 2px black border, solid black Good, zero opacity */
 :root[data-theme="eink"] .amgi-rate-btn {
-  min-height: 58px;
-  background: #FFFFFF;
-  color: #000000;
-  border: 2px solid #000000;
+  height: 64px;
+  min-height: 64px;
+  background: var(--surface);
+  color: var(--text);
+  border: 2px solid var(--border);
   border-radius: var(--radius-sm);
   box-shadow: none;
   transition: none;
@@ -918,29 +949,33 @@
   transform: none;
 }
 
-:root[data-theme="eink"] .amgi-rate-dot {
-  display: none;
+:root[data-theme="eink"] .amgi-rate-btn:disabled {
+  opacity: 1;
+  border-style: dashed;
 }
 
 :root[data-theme="eink"] .amgi-rate-ivl {
   opacity: 1;
 }
 
-:root[data-theme="eink"] .amgi-rate-grid-2 .amgi-rate-btn {
-  min-height: 60px;
+:root[data-theme="eink"] .amgi-rate-key {
+  display: none;
 }
 
 :root[data-theme="eink"] .amgi-rate-good {
-  background: #000000;
-  color: #FFFFFF;
-  border-color: #000000;
+  background: var(--primary);
+  color: var(--on-primary);
+  border-color: var(--primary);
 }
 
-/* Keyboard Shortcuts Cheat Sheet */
+/* ==========================================================================
+   Keyboard Shortcuts Cheat Sheet
+   ========================================================================== */
+
 .amgi-shortcut-grid {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .amgi-shortcut-row {
@@ -948,83 +983,67 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 9px 12px;
+  padding: 10px 14px;
   border-radius: var(--radius-sm);
-  background: var(--surface-2);
+  background: var(--fill-weak);
   font-size: 14px;
 }
 
 :root[data-theme="eink"] .amgi-shortcut-row {
-  background: #FFFFFF;
-  border: 1.5px solid #000000;
+  background: var(--surface);
+  border: 2px solid var(--border);
 }
 
-/* Congrats Empty Queue Screen */
+/* ==========================================================================
+   Toss-Style Friendly Done Screen ("오늘 학습 완료")
+   ========================================================================== */
+
 .amgi-study-congrats-wrap {
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px 16px;
+  padding: 24px 16px calc(24px + var(--safe-bottom));
   overflow-y: auto;
 }
 
 .amgi-study-congrats-card {
   width: 100%;
-  max-width: 460px;
+  max-width: 440px;
   background: var(--surface);
-  border: var(--border-w) solid var(--border);
-  border-radius: 20px;
-  box-shadow: var(--shadow-sm);
+  border: 0;
+  border-radius: var(--radius-xl);
+  box-shadow: none;
   padding: 36px 24px 28px;
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 16px;
+  gap: 18px;
 }
 
 :root[data-theme="eink"] .amgi-study-congrats-card {
-  border: 2px solid #000000;
-  border-radius: var(--radius-sm);
-  box-shadow: none;
-  background: #FFFFFF;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
 }
 
 .amgi-celebration-badge {
   width: 72px;
   height: 72px;
-  border-radius: 22px;
-  background: var(--ok-soft, var(--surface-2));
-  color: var(--ok, var(--good));
+  border-radius: var(--radius-lg);
+  background: var(--ok-soft);
+  color: var(--ok);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid transparent;
 }
 
 :root[data-theme="eink"] .amgi-celebration-badge {
-  background: #FFFFFF;
-  color: #000000;
-  border: 2px solid #000000;
-  border-radius: 12px;
-}
-
-.amgi-study-congrats-icon {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  background: var(--ok-soft, var(--surface-2));
-  color: var(--ok, var(--good));
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-:root[data-theme="eink"] .amgi-study-congrats-icon {
-  background: #FFFFFF;
-  color: #000000;
-  border: 2px solid #000000;
+  background: var(--surface);
+  color: var(--text);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
 }
 
 .amgi-study-congrats-header {
@@ -1035,16 +1054,16 @@
 }
 
 .amgi-study-congrats-title {
-  font-size: 21px;
+  font-size: 22px;
   font-weight: 800;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.025em;
   color: var(--text);
 }
 
 .amgi-study-congrats-deck {
   font-size: 14px;
   font-weight: 500;
-  color: var(--text-2);
+  color: var(--text-3);
 }
 
 .amgi-study-congrats-chips {
@@ -1055,19 +1074,19 @@
   gap: 8px;
 }
 
-.amgi-study-congrats-chip,
-.amgi-study-congrats-stats {
+.amgi-study-congrats-chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 4px;
-  padding: 7px 14px;
+  padding: 8px 14px;
   border-radius: var(--radius-pill);
-  background: var(--surface-2);
-  border: var(--border-w) solid var(--border);
+  background: var(--fill-weak);
+  border: 0;
   font-size: 13.5px;
   font-weight: 600;
   color: var(--text-2);
+  font-variant-numeric: tabular-nums;
 }
 
 .amgi-study-congrats-chip strong {
@@ -1075,20 +1094,19 @@
   font-weight: 800;
 }
 
-:root[data-theme="eink"] .amgi-study-congrats-chip,
-:root[data-theme="eink"] .amgi-study-congrats-stats {
-  background: #FFFFFF;
-  color: #000000;
-  border: 2px solid #000000;
+:root[data-theme="eink"] .amgi-study-congrats-chip {
+  background: var(--surface);
+  color: var(--text);
+  border: 2px solid var(--border);
 }
 
 :root[data-theme="eink"] .amgi-study-congrats-chip strong {
-  color: #000000;
+  color: var(--text);
 }
 
 .amgi-study-congrats-wait {
   margin: 0;
-  font-size: 13.5px;
+  font-size: 14px;
   color: var(--text-2);
 }
 
@@ -1102,18 +1120,30 @@
   justify-content: center;
   gap: 10px;
   width: 100%;
-  margin-top: 6px;
+  margin-top: 4px;
 }
 
 .amgi-study-congrats-actions .amgi-btn {
-  min-height: 50px;
-  border-radius: 14px;
+  min-height: 52px;
+  border-radius: var(--radius-md);
   flex: 1 1 150px;
 }
 
 :root[data-theme="eink"] .amgi-study-congrats-actions .amgi-btn {
   min-height: 56px;
   border-radius: var(--radius-sm);
+}
+
+.amgi-study-congrats-undo {
+  min-height: 44px;
+  font-size: 14px;
+  color: var(--text-2);
+}
+
+:root[data-theme="eink"] .amgi-study-congrats-undo {
+  min-height: 56px;
+  border: 2px solid var(--border);
+  color: var(--text);
 }
 
 @media (max-width: 420px) {
@@ -1127,7 +1157,10 @@
   }
 }
 
-/* Flag Picker Sheet */
+/* ==========================================================================
+   Flag Picker Sheet
+   ========================================================================== */
+
 .amgi-flag-list {
   display: flex;
   flex-direction: column;
@@ -1138,9 +1171,9 @@
   width: 100%;
   min-height: var(--target-min);
   padding: 10px 14px;
-  border-radius: var(--radius-md);
-  border: var(--border-w) solid var(--border);
-  background: var(--surface);
+  border-radius: var(--radius-sm);
+  border: 0;
+  background: var(--fill-weak);
   color: var(--text);
   display: flex;
   align-items: center;
@@ -1149,27 +1182,38 @@
   cursor: pointer;
   font-size: 15px;
   font-weight: 600;
-  transition: background-color 0.14s ease, border-color 0.14s ease;
+  transition: background-color 0.12s ease;
 }
 
-.amgi-flag-option:hover {
-  background: var(--surface-2);
+@media (hover: hover) {
+  .amgi-flag-option:hover {
+    background: var(--fill-strong);
+  }
+}
+
+.amgi-flag-option:active {
+  background: var(--fill-strong);
 }
 
 .amgi-flag-option.active {
-  border-color: var(--primary);
-  background: var(--primary-soft, var(--surface-2));
+  background: var(--primary-soft);
+  color: var(--primary);
 }
 
 :root[data-theme="eink"] .amgi-flag-option {
+  min-height: 56px;
+  background: var(--surface);
+  color: var(--text);
+  border: 2px solid var(--border);
   border-radius: var(--radius-sm);
   transition: none;
 }
 
 :root[data-theme="eink"] .amgi-flag-option.active {
-  background: #FFFFFF;
-  border: 2px solid #000000;
-  border-left: 5px solid #000000;
+  background: var(--surface);
+  color: var(--text);
+  border: 2px solid var(--border);
+  border-left: 5px solid var(--border);
 }
 
 .amgi-flag-option-left {
@@ -1181,7 +1225,7 @@
 .amgi-flag-shortcut {
   font-size: 12px;
   font-family: var(--font-mono);
-  color: var(--text-2);
+  color: var(--text-3);
 }
 
 /* Card Info Modal Frame */

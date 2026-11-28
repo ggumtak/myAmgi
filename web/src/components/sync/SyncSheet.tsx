@@ -25,7 +25,7 @@ export const SyncSheet: React.FC<{ open: boolean; onClose: () => void }> = ({
           className="amgi-btn amgi-btn-ghost"
           onClick={() => {
             onClose();
-            navigate('#/settings');
+            navigate('#/settings/sync');
           }}
         >
           동기화 설정 보기

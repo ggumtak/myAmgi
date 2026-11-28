@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as anki from '../../anki';
 import * as host from '../../host';
 import { useApp } from '../../context/AppContext';
 import {
   ErrorState,
   IconCheck,
+  IconChevronRight,
   IconDeck,
   IconDownload,
   IconEdit,
@@ -14,11 +15,18 @@ import {
   IconSearch,
   IconSettings,
   IconSpark,
+  IconStats,
   SheetOrDialog,
   Switch,
   useToast,
 } from '../../ui';
 import { DeckCategoryIcon, resolveDeckTheme } from './DeckBadge';
+import {
+  buildDeckSearchQuery,
+  parseClampedInt,
+  preventImeEnterSubmit,
+  sanitizeDeckHtml,
+} from './deckUtils';
 import './decks.css';
 
 export interface DeckOverviewPaneProps {
@@ -97,47 +105,6 @@ function findDeckInTree(
   return null;
 }
 
-function findCustomStudyDeckId(node: anki.DeckTreeNode): number | null {
-  const name = node.name ?? '';
-  if (node.level > 0 && node.filtered && (name.includes('맞춤') || name.includes('Custom'))) {
-    return anki.toNumber(node.deckId);
-  }
-  for (const child of node.children ?? []) {
-    const found = findCustomStudyDeckId(child as anki.DeckTreeNode);
-    if (found !== null) return found;
-  }
-  return null;
-}
-
-function sanitizeDeckHtml(rawHtml: string): string {
-  if (!rawHtml) return '';
-  try {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(rawHtml, 'text/html');
-    const badTags = doc.querySelectorAll('script, iframe, object, embed, link, meta, base, form');
-    badTags.forEach((el) => el.remove());
-
-    const all = doc.body.querySelectorAll('*');
-    all.forEach((el) => {
-      for (const attr of Array.from(el.attributes)) {
-        const name = attr.name.toLowerCase();
-        const val = attr.value.trim().toLowerCase();
-        if (name.startsWith('on')) {
-          el.removeAttribute(attr.name);
-        } else if (
-          (name === 'href' || name === 'src' || name === 'xlink:href' || name === 'action') &&
-          (val.startsWith('javascript:') || val.startsWith('data:text/html'))
-        ) {
-          el.removeAttribute(attr.name);
-        }
-      }
-    });
-    return doc.body.innerHTML;
-  } catch {
-    return rawHtml.replace(/<script[\s\S]*?<\/script>/gi, '');
-  }
-}
-
 function formatWaitKo(secs: number): string {
   const s = Math.max(0, Math.round(secs));
   if (s < 60) return `${s}초`;
@@ -156,13 +123,18 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
   const { showToast } = useToast();
 
   const [loading, setLoading] = useState(true);
+  const [loadedDeckId, setLoadedDeckId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deckInfo, setDeckInfo] = useState<FlatDeckInfo | null>(null);
   const [deckObj, setDeckObj] = useState<anki.Deck | null>(null);
   const [congrats, setCongrats] = useState<anki.CongratsInfoResponse | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
 
-  // Custom Study modal state
+  const loadSeqRef = useRef(0);
+  const startingStudyRef = useRef(false);
+  const customLoadSeqRef = useRef(0);
+
+  // Custom Study modal state (string drafts for numeric inputs so typing never snaps back)
   const [customOpen, setCustomOpen] = useState(false);
   const [customLoading, setCustomLoading] = useState(false);
   const [customDefaultsData, setCustomDefaultsData] = useState<{
@@ -173,13 +145,13 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
     tags: Array<{ name: string; include: boolean; exclude: boolean }>;
   } | null>(null);
   const [preset, setPreset] = useState<CustomStudyPreset>('newLimitDelta');
-  const [newDelta, setNewDelta] = useState(10);
-  const [reviewDelta, setReviewDelta] = useState(20);
-  const [forgotDays, setForgotDays] = useState(1);
-  const [aheadDays, setAheadDays] = useState(1);
-  const [previewDays, setPreviewDays] = useState(1);
+  const [newDeltaDraft, setNewDeltaDraft] = useState('10');
+  const [reviewDeltaDraft, setReviewDeltaDraft] = useState('20');
+  const [forgotDaysDraft, setForgotDaysDraft] = useState('1');
+  const [aheadDaysDraft, setAheadDaysDraft] = useState('1');
+  const [previewDaysDraft, setPreviewDaysDraft] = useState('1');
   const [cramKind, setCramKind] = useState<number>(0);
-  const [cramLimit, setCramLimit] = useState(100);
+  const [cramLimitDraft, setCramLimitDraft] = useState('100');
   const [includeTags, setIncludeTags] = useState<string[]>([]);
   const [excludeTags, setExcludeTags] = useState<string[]>([]);
 
@@ -187,7 +159,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
   const [filterEditOpen, setFilterEditOpen] = useState(false);
   const [filterName, setFilterName] = useState('');
   const [filterSearch, setFilterSearch] = useState('');
-  const [filterLimit, setFilterLimit] = useState(100);
+  const [filterLimitDraft, setFilterLimitDraft] = useState('100');
   const [filterOrder, setFilterOrder] = useState<number>(
     anki.FilteredSearchOrder.OLDEST_REVIEWED_FIRST
   );
@@ -213,24 +185,39 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
 
   const [refreshTick, setRefreshTick] = useState(0);
 
+  // Clear stale deck state immediately when switching to a different deck in split view
+  const prevDeckIdRef = useRef<number>(deckId);
   useEffect(() => {
+    const switchingDeck = prevDeckIdRef.current !== deckId;
+    prevDeckIdRef.current = deckId;
+
+    const seq = ++loadSeqRef.current;
     let cancelled = false;
     setLoading(true);
     setError(null);
 
+    if (switchingDeck) {
+      setDeckInfo(null);
+      setDeckObj(null);
+      setCongrats(null);
+      setMaturity(null);
+      setLoadedDeckId(null);
+    }
+
     Promise.all([anki.deckTree(), anki.getDeck(deckId)])
       .then(async ([tree, deck]) => {
-        if (cancelled) return;
+        if (cancelled || seq !== loadSeqRef.current) return;
         const found = findDeckInTree(tree, deckId);
         setDeckInfo(found);
         setDeckObj(deck);
+        setLoadedDeckId(deckId);
 
         const searchName = found?.fullName || deck?.name || '';
         if (searchName) {
           anki
-            .graphs(`deck:"${searchName}"`, 1)
+            .graphs(buildDeckSearchQuery(searchName), 1)
             .then((g) => {
-              if (cancelled || !g?.cardCounts) return;
+              if (cancelled || seq !== loadSeqRef.current || !g?.cardCounts) return;
               const cc =
                 g.cardCounts.excludingInactive ?? g.cardCounts.includingInactive;
               if (!cc) return;
@@ -247,31 +234,40 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
               });
             })
             .catch(() => {
-              if (!cancelled) setMaturity(null);
+              if (!cancelled && seq === loadSeqRef.current) setMaturity(null);
             });
+        } else {
+          setMaturity(null);
         }
 
         const dueCount = found
           ? found.newCount + found.learnCount + found.reviewCount
           : 0;
         if (dueCount === 0) {
+          // Do not mutate Anki's global currentDeck merely from browsing the overview pane.
+          // Only query congratsInfo when this deck is already the active current deck.
           try {
-            await anki.setCurrentDeck(deckId);
-            const cg = await anki.congratsInfo();
-            if (!cancelled) setCongrats(cg);
+            const current = await anki.getCurrentDeck();
+            if (cancelled || seq !== loadSeqRef.current) return;
+            if (anki.toNumber(current.id) === deckId) {
+              const cg = await anki.congratsInfo();
+              if (!cancelled && seq === loadSeqRef.current) setCongrats(cg);
+            } else {
+              setCongrats(null);
+            }
           } catch {
-            if (!cancelled) setCongrats(null);
+            if (!cancelled && seq === loadSeqRef.current) setCongrats(null);
           }
         } else {
           setCongrats(null);
         }
       })
       .catch((err: unknown) => {
-        if (cancelled) return;
+        if (cancelled || seq !== loadSeqRef.current) return;
         setError(err instanceof Error ? err.message : '덱 정보를 불러오지 못했습니다.');
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && seq === loadSeqRef.current) setLoading(false);
       });
 
     return () => {
@@ -281,7 +277,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
 
   const handleSaveDescription = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!deckObj || deckObj.filtered) return;
+    if (!deckObj || deckObj.filtered || busyAction === 'desc') return;
     setBusyAction('desc');
     try {
       await anki.updateDeck({
@@ -306,6 +302,8 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
   };
 
   const handleStartStudy = async () => {
+    if (startingStudyRef.current || busyAction === 'study') return;
+    startingStudyRef.current = true;
     setBusyAction('study');
     try {
       await anki.setCurrentDeck(deckId);
@@ -317,10 +315,14 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
       );
     } finally {
       setBusyAction(null);
+      window.setTimeout(() => {
+        startingStudyRef.current = false;
+      }, 350);
     }
   };
 
   const handleUnbury = async () => {
+    if (busyAction === 'unbury') return;
     setBusyAction('unbury');
     try {
       await anki.unburyDeck(deckId, anki.UnburyDeckMode.ALL);
@@ -338,6 +340,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
   };
 
   const handleRebuildFiltered = async () => {
+    if (busyAction === 'rebuild') return;
     setBusyAction('rebuild');
     try {
       await anki.rebuildFilteredDeck(deckId);
@@ -355,6 +358,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
   };
 
   const handleEmptyFiltered = async () => {
+    if (busyAction === 'empty') return;
     setBusyAction('empty');
     try {
       await anki.emptyFilteredDeck(deckId);
@@ -372,10 +376,12 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
   };
 
   const openCustomStudy = async () => {
+    const seq = ++customLoadSeqRef.current;
     setCustomOpen(true);
     setCustomLoading(true);
     try {
       const defaults = await anki.customStudyDefaults(deckId);
+      if (seq !== customLoadSeqRef.current) return;
       setCustomDefaultsData({
         extendNew: defaults.extendNew ?? 10,
         extendReview: defaults.extendReview ?? 20,
@@ -387,8 +393,8 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
           exclude: Boolean(t.exclude),
         })),
       });
-      setNewDelta(Math.max(1, defaults.extendNew || 10));
-      setReviewDelta(Math.max(1, defaults.extendReview || 20));
+      setNewDeltaDraft(String(Math.max(1, defaults.extendNew || 10)));
+      setReviewDeltaDraft(String(Math.max(1, defaults.extendReview || 20)));
       setIncludeTags(
         (defaults.tags ?? []).filter((t) => t.include && t.name).map((t) => t.name!)
       );
@@ -396,41 +402,59 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
         (defaults.tags ?? []).filter((t) => t.exclude && t.name).map((t) => t.name!)
       );
     } catch (err) {
+      if (seq !== customLoadSeqRef.current) return;
       showToast(
         err instanceof Error ? err.message : '맞춤 학습 기본값을 불러오지 못했습니다.',
         'error'
       );
     } finally {
-      setCustomLoading(false);
+      if (seq === customLoadSeqRef.current) {
+        setCustomLoading(false);
+      }
     }
   };
 
   const submitCustomStudy = async () => {
+    if (busyAction === 'custom') return;
+    const newDeltaVal = parseClampedInt(newDeltaDraft, 1, 9999, 10);
+    const reviewDeltaVal = parseClampedInt(reviewDeltaDraft, 1, 9999, 20);
+    const forgotDaysVal = parseClampedInt(forgotDaysDraft, 1, 365, 1);
+    const aheadDaysVal = parseClampedInt(aheadDaysDraft, 1, 365, 1);
+    const previewDaysVal = parseClampedInt(previewDaysDraft, 1, 365, 1);
+    const cramLimitVal = parseClampedInt(cramLimitDraft, 1, 9999, 100);
+
+    setNewDeltaDraft(String(newDeltaVal));
+    setReviewDeltaDraft(String(reviewDeltaVal));
+    setForgotDaysDraft(String(forgotDaysVal));
+    setAheadDaysDraft(String(aheadDaysVal));
+    setPreviewDaysDraft(String(previewDaysVal));
+    setCramLimitDraft(String(cramLimitVal));
+
     setBusyAction('custom');
     try {
       let req: Parameters<typeof anki.customStudy>[0];
       switch (preset) {
         case 'newLimitDelta':
-          req = { deckId, newLimitDelta: Math.max(1, newDelta) };
+          req = { deckId, newLimitDelta: newDeltaVal };
           break;
         case 'reviewLimitDelta':
-          req = { deckId, reviewLimitDelta: Math.max(1, reviewDelta) };
+          req = { deckId, reviewLimitDelta: reviewDeltaVal };
           break;
         case 'forgotDays':
-          req = { deckId, forgotDays: Math.max(1, forgotDays) };
+          req = { deckId, forgotDays: forgotDaysVal };
           break;
         case 'reviewAheadDays':
-          req = { deckId, reviewAheadDays: Math.max(1, aheadDays) };
+          req = { deckId, reviewAheadDays: aheadDaysVal };
           break;
         case 'previewDays':
-          req = { deckId, previewDays: Math.max(1, previewDays) };
+          req = { deckId, previewDays: previewDaysVal };
           break;
         case 'cram':
           req = {
             deckId,
             cram: {
               kind: cramKind,
-              cardLimit: Math.max(1, cramLimit),
+              cardLimit: cramLimitVal,
               tagsToInclude: includeTags,
               tagsToExclude: excludeTags,
             },
@@ -447,11 +471,11 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
         showToast('오늘 학습 한도를 늘렸습니다.', 'success');
         navigate(`#/study/${deckId}`);
       } else {
-        const tree = await anki.deckTree();
-        const filteredId = findCustomStudyDeckId(tree);
+        // Anki sets the newly created/updated custom study filtered deck as the current deck
+        const currentDeck = await anki.getCurrentDeck().catch(() => null);
+        const filteredId = currentDeck ? anki.toNumber(currentDeck.id) : 0;
         showToast('맞춤 학습 세션을 준비했습니다.', 'success');
-        if (filteredId) {
-          await anki.setCurrentDeck(filteredId);
+        if (filteredId > 0 && (Boolean(currentDeck?.filtered) || filteredId !== deckId)) {
           navigate(`#/study/${filteredId}`);
         } else {
           setRefreshTick((v) => v + 1);
@@ -473,7 +497,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
       const firstTerm = f.config?.searchTerms?.[0];
       setFilterName(f.name ?? deckInfo?.fullName ?? '맞춤 학습 덱');
       setFilterSearch(firstTerm?.search ?? '');
-      setFilterLimit(firstTerm?.limit ?? 100);
+      setFilterLimitDraft(String(firstTerm?.limit ?? 100));
       setFilterOrder(
         firstTerm?.order ?? anki.FilteredSearchOrder.OLDEST_REVIEWED_FIRST
       );
@@ -488,11 +512,15 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
   };
 
   const saveFilterCondition = async () => {
+    if (busyAction === 'filterSave') return;
     const trimmedName = filterName.trim();
     if (!trimmedName) {
       showToast('덱 이름을 입력해 주세요.', 'error');
       return;
     }
+    const clampedLimit = parseClampedInt(filterLimitDraft, 1, 9999, 100);
+    setFilterLimitDraft(String(clampedLimit));
+
     setBusyAction('filterSave');
     try {
       const existing = await anki.getOrCreateFilteredDeck(deckId);
@@ -506,7 +534,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
           searchTerms: [
             {
               search: filterSearch.trim(),
-              limit: Math.max(1, filterLimit),
+              limit: clampedLimit,
               order: filterOrder,
             },
           ],
@@ -527,6 +555,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
   };
 
   const runExport = async () => {
+    if (busyAction === 'export') return;
     setBusyAction('export');
     try {
       const res = await host.host.exportPackage({
@@ -562,20 +591,39 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
     }
   };
 
-  if (loading && !deckInfo) {
+  // Show loading skeleton when loading a newly selected deck (never display stale previous deck data)
+  if (loading && loadedDeckId !== deckId) {
     return (
       <div
         className={`amgi-overview ${standalone ? 'amgi-overview-standalone' : ''}`}
+        aria-busy="true"
+        aria-label="덱 정보를 불러오는 중"
       >
-        <div className="amgi-overview-card">
-          <div className="amgi-overview-name">불러오는 중...</div>
-          <p className="amgi-congrats-sub">덱 정보를 확인하고 있습니다.</p>
+        <div className="amgi-overview-card amgi-overview-skeleton">
+          <div className="amgi-skeleton-head">
+            <div className="amgi-skeleton-block amgi-skeleton-avatar" />
+            <div className="amgi-skeleton-title-col">
+              <div className="amgi-skeleton-block amgi-skeleton-title" />
+              <div className="amgi-skeleton-block amgi-skeleton-meta" />
+            </div>
+          </div>
+          <div className="amgi-skeleton-tiles">
+            <div className="amgi-skeleton-block amgi-skeleton-tile" />
+            <div className="amgi-skeleton-block amgi-skeleton-tile" />
+            <div className="amgi-skeleton-block amgi-skeleton-tile" />
+          </div>
+          <div className="amgi-skeleton-block amgi-skeleton-cta" />
+        </div>
+        <div className="amgi-overview-card amgi-overview-skeleton">
+          <div className="amgi-skeleton-block amgi-skeleton-row" />
+          <div className="amgi-skeleton-block amgi-skeleton-row" />
+          <div className="amgi-skeleton-block amgi-skeleton-row" />
         </div>
       </div>
     );
   }
 
-  if (error && !deckInfo) {
+  if (error && loadedDeckId !== deckId) {
     return (
       <div
         className={`amgi-overview ${standalone ? 'amgi-overview-standalone' : ''}`}
@@ -622,9 +670,9 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
               aria-hidden="true"
             >
               {isFiltered ? (
-                <IconSpark size={18} />
+                <IconSpark size={20} />
               ) : (
-                <DeckCategoryIcon deckName={displayName} size={19} />
+                <DeckCategoryIcon deckName={displayName} size={20} />
               )}
             </span>
 
@@ -647,10 +695,11 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
           {!isFiltered && (
             <button
               type="button"
-              className="amgi-btn amgi-btn-secondary amgi-btn-sm amgi-overview-settings-btn"
+              className="amgi-btn amgi-btn-secondary amgi-overview-settings-btn"
               onClick={() => navigate(`#/deck-options/${deckId}`)}
+              aria-label="덱 설정"
             >
-              <IconSettings size={15} />
+              <IconSettings size={17} />
               <span>설정</span>
             </button>
           )}
@@ -675,21 +724,21 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
               <span className="amgi-legend-dot amgi-legend-dot--new" aria-hidden="true" />
               <span>새 카드</span>
             </span>
-            <span className="amgi-stat-tile-value tabular">{newCount}</span>
+            <span className="amgi-stat-tile-value tabular">{newCount.toLocaleString()}</span>
           </div>
           <div className={`amgi-stat-tile amgi-stat-tile-learn ${learnCount === 0 ? 'is-zero' : ''}`}>
             <span className="amgi-stat-tile-label">
               <span className="amgi-legend-dot amgi-legend-dot--learn" aria-hidden="true" />
               <span>학습 중</span>
             </span>
-            <span className="amgi-stat-tile-value tabular">{learnCount}</span>
+            <span className="amgi-stat-tile-value tabular">{learnCount.toLocaleString()}</span>
           </div>
           <div className={`amgi-stat-tile amgi-stat-tile-review ${reviewCount === 0 ? 'is-zero' : ''}`}>
             <span className="amgi-stat-tile-label">
               <span className="amgi-legend-dot amgi-legend-dot--review" aria-hidden="true" />
               <span>복습</span>
             </span>
-            <span className="amgi-stat-tile-value tabular">{reviewCount}</span>
+            <span className="amgi-stat-tile-value tabular">{reviewCount.toLocaleString()}</span>
           </div>
         </div>
 
@@ -700,7 +749,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
             disabled={busyAction === 'study'}
             onClick={() => void handleStartStudy()}
           >
-            <IconPlay size={17} />
+            <IconPlay size={18} />
             <span>
               {busyAction === 'study'
                 ? '준비 중...'
@@ -711,12 +760,14 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
           <div className="amgi-congrats-box">
             <div className="amgi-congrats-head">
               <span className="amgi-congrats-check" aria-hidden="true">
-                <IconCheck size={15} />
+                <IconCheck size={16} />
               </span>
               <div className="amgi-congrats-title">
                 {isFiltered
                   ? '현재 맞춤 학습 덱이 비어 있습니다'
-                  : '오늘 이 덱의 복습을 모두 마쳤습니다'}
+                  : (deckInfo?.totalIncludingChildren ?? 0) === 0
+                    ? '아직 이 덱에 카드가 없습니다'
+                    : '오늘 이 덱의 복습을 모두 마쳤습니다'}
               </div>
             </div>
             {congrats && congrats.secsUntilNextLearn > 0 && (
@@ -740,10 +791,28 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
             <button
               type="button"
               className="amgi-btn amgi-btn-primary amgi-overview-cta"
-              onClick={() => (isFiltered ? void handleRebuildFiltered() : void openCustomStudy())}
+              onClick={() =>
+                isFiltered
+                  ? void handleRebuildFiltered()
+                  : (deckInfo?.totalIncludingChildren ?? 0) === 0
+                    ? navigate(`#/note/new?deck=${deckId}`)
+                    : void openCustomStudy()
+              }
             >
-              {isFiltered ? <IconRefresh size={17} /> : <IconSpark size={17} />}
-              <span>{isFiltered ? '다시 만들기' : '맞춤 학습'}</span>
+              {isFiltered ? (
+                <IconRefresh size={18} />
+              ) : (deckInfo?.totalIncludingChildren ?? 0) === 0 ? (
+                <IconEdit size={18} />
+              ) : (
+                <IconSpark size={18} />
+              )}
+              <span>
+                {isFiltered
+                  ? '다시 만들기'
+                  : (deckInfo?.totalIncludingChildren ?? 0) === 0
+                    ? '노트 추가하기'
+                    : '맞춤 학습'}
+              </span>
             </button>
           </div>
         )}
@@ -785,114 +854,177 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
             <div className="amgi-overview-maturity-legend tabular">
               <span className="amgi-overview-maturity-item">
                 <span className="amgi-overview-m-dot new" />
-                <span>새 {maturity.newCount}</span>
+                <span>새 {maturity.newCount.toLocaleString()}</span>
               </span>
               <span className="amgi-overview-maturity-item">
                 <span className="amgi-overview-m-dot learn" />
-                <span>학습 {maturity.learnCount}</span>
+                <span>학습 {maturity.learnCount.toLocaleString()}</span>
               </span>
               <span className="amgi-overview-maturity-item">
                 <span className="amgi-overview-m-dot young" />
-                <span>익히는 중 {maturity.youngCount}</span>
+                <span>익히는 중 {maturity.youngCount.toLocaleString()}</span>
               </span>
               <span className="amgi-overview-maturity-item">
                 <span className="amgi-overview-m-dot mature" />
-                <span>장기 기억 {maturity.matureCount}</span>
+                <span>장기 기억 {maturity.matureCount.toLocaleString()}</span>
               </span>
             </div>
           </div>
         )}
       </div>
 
-      <div className="amgi-overview-card">
+      <div className="amgi-overview-card amgi-overview-card--actions">
         <div className="amgi-overview-section-title">빠른 도구</div>
-        <div className="amgi-overview-tools">
+        <div className="amgi-overview-action-list">
           {isFiltered ? (
             <>
               <button
                 type="button"
-                className="amgi-btn amgi-btn-secondary amgi-overview-tool-btn"
+                className="amgi-overview-action-row"
                 disabled={busyAction === 'rebuild'}
                 onClick={() => void handleRebuildFiltered()}
               >
-                <IconRefresh size={16} />
-                <span>다시 만들기</span>
+                <span className="amgi-overview-action-icon" aria-hidden="true">
+                  <IconRefresh size={18} />
+                </span>
+                <span className="amgi-overview-action-text">
+                  <span className="amgi-overview-action-label">다시 만들기</span>
+                  <span className="amgi-overview-action-desc">검색 조건에 맞는 카드를 새로 모읍니다</span>
+                </span>
+                <IconChevronRight size={18} className="amgi-overview-action-arrow" />
               </button>
               <button
                 type="button"
-                className="amgi-btn amgi-btn-secondary amgi-overview-tool-btn"
+                className="amgi-overview-action-row"
                 disabled={busyAction === 'empty'}
                 onClick={() => void handleEmptyFiltered()}
               >
-                <IconDeck size={16} />
-                <span>비우기</span>
+                <span className="amgi-overview-action-icon" aria-hidden="true">
+                  <IconDeck size={18} />
+                </span>
+                <span className="amgi-overview-action-text">
+                  <span className="amgi-overview-action-label">비우기</span>
+                  <span className="amgi-overview-action-desc">모아둔 카드를 원래 덱으로 돌려보냅니다</span>
+                </span>
+                <IconChevronRight size={18} className="amgi-overview-action-arrow" />
               </button>
               <button
                 type="button"
-                className="amgi-btn amgi-btn-secondary amgi-overview-tool-btn"
+                className="amgi-overview-action-row"
                 onClick={() => void openFilterConditionEditor()}
               >
-                <IconFilter size={16} />
-                <span>조건 수정</span>
+                <span className="amgi-overview-action-icon" aria-hidden="true">
+                  <IconFilter size={18} />
+                </span>
+                <span className="amgi-overview-action-text">
+                  <span className="amgi-overview-action-label">조건 수정</span>
+                  <span className="amgi-overview-action-desc">검색식, 카드 수, 정렬 순서를 바꿉니다</span>
+                </span>
+                <IconChevronRight size={18} className="amgi-overview-action-arrow" />
               </button>
             </>
           ) : (
             <>
               <button
                 type="button"
-                className="amgi-btn amgi-btn-secondary amgi-overview-tool-btn"
+                className="amgi-overview-action-row"
                 onClick={() => void openCustomStudy()}
               >
-                <IconSpark size={16} />
-                <span>맞춤 학습</span>
+                <span className="amgi-overview-action-icon" aria-hidden="true">
+                  <IconSpark size={18} />
+                </span>
+                <span className="amgi-overview-action-text">
+                  <span className="amgi-overview-action-label">맞춤 학습</span>
+                  <span className="amgi-overview-action-desc">한도 늘리기, 틀린 카드 모으기, 미리 복습</span>
+                </span>
+                <IconChevronRight size={18} className="amgi-overview-action-arrow" />
               </button>
               <button
                 type="button"
-                className="amgi-btn amgi-btn-secondary amgi-overview-tool-btn"
+                className="amgi-overview-action-row"
                 onClick={() => navigate(`#/note/new?deck=${deckId}`)}
               >
-                <IconEdit size={16} />
-                <span>노트 추가</span>
+                <span className="amgi-overview-action-icon" aria-hidden="true">
+                  <IconEdit size={18} />
+                </span>
+                <span className="amgi-overview-action-text">
+                  <span className="amgi-overview-action-label">노트 추가</span>
+                  <span className="amgi-overview-action-desc">이 덱에 새 카드를 바로 작성합니다</span>
+                </span>
+                <IconChevronRight size={18} className="amgi-overview-action-arrow" />
               </button>
             </>
           )}
 
           <button
             type="button"
-            className="amgi-btn amgi-btn-secondary amgi-overview-tool-btn"
+            className="amgi-overview-action-row"
             onClick={() =>
-              navigate(`#/browse?q=${encodeURIComponent(`deck:"${displayName}"`)}`)
+              navigate(`#/browse?q=${encodeURIComponent(buildDeckSearchQuery(displayName))}`)
             }
           >
-            <IconSearch size={16} />
-            <span>카드 찾아보기</span>
+            <span className="amgi-overview-action-icon" aria-hidden="true">
+              <IconSearch size={18} />
+            </span>
+            <span className="amgi-overview-action-text">
+              <span className="amgi-overview-action-label">카드 찾아보기</span>
+              <span className="amgi-overview-action-desc">이 덱에 포함된 카드를 목록에서 봅니다</span>
+            </span>
+            <IconChevronRight size={18} className="amgi-overview-action-arrow" />
+          </button>
+
+          <button
+            type="button"
+            className="amgi-overview-action-row"
+            onClick={() => navigate('#/stats')}
+          >
+            <span className="amgi-overview-action-icon" aria-hidden="true">
+              <IconStats size={18} />
+            </span>
+            <span className="amgi-overview-action-text">
+              <span className="amgi-overview-action-label">학습 통계</span>
+              <span className="amgi-overview-action-desc">복습 기록과 성취도를 확인합니다</span>
+            </span>
+            <IconChevronRight size={18} className="amgi-overview-action-arrow" />
           </button>
 
           {!isFiltered && (
             <button
               type="button"
-              className="amgi-btn amgi-btn-secondary amgi-overview-tool-btn"
+              className="amgi-overview-action-row"
               onClick={() => {
-                setExportResult(null);
-                setExportOpen(true);
+                setDescDraft(rawDescription);
+                setDescEditOpen(true);
               }}
             >
-              <IconDownload size={16} />
-              <span>내보내기 (.apkg)</span>
+              <span className="amgi-overview-action-icon" aria-hidden="true">
+                <IconEdit size={18} />
+              </span>
+              <span className="amgi-overview-action-text">
+                <span className="amgi-overview-action-label">설명 편집</span>
+                <span className="amgi-overview-action-desc">덱 메모나 학습 목표를 적어둡니다</span>
+              </span>
+              <IconChevronRight size={18} className="amgi-overview-action-arrow" />
             </button>
           )}
 
           {!isFiltered && (
             <button
               type="button"
-              className="amgi-btn amgi-btn-secondary amgi-overview-tool-btn"
+              className="amgi-overview-action-row"
               onClick={() => {
-                setDescDraft(rawDescription);
-                setDescEditOpen(true);
+                setExportResult(null);
+                setExportOpen(true);
               }}
             >
-              <IconEdit size={16} />
-              <span>설명 편집</span>
+              <span className="amgi-overview-action-icon" aria-hidden="true">
+                <IconDownload size={18} />
+              </span>
+              <span className="amgi-overview-action-text">
+                <span className="amgi-overview-action-label">내보내기 (.apkg)</span>
+                <span className="amgi-overview-action-desc">다른 기기나 친구에게 공유할 파일을 만듭니다</span>
+              </span>
+              <IconChevronRight size={18} className="amgi-overview-action-arrow" />
             </button>
           )}
         </div>
@@ -988,7 +1120,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
             >
               <span className="amgi-radio-card-title">오늘 새 카드 더 공부하기</span>
               <span className="amgi-radio-card-desc">
-                더 공부 가능: {customDefaultsData?.availableNew ?? 0}장
+                더 공부 가능: {(customDefaultsData?.availableNew ?? 0).toLocaleString()}장
               </span>
             </button>
             {preset === 'newLimitDelta' && (
@@ -999,11 +1131,18 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
                 <input
                   id="cs-new-delta"
                   type="number"
+                  inputMode="numeric"
                   min={1}
                   max={9999}
                   className="amgi-input tabular"
-                  value={newDelta}
-                  onChange={(e) => setNewDelta(Number(e.target.value) || 1)}
+                  value={newDeltaDraft}
+                  onChange={(e) => setNewDeltaDraft(e.target.value)}
+                  onBlur={() =>
+                    setNewDeltaDraft(
+                      String(parseClampedInt(newDeltaDraft, 1, 9999, 10))
+                    )
+                  }
+                  onKeyDown={preventImeEnterSubmit}
                 />
               </div>
             )}
@@ -1015,7 +1154,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
             >
               <span className="amgi-radio-card-title">오늘 복습 카드 더 공부하기</span>
               <span className="amgi-radio-card-desc">
-                더 공부 가능: {customDefaultsData?.availableReview ?? 0}장
+                더 공부 가능: {(customDefaultsData?.availableReview ?? 0).toLocaleString()}장
               </span>
             </button>
             {preset === 'reviewLimitDelta' && (
@@ -1026,11 +1165,18 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
                 <input
                   id="cs-rev-delta"
                   type="number"
+                  inputMode="numeric"
                   min={1}
                   max={9999}
                   className="amgi-input tabular"
-                  value={reviewDelta}
-                  onChange={(e) => setReviewDelta(Number(e.target.value) || 1)}
+                  value={reviewDeltaDraft}
+                  onChange={(e) => setReviewDeltaDraft(e.target.value)}
+                  onBlur={() =>
+                    setReviewDeltaDraft(
+                      String(parseClampedInt(reviewDeltaDraft, 1, 9999, 20))
+                    )
+                  }
+                  onKeyDown={preventImeEnterSubmit}
                 />
               </div>
             )}
@@ -1053,11 +1199,18 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
                 <input
                   id="cs-forgot-days"
                   type="number"
+                  inputMode="numeric"
                   min={1}
                   max={365}
                   className="amgi-input tabular"
-                  value={forgotDays}
-                  onChange={(e) => setForgotDays(Number(e.target.value) || 1)}
+                  value={forgotDaysDraft}
+                  onChange={(e) => setForgotDaysDraft(e.target.value)}
+                  onBlur={() =>
+                    setForgotDaysDraft(
+                      String(parseClampedInt(forgotDaysDraft, 1, 365, 1))
+                    )
+                  }
+                  onKeyDown={preventImeEnterSubmit}
                 />
               </div>
             )}
@@ -1080,11 +1233,18 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
                 <input
                   id="cs-ahead-days"
                   type="number"
+                  inputMode="numeric"
                   min={1}
                   max={365}
                   className="amgi-input tabular"
-                  value={aheadDays}
-                  onChange={(e) => setAheadDays(Number(e.target.value) || 1)}
+                  value={aheadDaysDraft}
+                  onChange={(e) => setAheadDaysDraft(e.target.value)}
+                  onBlur={() =>
+                    setAheadDaysDraft(
+                      String(parseClampedInt(aheadDaysDraft, 1, 365, 1))
+                    )
+                  }
+                  onKeyDown={preventImeEnterSubmit}
                 />
               </div>
             )}
@@ -1107,11 +1267,18 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
                 <input
                   id="cs-preview-days"
                   type="number"
+                  inputMode="numeric"
                   min={1}
                   max={365}
                   className="amgi-input tabular"
-                  value={previewDays}
-                  onChange={(e) => setPreviewDays(Number(e.target.value) || 1)}
+                  value={previewDaysDraft}
+                  onChange={(e) => setPreviewDaysDraft(e.target.value)}
+                  onBlur={() =>
+                    setPreviewDaysDraft(
+                      String(parseClampedInt(previewDaysDraft, 1, 365, 1))
+                    )
+                  }
+                  onKeyDown={preventImeEnterSubmit}
                 />
               </div>
             )}
@@ -1151,11 +1318,18 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
                   <input
                     id="cs-cram-limit"
                     type="number"
+                    inputMode="numeric"
                     min={1}
                     max={9999}
                     className="amgi-input tabular"
-                    value={cramLimit}
-                    onChange={(e) => setCramLimit(Number(e.target.value) || 100)}
+                    value={cramLimitDraft}
+                    onChange={(e) => setCramLimitDraft(e.target.value)}
+                    onBlur={() =>
+                      setCramLimitDraft(
+                        String(parseClampedInt(cramLimitDraft, 1, 9999, 100))
+                      )
+                    }
+                    onKeyDown={preventImeEnterSubmit}
                   />
                 </div>
                 {customDefaultsData && customDefaultsData.tags.length > 0 && (
@@ -1194,13 +1368,16 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
       {/* Filtered Deck Condition Edit Modal */}
       <SheetOrDialog
         open={filterEditOpen}
-        onClose={() => setFilterEditOpen(false)}
+        onClose={() => {
+          if (busyAction !== 'filterSave') setFilterEditOpen(false);
+        }}
         title="맞춤 학습 조건 수정"
         footer={
           <>
             <button
               type="button"
               className="amgi-btn amgi-btn-secondary"
+              disabled={busyAction === 'filterSave'}
               onClick={() => setFilterEditOpen(false)}
             >
               취소
@@ -1227,6 +1404,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
               className="amgi-input"
               value={filterName}
               onChange={(e) => setFilterName(e.target.value)}
+              onKeyDown={preventImeEnterSubmit}
             />
           </div>
           <div className="amgi-field-group">
@@ -1239,6 +1417,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
               className="amgi-input"
               value={filterSearch}
               onChange={(e) => setFilterSearch(e.target.value)}
+              onKeyDown={preventImeEnterSubmit}
               placeholder='예: deck:"일본어" is:due'
             />
           </div>
@@ -1249,11 +1428,18 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
             <input
               id="fd-limit"
               type="number"
+              inputMode="numeric"
               min={1}
               max={9999}
               className="amgi-input tabular"
-              value={filterLimit}
-              onChange={(e) => setFilterLimit(Number(e.target.value) || 100)}
+              value={filterLimitDraft}
+              onChange={(e) => setFilterLimitDraft(e.target.value)}
+              onBlur={() =>
+                setFilterLimitDraft(
+                  String(parseClampedInt(filterLimitDraft, 1, 9999, 100))
+                )
+              }
+              onKeyDown={preventImeEnterSubmit}
             />
           </div>
           <div className="amgi-field-group">
@@ -1292,7 +1478,9 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
       {/* Export .apkg Modal */}
       <SheetOrDialog
         open={exportOpen}
-        onClose={() => setExportOpen(false)}
+        onClose={() => {
+          if (busyAction !== 'export') setExportOpen(false);
+        }}
         title="덱 내보내기 (.apkg)"
         subtitle={displayName}
         footer={
@@ -1328,6 +1516,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
               <button
                 type="button"
                 className="amgi-btn amgi-btn-secondary"
+                disabled={busyAction === 'export'}
                 onClick={() => setExportOpen(false)}
               >
                 취소

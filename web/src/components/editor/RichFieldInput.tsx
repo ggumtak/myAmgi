@@ -65,32 +65,133 @@ export function serializeMediaForSave(html: string): string {
   );
 }
 
+const ALLOWED_PASTE_TAGS = new Set([
+  'b',
+  'strong',
+  'i',
+  'em',
+  'u',
+  's',
+  'strike',
+  'del',
+  'sup',
+  'sub',
+  'br',
+  'p',
+  'div',
+  'ul',
+  'ol',
+  'li',
+  'a',
+  'img',
+  'code',
+  'pre',
+  'blockquote',
+  'table',
+  'thead',
+  'tbody',
+  'tr',
+  'th',
+  'td',
+  'hr',
+]);
+
+const BLOCK_UNWRAP_TAGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+
+/**
+ * Treats `<br>`-only or empty wrapper markup produced by contentEditable after deleting
+ * all text as genuinely empty `""`, while preserving fields containing images or audio.
+ */
+export function normalizeEmptyFieldHtml(html: string): string {
+  if (!html) return '';
+  if (/<(?:img|audio|video|svg|iframe|hr)\b/i.test(html) || /\[sound:/i.test(html)) {
+    return html;
+  }
+  const stripped = html
+    .replace(/<br\s*\/?>/gi, '')
+    .replace(/<\/?(?:div|p|span)\b[^>]*>/gi, '')
+    .replace(/&nbsp;/gi, '')
+    .replace(/[\u200B\uFEFF\s]+/g, '');
+  return stripped.length === 0 ? '' : html;
+}
+
+/**
+ * Strips inline styles, classes, scripts, and unsafe attributes from pasted HTML,
+ * retaining only clean minimal semantic formatting (or plain text when `stripFormatting` is true).
+ */
 export function sanitizePastedHtml(html: string, stripFormatting: boolean): string {
   if (!html) return '';
   if (typeof DOMParser === 'undefined') return html;
   const doc = new DOMParser().parseFromString(html, 'text/html');
-  const blocked = doc.querySelectorAll('script, iframe, object, embed, style, link, meta');
+  const blocked = doc.querySelectorAll(
+    'script, iframe, object, embed, style, link, meta, noscript, svg, form, input, button, textarea, select'
+  );
   blocked.forEach((el) => el.remove());
 
   if (stripFormatting) {
     return doc.body.textContent ?? '';
   }
 
-  doc.body.querySelectorAll('*').forEach((el) => {
-    for (const attr of Array.from(el.attributes)) {
-      const name = attr.name.toLowerCase();
-      if (name.startsWith('on') || name === 'srcdoc') {
-        el.removeAttribute(attr.name);
-      }
-      if (name === 'href' || name === 'src') {
-        const val = attr.value.trim().toLowerCase();
-        if (val.startsWith('javascript:') || val.startsWith('vbscript:')) {
-          el.removeAttribute(attr.name);
-        }
-      }
+  const sanitizeNode = (node: Node, outDoc: Document): Node | null => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      return outDoc.createTextNode(node.textContent ?? '');
     }
-  });
-  return doc.body.innerHTML;
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      return null;
+    }
+
+    const el = node as Element;
+    const tag = el.tagName.toLowerCase();
+
+    if (ALLOWED_PASTE_TAGS.has(tag)) {
+      const cleanEl = outDoc.createElement(tag);
+      if (tag === 'a') {
+        const href = el.getAttribute('href')?.trim() ?? '';
+        if (/^(https?:|mailto:)/i.test(href)) {
+          cleanEl.setAttribute('href', href);
+        }
+      } else if (tag === 'img') {
+        const src = el.getAttribute('src')?.trim() ?? '';
+        if (src && !/^(javascript|vbscript):/i.test(src)) {
+          cleanEl.setAttribute('src', src);
+        }
+        const alt = el.getAttribute('alt');
+        if (alt) cleanEl.setAttribute('alt', alt);
+      }
+      for (const child of Array.from(el.childNodes)) {
+        const cleanedChild = sanitizeNode(child, outDoc);
+        if (cleanedChild) cleanEl.appendChild(cleanedChild);
+      }
+      return cleanEl;
+    }
+
+    // Convert headings to clean bold block divs so structure is kept without page styles
+    if (BLOCK_UNWRAP_TAGS.has(tag)) {
+      const block = outDoc.createElement('div');
+      const strong = outDoc.createElement('b');
+      for (const child of Array.from(el.childNodes)) {
+        const cleanedChild = sanitizeNode(child, outDoc);
+        if (cleanedChild) strong.appendChild(cleanedChild);
+      }
+      block.appendChild(strong);
+      return block;
+    }
+
+    // Unwrap styled spans/fonts/containers while preserving their cleaned children
+    const frag = outDoc.createDocumentFragment();
+    for (const child of Array.from(el.childNodes)) {
+      const cleanedChild = sanitizeNode(child, outDoc);
+      if (cleanedChild) frag.appendChild(cleanedChild);
+    }
+    return frag;
+  };
+
+  const outDoc = document.implementation.createHTMLDocument('');
+  for (const child of Array.from(doc.body.childNodes)) {
+    const cleaned = sanitizeNode(child, outDoc);
+    if (cleaned) outDoc.body.appendChild(cleaned);
+  }
+  return normalizeEmptyFieldHtml(outDoc.body.innerHTML);
 }
 
 export type RichFormatCmd =
@@ -106,6 +207,7 @@ export type RichFormatCmd =
 
 export interface RichFieldInputHandle {
   focus: () => void;
+  getValue: () => string;
   execFormat: (cmd: RichFormatCmd, value?: string) => void;
   insertCloze: (clozeNumber: number) => void;
   insertMathJax: () => void;
@@ -202,13 +304,20 @@ export const RichFieldInput = forwardRef<RichFieldInputHandle, RichFieldInputPro
       }
     };
 
-    const emitEditableChange = useCallback(() => {
-      const el = editableRef.current;
-      if (!el) return;
-      const serialized = serializeMediaForSave(el.innerHTML);
-      lastSerializedRef.current = serialized;
-      onChange(serialized);
-    }, [onChange]);
+    const emitEditableChange = useCallback(
+      (clearIfEmpty = false) => {
+        const el = editableRef.current;
+        if (!el) return;
+        const serialized = normalizeEmptyFieldHtml(serializeMediaForSave(el.innerHTML));
+        if (clearIfEmpty && serialized === '' && el.innerHTML !== '') {
+          el.innerHTML = '';
+        }
+        if (serialized === lastSerializedRef.current) return;
+        lastSerializedRef.current = serialized;
+        onChange(serialized);
+      },
+      [onChange]
+    );
 
     useImperativeHandle(
       ref,
@@ -219,6 +328,15 @@ export const RichFieldInput = forwardRef<RichFieldInputHandle, RichFieldInputPro
           } else {
             editableRef.current?.focus();
           }
+        },
+        getValue() {
+          if (htmlMode && textareaRef.current) {
+            return textareaRef.current.value;
+          }
+          if (editableRef.current) {
+            return normalizeEmptyFieldHtml(serializeMediaForSave(editableRef.current.innerHTML));
+          }
+          return lastSerializedRef.current;
         },
         execFormat(cmd, arg) {
           if (htmlMode && textareaRef.current) {
@@ -429,7 +547,18 @@ export const RichFieldInput = forwardRef<RichFieldInputHandle, RichFieldInputPro
       if (html) {
         e.preventDefault();
         const clean = sanitizePastedHtml(html, false);
-        document.execCommand('insertHTML', false, clean);
+        if (clean) {
+          document.execCommand('insertHTML', false, clean);
+        } else if (plain) {
+          document.execCommand('insertText', false, plain);
+        }
+        emitEditableChange();
+        return;
+      }
+
+      if (plain) {
+        e.preventDefault();
+        document.execCommand('insertText', false, plain);
         emitEditableChange();
       }
     };
@@ -504,10 +633,10 @@ export const RichFieldInput = forwardRef<RichFieldInputHandle, RichFieldInputPro
             }}
             onKeyUp={saveSelection}
             onMouseUp={saveSelection}
-            onInput={emitEditableChange}
+            onInput={() => emitEditableChange(false)}
             onBlur={() => {
               saveSelection();
-              emitEditableChange();
+              emitEditableChange(true);
             }}
             onPaste={(e) => void handlePaste(e)}
           />

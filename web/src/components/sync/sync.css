@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Sync Card, Sync Sheet & Full Sync Dialog Styles
+   Sync Card, Sync Sheet & Full Sync Dialog Styles (Toss-like Flat + E-Ink)
    ========================================================================== */
 
 .amgi-sync-card {
@@ -25,9 +25,9 @@
 }
 
 .amgi-sync-teaser-icon {
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-sm);
   background: var(--primary-soft);
   color: var(--primary);
   display: inline-flex;
@@ -37,9 +37,9 @@
 }
 
 :root[data-theme="eink"] .amgi-sync-teaser-icon {
-  background: #FFFFFF;
-  color: #000000;
-  border: 2px solid #000000;
+  background: var(--surface);
+  color: var(--text);
+  border: 2px solid var(--border);
 }
 
 .amgi-sync-teaser-actions {
@@ -72,13 +72,34 @@
   margin: 0;
   font-size: 13px;
   line-height: 1.5;
-  color: var(--text-2);
+  color: var(--text-3);
+}
+
+:root[data-theme="eink"] .amgi-sync-card-sub {
+  color: var(--text);
 }
 
 .amgi-sync-form {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.amgi-sync-form .amgi-input {
+  background: var(--fill-weak);
+  border: 0;
+  border-radius: var(--radius-md);
+  min-height: 48px;
+}
+
+.amgi-sync-form .amgi-input:focus {
+  box-shadow: 0 0 0 2px var(--primary);
+}
+
+:root[data-theme="eink"] .amgi-sync-form .amgi-input {
+  background: var(--surface);
+  border: 2px solid var(--border);
+  min-height: 56px;
 }
 
 .amgi-sync-field {
@@ -91,7 +112,12 @@
   font-size: 13px;
   font-weight: 600;
   line-height: 1.35;
+  color: var(--text-2);
+}
+
+:root[data-theme="eink"] .amgi-sync-label {
   color: var(--text);
+  font-weight: 700;
 }
 
 .amgi-sync-pw-wrap {
@@ -106,12 +132,12 @@
 }
 
 .amgi-sync-pw-toggle {
-  min-width: 60px;
-  min-height: var(--target-min);
+  min-width: 64px;
+  min-height: 48px;
   padding: 0 12px;
-  border-radius: var(--radius-sm);
-  border: var(--border-w) solid var(--border);
-  background: var(--surface-2);
+  border-radius: var(--radius-md);
+  border: 0;
+  background: var(--fill-weak);
   color: var(--text);
   font-size: 13px;
   font-weight: 600;
@@ -124,15 +150,21 @@
   white-space: nowrap;
 }
 
-.amgi-sync-pw-toggle:hover:not(:disabled) {
-  background: var(--surface-active);
-  border-color: var(--border-strong);
+@media (hover: hover) {
+  .amgi-sync-pw-toggle:hover:not(:disabled) {
+    background: var(--fill-strong);
+  }
+}
+
+.amgi-sync-pw-toggle:active:not(:disabled) {
+  background: var(--fill-strong);
 }
 
 :root[data-theme="eink"] .amgi-sync-pw-toggle {
-  background: #FFFFFF;
-  color: #000000;
-  border: 2px solid #000000;
+  min-height: 56px;
+  background: var(--surface);
+  color: var(--text);
+  border: 2px solid var(--border);
   font-weight: 700;
 }
 
@@ -143,7 +175,7 @@
 }
 
 :root[data-theme="eink"] .amgi-sync-submit {
-  min-height: 54px;
+  min-height: 56px;
 }
 
 .amgi-sync-signup-row {
@@ -152,17 +184,21 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 8px;
-  padding-top: 4px;
-  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
 }
 
 :root[data-theme="eink"] .amgi-sync-signup-row {
-  border-top: 2px solid #000000;
+  border-top: 2px solid var(--border);
 }
 
 .amgi-sync-signup-prompt {
   font-size: 13px;
-  color: var(--text-2);
+  color: var(--text-3);
+}
+
+:root[data-theme="eink"] .amgi-sync-signup-prompt {
+  color: var(--text);
 }
 
 .amgi-sync-signup-btn {
@@ -174,17 +210,17 @@
 }
 
 :root[data-theme="eink"] .amgi-sync-signup-btn {
-  min-height: 48px;
-  color: #000000;
+  min-height: 56px;
+  color: var(--text);
   text-decoration: underline;
   text-underline-offset: 3px;
 }
 
 /* Alerts & Banners */
 .amgi-sync-banner {
-  padding: 13px 15px;
+  padding: 14px 16px;
   border-radius: var(--radius-md);
-  border: var(--border-w) solid var(--border);
+  border: 0;
   font-size: 13px;
   line-height: 1.5;
   display: flex;
@@ -194,32 +230,24 @@
 
 .amgi-sync-banner--error {
   background: var(--danger-soft);
-  border-color: var(--again-border);
   color: var(--danger);
 }
 
 .amgi-sync-banner--warn {
   background: var(--warn-soft);
-  border-color: var(--hard-border);
   color: var(--warn);
 }
 
-.amgi-sync-banner--progress {
-  background: var(--surface-nested);
-  border-color: var(--border);
-  color: var(--text);
-}
-
+.amgi-sync-banner--progress,
 .amgi-sync-banner--media {
-  background: var(--surface-nested);
-  border-color: var(--border);
+  background: var(--fill-weak);
   color: var(--text);
 }
 
 :root[data-theme="eink"] .amgi-sync-banner {
-  background: #FFFFFF;
-  border: 2px solid #000000;
-  color: #000000;
+  background: var(--surface);
+  border: 2px solid var(--border);
+  color: var(--text);
 }
 
 .amgi-sync-progress-head {
@@ -251,9 +279,9 @@
 }
 
 .amgi-sync-media-stat {
-  padding: 8px 10px;
+  padding: 10px 12px;
   border-radius: var(--radius-sm);
-  border: var(--border-w) solid var(--border-subtle);
+  border: 0;
   background: var(--surface);
   display: flex;
   flex-direction: column;
@@ -261,13 +289,13 @@
 }
 
 .amgi-sync-media-stat-label {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-3);
 }
 
 .amgi-sync-media-stat-val {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
   color: var(--text);
   line-height: 1.25;
@@ -280,19 +308,19 @@
 }
 
 :root[data-theme="eink"] .amgi-sync-media-stat {
-  background: #FFFFFF;
-  border: 1.5px solid #000000;
+  background: var(--surface);
+  border: 2px solid var(--border);
 }
 
 :root[data-theme="eink"] .amgi-sync-media-stat-label,
 :root[data-theme="eink"] .amgi-sync-media-note {
-  color: #000000;
+  color: var(--text);
 }
 
 /* Connected State */
 .amgi-sync-connected-top {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
@@ -311,14 +339,14 @@
   align-items: center;
   gap: 6px;
   align-self: flex-start;
-  padding: 3px 10px;
+  padding: 4px 10px;
   border-radius: var(--radius-pill);
   font-size: 12px;
   font-weight: 700;
   line-height: 1.3;
   background: var(--ok-soft);
   color: var(--ok);
-  border: 1px solid transparent;
+  border: 0;
 }
 
 .amgi-sync-pill--running {
@@ -327,9 +355,8 @@
 }
 
 .amgi-sync-pill--media {
-  background: var(--surface-2);
+  background: var(--fill-weak);
   color: var(--text-2);
-  border-color: var(--border);
 }
 
 .amgi-sync-pill--warn {
@@ -355,9 +382,9 @@
 }
 
 :root[data-theme="eink"] .amgi-sync-pill {
-  background: #FFFFFF;
-  color: #000000;
-  border: 2px solid #000000;
+  background: var(--surface);
+  color: var(--text);
+  border: 2px solid var(--border);
 }
 
 :root[data-theme="eink"] .amgi-sync-pill-dot {
@@ -365,7 +392,7 @@
 }
 
 .amgi-sync-email {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
   letter-spacing: -0.015em;
   color: var(--text);
@@ -375,9 +402,9 @@
 }
 
 .amgi-sync-last-time {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
 
@@ -388,14 +415,15 @@
   font-variant-numeric: tabular-nums;
 }
 
+:root[data-theme="eink"] .amgi-sync-last-time,
 :root[data-theme="eink"] .amgi-sync-last-sub {
-  color: #000000;
+  color: var(--text);
 }
 
 .amgi-sync-row-badge {
   display: inline-flex;
   align-items: center;
-  padding: 3px 9px;
+  padding: 4px 10px;
   border-radius: var(--radius-pill);
   background: var(--primary-soft);
   color: var(--primary);
@@ -405,9 +433,9 @@
 }
 
 :root[data-theme="eink"] .amgi-sync-row-badge {
-  background: #FFFFFF;
-  color: #000000;
-  border: 2px solid #000000;
+  background: var(--surface);
+  color: var(--text);
+  border: 2px solid var(--border);
 }
 
 .amgi-sync-now-btn {
@@ -416,7 +444,7 @@
 }
 
 :root[data-theme="eink"] .amgi-sync-now-btn {
-  min-height: 48px;
+  min-height: 56px;
 }
 
 .amgi-sync-rows {
@@ -426,16 +454,22 @@
 
 .amgi-sync-card--compact .amgi-sync-rows {
   margin: 0;
-  border: var(--border-w) solid var(--border);
+  border: 0;
   border-radius: var(--radius-md);
+  background: var(--surface-nested);
   overflow: hidden;
 }
 
 :root[data-theme="eink"] .amgi-sync-rows {
-  border-top: 2px solid #000000;
+  border-top: 2px solid var(--border);
 }
 
-/* Full Sync Choice Dialog */
+:root[data-theme="eink"] .amgi-sync-card--compact .amgi-sync-rows {
+  border: 2px solid var(--border);
+  background: var(--surface);
+}
+
+/* Full Sync Choice Dialog (2-step) */
 .amgi-fullsync-body {
   display: flex;
   flex-direction: column;
@@ -445,16 +479,16 @@
 .amgi-fullsync-options {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .amgi-fullsync-option {
   width: 100%;
-  min-height: 72px;
+  min-height: 76px;
   padding: 16px;
   border-radius: var(--radius-md);
-  border: var(--border-w) solid var(--border);
-  background: var(--surface-2);
+  border: 0;
+  background: var(--fill-weak);
   color: var(--text);
   text-align: left;
   display: flex;
@@ -463,28 +497,39 @@
   cursor: pointer;
 }
 
-.amgi-fullsync-option:hover:not(:disabled) {
-  border-color: var(--primary);
-  background: var(--primary-soft);
+@media (hover: hover) {
+  .amgi-fullsync-option:hover:not(:disabled) {
+    background: var(--fill-strong);
+  }
+}
+
+.amgi-fullsync-option:active:not(:disabled) {
+  background: var(--fill-strong);
 }
 
 .amgi-fullsync-option:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
 :root[data-theme="eink"] .amgi-fullsync-option {
-  background: #FFFFFF;
-  border: 2px solid #000000;
-  color: #000000;
+  min-height: 80px;
+  background: var(--surface);
+  border: 2px solid var(--border);
+  color: var(--text);
+}
+
+:root[data-theme="eink"] .amgi-fullsync-option:disabled {
+  opacity: 1;
+  border-style: dashed;
 }
 
 .amgi-fullsync-option-icon {
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   border-radius: var(--radius-sm);
   background: var(--surface);
-  border: var(--border-w) solid var(--border);
+  border: 0;
   color: var(--primary);
   display: inline-flex;
   align-items: center;
@@ -493,9 +538,9 @@
 }
 
 :root[data-theme="eink"] .amgi-fullsync-option-icon {
-  background: #FFFFFF;
-  color: #000000;
-  border: 2px solid #000000;
+  background: var(--surface);
+  color: var(--text);
+  border: 2px solid var(--border);
 }
 
 .amgi-fullsync-option-text {
@@ -516,24 +561,51 @@
   gap: 6px;
 }
 
-.amgi-fullsync-badge {
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 7px;
-  border-radius: var(--radius-pill);
-  background: var(--primary);
-  color: var(--on-primary);
-}
-
-:root[data-theme="eink"] .amgi-fullsync-badge {
-  background: #000000;
-  color: #FFFFFF;
-}
-
 .amgi-fullsync-option-desc {
   font-size: 13px;
   line-height: 1.48;
-  color: var(--text-2);
+  color: var(--text-3);
+}
+
+:root[data-theme="eink"] .amgi-fullsync-option-desc {
+  color: var(--text);
+}
+
+.amgi-fullsync-warn-box {
+  padding: 16px;
+  border-radius: var(--radius-md);
+  background: var(--danger-soft);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.amgi-fullsync-warn-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--danger);
+}
+
+:root[data-theme="eink"] .amgi-fullsync-warn-box {
+  background: var(--surface);
+  border: 2px solid var(--border);
+}
+
+:root[data-theme="eink"] .amgi-fullsync-warn-title {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.amgi-fullsync-meta-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+:root[data-theme="eink"] .amgi-fullsync-meta-note {
+  color: var(--text);
 }
 
 /* Spinner inside non-eink buttons */

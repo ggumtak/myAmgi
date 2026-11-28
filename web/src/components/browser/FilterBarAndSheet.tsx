@@ -43,16 +43,36 @@ function stripOuterQuotes(raw: string): string {
   return raw;
 }
 
-export function parseQueryToFilters(query: string): BrowserFilterState {
+/**
+ * Splits a search query into top-level tokens, keeping quoted strings and
+ * balanced parenthesized groups intact as single tokens.
+ */
+function tokenizeTopLevel(query: string): string[] {
   const tokens: string[] = [];
   let cur = '';
   let inQuotes = false;
+  let parenDepth = 0;
+
   for (let i = 0; i < query.length; i++) {
     const ch = query[i];
     if (ch === '"' && query[i - 1] !== '\\') {
       inQuotes = !inQuotes;
       cur += ch;
-    } else if (!inQuotes && /\s/.test(ch)) {
+    } else if (!inQuotes && ch === '(') {
+      if (parenDepth === 0 && cur.trim()) {
+        tokens.push(cur);
+        cur = '';
+      }
+      parenDepth += 1;
+      cur += ch;
+    } else if (!inQuotes && ch === ')' && parenDepth > 0) {
+      parenDepth -= 1;
+      cur += ch;
+      if (parenDepth === 0) {
+        tokens.push(cur);
+        cur = '';
+      }
+    } else if (!inQuotes && parenDepth === 0 && /\s/.test(ch)) {
       if (cur) {
         tokens.push(cur);
         cur = '';
@@ -62,6 +82,36 @@ export function parseQueryToFilters(query: string): BrowserFilterState {
     }
   }
   if (cur) tokens.push(cur);
+  return tokens;
+}
+
+/**
+ * Splits a parenthesized OR-only group (e.g. `(is:new OR is:learn)`) into its operand tokens.
+ * Returns null if the group contains AND/nested/mixed syntax that should stay untouched.
+ */
+function parseSimpleOrGroup(groupToken: string): string[] | null {
+  if (!groupToken.startsWith('(') || !groupToken.endsWith(')')) return null;
+  const inner = groupToken.slice(1, -1).trim();
+  if (!inner) return null;
+  const parts = tokenizeTopLevel(inner);
+  if (parts.length < 1) return null;
+  if (parts.length === 1) return parts;
+  // Expect odd length: operand, OR, operand, OR, ...
+  if (parts.length % 2 === 0) return null;
+  const operands: string[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2 === 1) {
+      if (parts[i].toUpperCase() !== 'OR') return null;
+    } else {
+      if (parts[i].startsWith('(')) return null;
+      operands.push(parts[i]);
+    }
+  }
+  return operands;
+}
+
+export function parseQueryToFilters(query: string): BrowserFilterState {
+  const tokens = tokenizeTopLevel(query);
 
   let deck: string | undefined;
   const states: number[] = [];
@@ -71,10 +121,59 @@ export function parseQueryToFilters(query: string): BrowserFilterState {
   const leftover: string[] = [];
 
   for (const tok of tokens) {
+    // Handle parenthesized OR groups emitted by composeQueryFromFilters (Anki buildSearchString)
+    const orOperands = parseSimpleOrGroup(tok);
+    if (orOperands && orOperands.length > 0) {
+      const matchedStates: number[] = [];
+      let allStates = true;
+      for (const op of orOperands) {
+        const st = STATE_OPTIONS.find((s) => s.token === op.toLowerCase());
+        if (st) {
+          matchedStates.push(st.value);
+        } else {
+          allStates = false;
+          break;
+        }
+      }
+      if (allStates && matchedStates.length > 0) {
+        for (const s of matchedStates) {
+          if (!states.includes(s)) states.push(s);
+        }
+        continue;
+      }
+
+      const matchedTags: string[] = [];
+      let allTagsOk = true;
+      for (const op of orOperands) {
+        if (op.toLowerCase().startsWith('tag:')) {
+          const val = stripOuterQuotes(op.slice(4));
+          if (val && val.toLowerCase() !== 'none') {
+            matchedTags.push(val);
+            continue;
+          }
+        }
+        allTagsOk = false;
+        break;
+      }
+      if (allTagsOk && matchedTags.length > 0) {
+        for (const t of matchedTags) {
+          if (!tags.includes(t)) tags.push(t);
+        }
+        continue;
+      }
+
+      leftover.push(tok);
+      continue;
+    }
+
     const lower = tok.toLowerCase();
     if (lower.startsWith('deck:')) {
       const val = stripOuterQuotes(tok.slice(5));
-      if (val && val !== '*') deck = val;
+      if (val && val !== '*') {
+        deck = val;
+      } else {
+        leftover.push(tok);
+      }
     } else if (lower.startsWith('is:')) {
       const st = STATE_OPTIONS.find((s) => s.token === lower);
       if (st) {
@@ -94,7 +193,7 @@ export function parseQueryToFilters(query: string): BrowserFilterState {
       }
     } else if (lower.startsWith('tag:')) {
       const val = stripOuterQuotes(tok.slice(4));
-      if (val && val !== 'none') {
+      if (val && val.toLowerCase() !== 'none') {
         if (!tags.includes(val)) tags.push(val);
       } else {
         leftover.push(tok);
@@ -187,17 +286,29 @@ export function FilterBarAndSheet({
   const [deckFilter, setDeckFilter] = useState('');
 
   useEffect(() => {
+    let cancelled = false;
     if (sheet === 'deck') {
       anki
         .getDeckNames(false, true)
-        .then((list) => setDecks(list))
-        .catch(() => setDecks([]));
+        .then((list) => {
+          if (!cancelled) setDecks(list);
+        })
+        .catch(() => {
+          if (!cancelled) setDecks([]);
+        });
     } else if (sheet === 'tag') {
       anki
         .getAllTags()
-        .then((list) => setAllTags(list))
-        .catch(() => setAllTags([]));
+        .then((list) => {
+          if (!cancelled) setAllTags(list);
+        })
+        .catch(() => {
+          if (!cancelled) setAllTags([]);
+        });
     }
+    return () => {
+      cancelled = true;
+    };
   }, [sheet]);
 
   const filteredDecks = useMemo(() => {
@@ -321,6 +432,7 @@ export function FilterBarAndSheet({
         onClose={() => setSheet(null)}
         title="덱 선택"
         subtitle="특정 덱의 카드만 모아 봅니다"
+        variant="full"
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div className="amgi-browser-search-wrap">
@@ -469,6 +581,7 @@ export function FilterBarAndSheet({
         onClose={() => setSheet(null)}
         title="태그 필터"
         subtitle="선택한 태그가 포함된 카드를 봅니다"
+        variant="full"
         footer={
           <>
             <button

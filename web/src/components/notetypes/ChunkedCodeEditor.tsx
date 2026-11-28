@@ -103,6 +103,7 @@ export const ChunkedCodeEditor = forwardRef<
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const previewTimerRef = useRef<number | null>(null);
   const searchTimerRef = useRef<number | null>(null);
+  const searchComposingRef = useRef<boolean>(false);
   const lastDocKeyRef = useRef<string>('');
 
   const [activeChunk, setActiveChunk] = useState(0);
@@ -519,9 +520,23 @@ export const ChunkedCodeEditor = forwardRef<
             spellCheck={false}
             autoCapitalize="off"
             value={searchQuery}
+            onCompositionStart={() => {
+              searchComposingRef.current = true;
+            }}
+            onCompositionEnd={(e) => {
+              searchComposingRef.current = false;
+              const q = e.currentTarget.value;
+              if (searchTimerRef.current !== null) {
+                window.clearTimeout(searchTimerRef.current);
+              }
+              searchTimerRef.current = window.setTimeout(() => {
+                runSearch(q, false);
+              }, 200);
+            }}
             onChange={(e) => {
               const q = e.target.value;
               setSearchQuery(q);
+              if (searchComposingRef.current) return;
               if (searchTimerRef.current !== null) {
                 window.clearTimeout(searchTimerRef.current);
               }
@@ -530,6 +545,7 @@ export const ChunkedCodeEditor = forwardRef<
               }, 200);
             }}
             onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
               if (e.key === 'Enter') {
                 e.preventDefault();
                 if (matches.length > 0) {
@@ -542,7 +558,7 @@ export const ChunkedCodeEditor = forwardRef<
           />
           <span
             className="tabular"
-            style={{ fontSize: 12, color: 'var(--text-2)', minWidth: 52, textAlign: 'center' }}
+            style={{ fontSize: 12, color: 'var(--text-3)', minWidth: 52, textAlign: 'center' }}
           >
             {matches.length > 0 ? `${matchIndex + 1} / ${matches.length}` : '0 / 0'}
           </span>
@@ -566,8 +582,8 @@ export const ChunkedCodeEditor = forwardRef<
           </button>
 
           <input
-            type="number"
-            min={1}
+            type="text"
+            inputMode="numeric"
             className="amgi-input tabular"
             style={{ width: 92, minHeight: 44 }}
             placeholder="줄 번호"
@@ -575,6 +591,7 @@ export const ChunkedCodeEditor = forwardRef<
             value={lineJumpInput}
             onChange={(e) => setLineJumpInput(e.target.value)}
             onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
               if (e.key === 'Enter') {
                 e.preventDefault();
                 handleJumpToLine();

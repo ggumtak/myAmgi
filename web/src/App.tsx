@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as anki from './anki';
-import { AppProvider, useApp } from './context/AppContext';
+import { AppProvider, replaceHash, useApp } from './context/AppContext';
+import { openOverlayCount } from './ui/overlayStack';
 import { host } from './host';
 import {
   ActionMenu,
@@ -140,7 +141,8 @@ function parseHashRoute(rawHash: string): ParsedRoute {
   }
   if (pathname.startsWith('/anki/')) {
     const subPath = normalized.slice('/anki'.length);
-    return { kind: 'ankiIframe', path: subPath, title: 'Anki 도구' };
+    const title = pathname.startsWith('/anki/graphs') ? 'Anki 상세 통계' : 'Anki 도구';
+    return { kind: 'ankiIframe', path: subPath, title };
   }
 
   return { kind: 'decks' };
@@ -225,6 +227,27 @@ function AppShell() {
   const isWideSplit = windowWidth >= 1024;
   const isStudy = route.kind === 'study';
 
+  // Exposes the route to CSS (e.g. lift toasts above the study answer bar).
+  useEffect(() => {
+    document.documentElement.dataset.route = route.kind;
+  }, [route.kind]);
+
+  // Bottom-nav / rail tabs replace the current entry so history never piles up with tab
+  // hops; back from a non-home tab returns to the deck list (see AppContext.navigateBack).
+  const switchTab = useCallback(
+    (tabHash: string) => {
+      closeAddSheet();
+      closeSyncSheet();
+      if (tabHash === '#/decks') {
+        // Returning home: pop back to the home entry when it exists instead of stacking.
+        replaceHash('#/decks');
+      } else {
+        replaceHash(tabHash);
+      }
+    },
+    [closeAddSheet, closeSyncSheet]
+  );
+
   const handleGlobalUndo = useCallback(async () => {
     try {
       const status = await anki.undoStatus();
@@ -264,7 +287,7 @@ function AppShell() {
   // Global keyboard shortcuts: Ctrl+K Quick Switcher, Ctrl+Z / Ctrl+Shift+Z outside Study/inputs
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.isComposing) return;
+      if (e.isComposing || e.keyCode === 229) return;
       const hasMod = e.ctrlKey || e.metaKey;
       if (hasMod && e.key.toLowerCase() === 'k') {
         e.preventDefault();
@@ -272,6 +295,8 @@ function AppShell() {
         return;
       }
       if (isStudy) return;
+      // An open sheet/dialog owns the keyboard; don't undo deck changes behind it.
+      if (openOverlayCount() > 0) return;
       const target = e.target as HTMLElement | null;
       if (
         target &&
@@ -372,6 +397,7 @@ function AppShell() {
   const handleCheckEmptyCards = useCallback(async () => {
     if (checkingEmpty) return;
     setCheckingEmpty(true);
+    showToast('빈 카드를 찾고 있습니다…', 'info');
     try {
       const report = await anki.getEmptyCards();
       setEmptyCardsReport(report);
@@ -387,9 +413,12 @@ function AppShell() {
 
   const handleDeleteEmptyCards = useCallback(async () => {
     if (!emptyCardsReport || cleaningEmpty) return;
-    const cids = (emptyCardsReport.notes ?? []).flatMap((n) =>
-      (n.cardIds ?? []).map((id) => anki.toNumber(id))
-    );
+    // Like Anki's default ("keep notes"): when every card of a note is empty, keep its
+    // first card so the note itself (and its field contents) is never deleted.
+    const cids = (emptyCardsReport.notes ?? []).flatMap((n) => {
+      const ids = (n.cardIds ?? []).map((id) => anki.toNumber(id));
+      return n.willDeleteNote ? ids.slice(1) : ids;
+    });
     if (cids.length === 0) {
       setEmptyCardsReport(null);
       return;
@@ -413,6 +442,7 @@ function AppShell() {
   const handleExportCollection = useCallback(async () => {
     if (exportingColpkg) return;
     setExportingColpkg(true);
+    showToast('전체 백업 파일을 만들고 있습니다. 잠시만 기다려 주세요…', 'info');
     try {
       const res = await host.exportCollection({ withMedia: true });
       showToast(`전체 컬렉션을 내보냈습니다 (${res.name}).`, 'success');
@@ -573,8 +603,9 @@ function AppShell() {
     route.kind === 'deckOptions' ||
     route.kind === 'ankiIframe';
 
+  // Must mirror handleDeleteEmptyCards: notes whose cards are all empty keep one card.
   const emptyCardTotal = (emptyCardsReport?.notes ?? []).reduce(
-    (sum, n) => sum + (n.cardIds?.length ?? 0),
+    (sum, n) => sum + Math.max(0, (n.cardIds?.length ?? 0) - (n.willDeleteNote ? 1 : 0)),
     0
   );
 
@@ -742,7 +773,7 @@ function AppShell() {
                   type="button"
                   className={`amgi-nav-item ${isActive ? 'active' : ''}`}
                   aria-current={isActive ? 'page' : undefined}
-                  onClick={() => navigate(tab.hash)}
+                  onClick={() => switchTab(tab.hash)}
                 >
                   <Icon size={20} />
                   <span>{tab.label}</span>
@@ -776,7 +807,7 @@ function AppShell() {
                 type="button"
                 className={`amgi-nav-item ${isActive ? 'active' : ''}`}
                 aria-current={isActive ? 'page' : undefined}
-                onClick={() => navigate(tab.hash)}
+                onClick={() => switchTab(tab.hash)}
               >
                 <Icon size={20} />
                 <span>{tab.label}</span>
@@ -838,13 +869,15 @@ function AppShell() {
       >
         {emptyCardTotal === 0 ? (
           <p className="amgi-prose" style={{ margin: 0 }}>
-            정리할 빈 카드가 없습니다. 모든 카드가 정상입니다.
+            {(emptyCardsReport?.notes?.length ?? 0) > 0
+              ? '모든 카드가 비어 있는 노트가 있지만, 노트 원본 내용을 지키기 위해 자동 삭제하지 않았습니다.'
+              : '정리할 빈 카드가 없습니다. 모든 카드가 정상입니다.'}
           </p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <p className="amgi-prose" style={{ margin: 0 }}>
               앞면 내용이 비어 있는 카드 <strong>{emptyCardTotal}장</strong>을
-              찾았습니다. 삭제해도 노트의 원본 데이터는 유지됩니다.
+              찾았습니다. 노트와 입력한 내용은 그대로 두고, 내용이 없는 카드만 지웁니다.
             </p>
             {emptyCardsReport?.report && (
               <pre className="amgi-error-detail">{emptyCardsReport.report}</pre>

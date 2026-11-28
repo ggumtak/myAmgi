@@ -2,8 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as anki from '../../anki';
 import * as host from '../../host';
 import { useApp } from '../../context/AppContext';
-import { CardFrame, type CardFrameHandle } from '../shared/CardFrame';
+import {
+  CardFrame,
+  type CardFrameHandle,
+  type CardFrameKeyEvent,
+} from '../shared/CardFrame';
 import { WhiteboardOverlay } from './WhiteboardOverlay';
+import { resolveStudyKeyAction } from './studyKeys';
 import {
   ActionMenu,
   ErrorState,
@@ -28,6 +33,7 @@ import {
   Switch,
   useToast,
 } from '../../ui';
+import { closeTopOverlay, hasBlockingOverlay, openOverlayCount } from '../../ui/overlayStack';
 import { CelebrationBadge } from '../decks/DeckBadge';
 import './study.css';
 
@@ -49,6 +55,8 @@ interface PreparedCardData {
   notetype: anki.Notetype;
   deckConfig: anki.DeckConfig['config'] | null;
 }
+
+type UndoActionKind = 'rate' | 'other';
 
 const FLAG_OPTIONS = [
   { flag: 0, label: '깃발 없음', shortcut: 'Ctrl+0' },
@@ -99,6 +107,55 @@ function replaceFrontTypeInput(html: string): string {
     TYPEANS_REGEX,
     '<input id="typeans" type="text" class="tappable" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="정답을 입력하세요..." />'
   );
+}
+
+function hasTypeAnsToken(raw: string): boolean {
+  TYPEANS_REGEX.lastIndex = 0;
+  const matched = TYPEANS_REGEX.test(raw);
+  TYPEANS_REGEX.lastIndex = 0;
+  return matched;
+}
+
+function hasMarkedTag(tags: string[] | null | undefined): boolean {
+  return (tags ?? []).some((t) => t.toLowerCase() === 'marked');
+}
+
+function isSameAvTag(
+  a: anki.ExtractAvTagsResponse['avTags'][number],
+  b: anki.ExtractAvTagsResponse['avTags'][number]
+): boolean {
+  if (a.soundOrVideo && b.soundOrVideo) {
+    return a.soundOrVideo === b.soundOrVideo;
+  }
+  if (a.tts && b.tts) {
+    return (
+      (a.tts.fieldText ?? '') === (b.tts.fieldText ?? '') &&
+      (a.tts.lang ?? '') === (b.tts.lang ?? '')
+    );
+  }
+  return false;
+}
+
+function getAnswerOnlyAvTags(
+  data: PreparedCardData
+): anki.ExtractAvTagsResponse['avTags'] {
+  if (data.aAvTags.length === 0) return [];
+  if (data.qAvTags.length === 0) return data.aAvTags;
+  return data.aAvTags.filter((t) => !data.qAvTags.some((qt) => isSameAvTag(qt, t)));
+}
+
+function getReplayAvTags(
+  data: PreparedCardData | null,
+  showAnswer: boolean
+): anki.ExtractAvTagsResponse['avTags'] {
+  if (!data) return [];
+  if (!showAnswer) return data.qAvTags;
+  const skipQuestion = Boolean(data.deckConfig?.skipQuestionWhenReplayingAnswer);
+  const answerOnly = getAnswerOnlyAvTags(data);
+  if (skipQuestion) {
+    return answerOnly;
+  }
+  return [...data.qAvTags, ...answerOnly];
 }
 
 function formatDurationKo(millis: number): string {
@@ -152,8 +209,18 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
   const cardFrameRef = useRef<CardFrameHandle | null>(null);
   const frameReadyRef = useRef(false);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
+  const audioStopResolveRef = useRef<(() => void) | null>(null);
   const audioAbortRef = useRef<{ aborted: boolean }>({ aborted: false });
   const ttsActiveRef = useRef(false);
+  const unmountedRef = useRef(false);
+  const loadSeqRef = useRef(0);
+  const answeringRef = useRef(false);
+  const revealingRef = useRef(false);
+  const showAnswerRef = useRef(false);
+  const activeCardIdRef = useRef<number | null>(null);
+  const hasLoadedDeckRef = useRef<number | null>(null);
+  const undoActionKindsRef = useRef<UndoActionKind[]>([]);
+  const redoActionKindsRef = useRef<UndoActionKind[]>([]);
   const cardStartMsRef = useRef<number>(Date.now());
   const deckConfigCacheRef = useRef<Map<number, anki.DeckConfig['config'] | null>>(
     new Map()
@@ -202,8 +269,13 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
   const [customPreset, setCustomPreset] = useState<
     'newLimitDelta' | 'reviewLimitDelta' | 'forgotDays' | 'reviewAheadDays' | 'previewDays'
   >('newLimitDelta');
-  const [customVal, setCustomVal] = useState(10);
+  const [customValInput, setCustomValInput] = useState('10');
   const [busyModal, setBusyModal] = useState(false);
+
+  const twoButtonKnown =
+    typeof prefs['study.twoButton'] === 'boolean' ||
+    typeof prefs['study.twoButtonMode'] === 'boolean' ||
+    info !== null;
 
   const twoButtonMode = useMemo(() => {
     const raw = prefs['study.twoButton'];
@@ -211,7 +283,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
     if (typeof prefs['study.twoButtonMode'] === 'boolean') {
       return prefs['study.twoButtonMode'] as boolean;
     }
-    return Boolean(info?.eink ?? true);
+    return Boolean(info?.eink);
   }, [prefs, info?.eink]);
 
   const tapToFlip = prefs['study.tapToFlip'] === true;
@@ -234,26 +306,51 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
 
   const stopAudio = useCallback(() => {
     audioAbortRef.current.aborted = true;
+    const pendingResolve = audioStopResolveRef.current;
+    audioStopResolveRef.current = null;
     if (audioElRef.current) {
       try {
+        audioElRef.current.onended = null;
+        audioElRef.current.onerror = null;
         audioElRef.current.pause();
-        audioElRef.current.src = '';
+        audioElRef.current.removeAttribute('src');
+        audioElRef.current.load();
       } catch {
         // Ignore audio stop errors
       }
       audioElRef.current = null;
     }
+    if (pendingResolve) {
+      pendingResolve();
+    }
     if (ttsActiveRef.current) {
       ttsActiveRef.current = false;
       void host.host.platformTtsStop().catch(() => undefined);
     }
-    setIsAudioPlaying(false);
+    if (!unmountedRef.current) {
+      setIsAudioPlaying(false);
+    }
   }, []);
+
+  // Ensure audio stops and in-flight loads cancel cleanly on unmount or route change
+  useEffect(() => {
+    unmountedRef.current = false;
+    const onHashChange = () => {
+      stopAudio();
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => {
+      unmountedRef.current = true;
+      loadSeqRef.current += 1;
+      window.removeEventListener('hashchange', onHashChange);
+      stopAudio();
+    };
+  }, [stopAudio]);
 
   const playAvTagList = useCallback(
     async (tags: anki.ExtractAvTagsResponse['avTags']) => {
       stopAudio();
-      if (!tags || tags.length === 0) return;
+      if (unmountedRef.current || !tags || tags.length === 0) return;
 
       const token = { aborted: false };
       audioAbortRef.current = token;
@@ -261,18 +358,32 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
 
       try {
         for (const tag of tags) {
-          if (token.aborted) break;
+          if (token.aborted || unmountedRef.current) break;
           if (tag.soundOrVideo) {
             await new Promise<void>((resolve) => {
+              if (token.aborted || unmountedRef.current) {
+                resolve();
+                return;
+              }
               const audio = new Audio(
                 `/media/${encodeURIComponent(tag.soundOrVideo!)}`
               );
               audioElRef.current = audio;
+              let settled = false;
               const done = () => {
+                if (settled) return;
+                settled = true;
                 audio.onended = null;
                 audio.onerror = null;
+                if (audioStopResolveRef.current === done) {
+                  audioStopResolveRef.current = null;
+                }
+                if (audioElRef.current === audio) {
+                  audioElRef.current = null;
+                }
                 resolve();
               };
+              audioStopResolveRef.current = done;
               audio.onended = done;
               audio.onerror = done;
               void audio.play().catch(done);
@@ -293,7 +404,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
           }
         }
       } finally {
-        if (!token.aborted) {
+        if (!token.aborted && !unmountedRef.current) {
           setIsAudioPlaying(false);
         }
       }
@@ -392,19 +503,29 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
         lineHeight,
         tapToFlip,
         hanjaEnabled,
+        forwardKeys: true,
       });
     },
     [resolvedTheme, fontScale, lineHeight, tapToFlip, hanjaEnabled]
   );
 
   const loadQueueAndActiveCard = useCallback(
-    async (preserveCurrentCache = false) => {
+    async (opts?: { preserveCurrentCache?: boolean; quiet?: boolean }) => {
+      const preserveCurrentCache = Boolean(opts?.preserveCurrentCache);
+      const quiet = Boolean(opts?.quiet);
+      const seq = ++loadSeqRef.current;
+
       if (!preserveCurrentCache) {
         preparedCacheRef.current.clear();
       }
-      setError(null);
+      if (!quiet) {
+        setError(null);
+      }
+
       try {
         await anki.setCurrentDeck(deckId);
+        if (seq !== loadSeqRef.current || unmountedRef.current) return;
+
         const fetchLimit = info?.eink ? 2 : 3;
         const [deckObj, prefsRes, qRes, undoRes] = await Promise.all([
           anki.getDeck(deckId),
@@ -412,6 +533,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
           anki.getQueuedCards(fetchLimit, false),
           anki.undoStatus().catch(() => null),
         ]);
+        if (seq !== loadSeqRef.current || unmountedRef.current) return;
 
         const shortTitle = deckObj.name?.split('::').pop() || deckObj.name || '학습';
         setDeckName(shortTitle);
@@ -422,6 +544,9 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
 
         const cards = qRes.cards ?? [];
         if (cards.length === 0) {
+          activeCardIdRef.current = null;
+          showAnswerRef.current = false;
+          frameReadyRef.current = false;
           setPrepared(null);
           setShowAnswer(false);
           setActiveFlag(0);
@@ -432,6 +557,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
               .graphs(deckObj.name ? `deck:"${deckObj.name}"` : '', 1)
               .catch(() => null),
           ]);
+          if (seq !== loadSeqRef.current || unmountedRef.current) return;
           setCongratsData(cg);
           setTodayStats({
             answerCount: g?.today?.answerCount ?? 0,
@@ -443,25 +569,35 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
 
         const hidePlayBtns = Boolean(prefsRes?.reviewing?.hideAudioPlayButtons);
         const firstCard = cards[0];
-        const firstPrepared = await prepareQueuedCard(firstCard, hidePlayBtns);
+        const firstCardId = anki.toNumber(firstCard.card?.id);
+        const keepingSameCardQuietly =
+          quiet && activeCardIdRef.current !== null && activeCardIdRef.current === firstCardId;
 
+        const firstPrepared = await prepareQueuedCard(firstCard, hidePlayBtns);
+        if (seq !== loadSeqRef.current || unmountedRef.current) return;
+
+        activeCardIdRef.current = firstPrepared.cardId;
         setPrepared(firstPrepared);
-        setShowAnswer(false);
         setActiveFlag((firstCard.card?.flags ?? 0) & 0b111);
-        setIsMarked((firstPrepared.note.tags ?? []).includes('marked'));
-        cardStartMsRef.current = Date.now();
-        setElapsedSecs(0);
+        setIsMarked(hasMarkedTag(firstPrepared.note.tags));
         setLoading(false);
 
-        // Send question immediately if iframe ready
-        if (frameReadyRef.current) {
-          sendFrontToFrame(firstPrepared);
-        }
+        if (!keepingSameCardQuietly) {
+          showAnswerRef.current = false;
+          setShowAnswer(false);
+          cardStartMsRef.current = Date.now();
+          setElapsedSecs(0);
 
-        // Auto-play front audio if allowed
-        const deckDisableAutoplay = Boolean(firstPrepared.deckConfig?.disableAutoplay);
-        if (autoPlayAudio && !deckDisableAutoplay && firstPrepared.qAvTags.length > 0) {
-          void playAvTagList(firstPrepared.qAvTags);
+          // Send question immediately if iframe is mounted & ready
+          if (frameReadyRef.current) {
+            sendFrontToFrame(firstPrepared);
+          }
+
+          // Auto-play front audio if allowed
+          const deckDisableAutoplay = Boolean(firstPrepared.deckConfig?.disableAutoplay);
+          if (autoPlayAudio && !deckDisableAutoplay && firstPrepared.qAvTags.length > 0) {
+            void playAvTagList(firstPrepared.qAvTags);
+          }
         }
 
         // Background pre-render next 1-2 cards
@@ -469,10 +605,13 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
           void prepareQueuedCard(cards[i], hidePlayBtns).catch(() => undefined);
         }
       } catch (err) {
-        setError(
-          err instanceof Error ? err.message : '학습 카드를 불러오지 못했습니다.'
-        );
-        setLoading(false);
+        if (seq !== loadSeqRef.current || unmountedRef.current) return;
+        if (!quiet) {
+          setError(
+            err instanceof Error ? err.message : '학습 카드를 불러오지 못했습니다.'
+          );
+          setLoading(false);
+        }
       }
     },
     [
@@ -485,34 +624,37 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
     ]
   );
 
+  // Full session load on mount or deckId change; quiet refresh when collectionVersion bumps (sync)
   useEffect(() => {
-    stopAudio();
-    deckConfigCacheRef.current.clear();
-    setLoading(true);
-    void loadQueueAndActiveCard(false);
-    return () => {
-      stopAudio();
-    };
-  }, [deckId, collectionVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+    const isDeckChange = hasLoadedDeckRef.current !== deckId;
+    hasLoadedDeckRef.current = deckId;
 
-  // Re-render current card cleanly on return from note edit or deck options
-  useEffect(() => {
-    const onFocus = () => {
-      const currentCardId = queued?.cards?.[0]?.card?.id;
-      if (currentCardId !== undefined) {
-        preparedCacheRef.current.delete(anki.toNumber(currentCardId));
-        void loadQueueAndActiveCard(true);
-      }
-    };
-    window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
-  }, [queued, loadQueueAndActiveCard]);
+    if (isDeckChange) {
+      stopAudio();
+      activeCardIdRef.current = null;
+      showAnswerRef.current = false;
+      frameReadyRef.current = false;
+      undoActionKindsRef.current = [];
+      redoActionKindsRef.current = [];
+      deckConfigCacheRef.current.clear();
+      setSessionDone(0);
+      setLoading(true);
+      void loadQueueAndActiveCard({ preserveCurrentCache: false, quiet: false });
+    } else {
+      deckConfigCacheRef.current.clear();
+      void loadQueueAndActiveCard({ preserveCurrentCache: false, quiet: true });
+    }
+  }, [deckId, collectionVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Card timer when deck config showTimer is enabled
   const activeCard = queued?.cards?.[0] ?? null;
   const showTimer = Boolean(prepared?.deckConfig?.showTimer);
   const stopTimerOnAnswer = Boolean(prepared?.deckConfig?.stopTimerOnAnswer);
-  const capSecs = prepared?.deckConfig?.capAnswerTimeToSecs ?? 60;
+  const rawCapSecs = prepared?.deckConfig?.capAnswerTimeToSecs;
+  const capSecs =
+    typeof rawCapSecs === 'number' && Number.isFinite(rawCapSecs) && rawCapSecs > 0
+      ? rawCapSecs
+      : 60;
 
   useEffect(() => {
     if (!activeCard || !showTimer) return;
@@ -529,16 +671,16 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
 
   const resolveTypeAnswerHtml = useCallback(
     async (data: PreparedCardData, typedAnswer: string): Promise<string> => {
-      if (!TYPEANS_REGEX.test(data.aHtmlTemplate)) {
-        TYPEANS_REGEX.lastIndex = 0;
+      if (!hasTypeAnsToken(data.aHtmlTemplate)) {
         return data.aHtmlTemplate;
       }
-      TYPEANS_REGEX.lastIndex = 0;
 
       const card = activeCard?.card;
       const fields = data.notetype.fields ?? [];
       const noteFields = data.note.fields ?? [];
+      TYPEANS_REGEX.lastIndex = 0;
       const rawMatches = Array.from(data.aHtmlTemplate.matchAll(TYPEANS_REGEX));
+      TYPEANS_REGEX.lastIndex = 0;
       let resultHtml = data.aHtmlTemplate;
 
       for (const m of rawMatches) {
@@ -578,52 +720,63 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
 
   const handleShowAnswer = useCallback(
     async (explicitTyped?: string) => {
-      if (!prepared || showAnswer) return;
-      if (ankiPrefs?.reviewing?.interruptAudioWhenAnswering !== false) {
-        stopAudio();
+      if (
+        !prepared ||
+        showAnswerRef.current ||
+        revealingRef.current ||
+        answeringRef.current
+      ) {
+        return;
       }
+      revealingRef.current = true;
+      const seqAtStart = loadSeqRef.current;
 
-      let typed = explicitTyped;
-      if (typed === undefined && TYPEANS_REGEX.test(prepared.qHtml || prepared.rawFront)) {
-        TYPEANS_REGEX.lastIndex = 0;
-        typed = (await cardFrameRef.current?.getTypedAnswer()) ?? '';
-      } else {
-        TYPEANS_REGEX.lastIndex = 0;
-      }
-
-      const answerHtml = await resolveTypeAnswerHtml(prepared, typed ?? '');
-      setShowAnswer(true);
-
-      cardFrameRef.current?.render({
-        side: 'answer',
-        html: answerHtml,
-        css: prepared.css,
-        theme: resolvedTheme,
-        fontScale,
-        lineHeight,
-        tapToFlip: false,
-        hanjaEnabled,
-      });
-
-      const deckDisableAutoplay = Boolean(prepared.deckConfig?.disableAutoplay);
-      if (autoPlayAudio && !deckDisableAutoplay && prepared.aAvTags.length > 0) {
-        const skipQ = Boolean(prepared.deckConfig?.skipQuestionWhenReplayingAnswer);
-        const tagsToPlay = skipQ
-          ? prepared.aAvTags.filter(
-              (t) =>
-                !prepared.qAvTags.some(
-                  (qt) => qt.soundOrVideo && qt.soundOrVideo === t.soundOrVideo
-                )
-            )
-          : prepared.aAvTags;
-        if (tagsToPlay.length > 0) {
-          void playAvTagList(tagsToPlay);
+      try {
+        if (ankiPrefs?.reviewing?.interruptAudioWhenAnswering !== false) {
+          stopAudio();
         }
+
+        let typed = explicitTyped;
+        if (
+          typed === undefined &&
+          (hasTypeAnsToken(prepared.rawFront) || prepared.qHtml.includes('id="typeans"'))
+        ) {
+          typed = (await cardFrameRef.current?.getTypedAnswer()) ?? '';
+        }
+        if (seqAtStart !== loadSeqRef.current || unmountedRef.current) return;
+
+        const answerHtml = await resolveTypeAnswerHtml(prepared, typed ?? '');
+        if (seqAtStart !== loadSeqRef.current || unmountedRef.current) return;
+
+        showAnswerRef.current = true;
+        setShowAnswer(true);
+
+        cardFrameRef.current?.render({
+          side: 'answer',
+          html: answerHtml,
+          css: prepared.css,
+          theme: resolvedTheme,
+          fontScale,
+          lineHeight,
+          tapToFlip: false,
+          hanjaEnabled,
+          forwardKeys: true,
+        });
+
+        // Auto-play answer-side audio only (skipQuestionWhenReplayingAnswer applies to replay, not initial reveal)
+        const deckDisableAutoplay = Boolean(prepared.deckConfig?.disableAutoplay);
+        if (autoPlayAudio && !deckDisableAutoplay && prepared.aAvTags.length > 0) {
+          const answerAudio = getAnswerOnlyAvTags(prepared);
+          if (answerAudio.length > 0) {
+            void playAvTagList(answerAudio);
+          }
+        }
+      } finally {
+        revealingRef.current = false;
       }
     },
     [
       prepared,
-      showAnswer,
       ankiPrefs,
       stopAudio,
       resolveTypeAnswerHtml,
@@ -638,78 +791,128 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
 
   const handleRate = useCallback(
     async (rating: anki.Rating) => {
-      if (!activeCard || !activeCard.card || !activeCard.states || answering) return;
+      if (
+        !activeCard ||
+        !activeCard.card ||
+        !activeCard.states ||
+        answeringRef.current ||
+        revealingRef.current
+      ) {
+        return;
+      }
+      answeringRef.current = true;
       setAnswering(true);
       stopAudio();
       try {
         const msTaken = Date.now() - cardStartMsRef.current;
         const cid = activeCard.card.id!;
-        await anki.answerCard(cid, activeCard.states, rating, msTaken);
+        await anki.answerCard(cid, activeCard.states, rating, msTaken, capSecs);
         preparedCacheRef.current.delete(anki.toNumber(cid));
+        undoActionKindsRef.current.push('rate');
+        redoActionKindsRef.current = [];
         setSessionDone((c) => c + 1);
-        await loadQueueAndActiveCard(true);
+        await loadQueueAndActiveCard({ preserveCurrentCache: true, quiet: false });
       } catch (err) {
         showToast(
           err instanceof Error ? err.message : '답변을 저장하지 못했습니다.',
           'error'
         );
       } finally {
-        setAnswering(false);
+        answeringRef.current = false;
+        if (!unmountedRef.current) {
+          setAnswering(false);
+        }
       }
     },
-    [activeCard, answering, stopAudio, loadQueueAndActiveCard, showToast]
+    [activeCard, capSecs, stopAudio, loadQueueAndActiveCard, showToast]
   );
 
   const handleUndo = useCallback(async () => {
-    if (!canUndo || answering) return;
+    if (!canUndo || answeringRef.current || revealingRef.current) return;
+    answeringRef.current = true;
     stopAudio();
     setAnswering(true);
     try {
       await anki.undo();
       preparedCacheRef.current.clear();
-      setSessionDone((c) => Math.max(0, c - 1));
+      const undoneKind = undoActionKindsRef.current.pop();
+      if (undoneKind) {
+        redoActionKindsRef.current.push(undoneKind);
+        if (undoneKind === 'rate') {
+          setSessionDone((c) => Math.max(0, c - 1));
+        }
+      }
       showToast('방금 한 작업을 되돌렸습니다.', 'info');
-      await loadQueueAndActiveCard(false);
+      await loadQueueAndActiveCard({ preserveCurrentCache: false, quiet: false });
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : '되돌릴 수 있는 작업이 없습니다.',
         'error'
       );
     } finally {
-      setAnswering(false);
+      answeringRef.current = false;
+      if (!unmountedRef.current) {
+        setAnswering(false);
+      }
     }
-  }, [canUndo, answering, stopAudio, loadQueueAndActiveCard, showToast]);
+  }, [canUndo, stopAudio, loadQueueAndActiveCard, showToast]);
 
   const handleRedo = useCallback(async () => {
-    if (!canRedo || answering) return;
+    if (!canRedo || answeringRef.current || revealingRef.current) return;
+    answeringRef.current = true;
     stopAudio();
     setAnswering(true);
     try {
       await anki.redo();
       preparedCacheRef.current.clear();
+      const redoneKind = redoActionKindsRef.current.pop();
+      if (redoneKind) {
+        undoActionKindsRef.current.push(redoneKind);
+        if (redoneKind === 'rate') {
+          setSessionDone((c) => c + 1);
+        }
+      }
       showToast('작업을 다시 실행했습니다.', 'info');
-      await loadQueueAndActiveCard(false);
+      await loadQueueAndActiveCard({ preserveCurrentCache: false, quiet: false });
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : '다시 실행할 작업이 없습니다.',
         'error'
       );
     } finally {
-      setAnswering(false);
+      answeringRef.current = false;
+      if (!unmountedRef.current) {
+        setAnswering(false);
+      }
     }
-  }, [canRedo, answering, stopAudio, loadQueueAndActiveCard, showToast]);
+  }, [canRedo, stopAudio, loadQueueAndActiveCard, showToast]);
 
   const undoToastAction = useMemo(
     () => ({
       label: '되돌리기',
       onClick: async () => {
+        if (answeringRef.current || revealingRef.current) return;
+        answeringRef.current = true;
+        setAnswering(true);
         try {
           await anki.undo();
           preparedCacheRef.current.clear();
-          await loadQueueAndActiveCard(false);
+          const undoneKind = undoActionKindsRef.current.pop();
+          if (undoneKind) {
+            redoActionKindsRef.current.push(undoneKind);
+            if (undoneKind === 'rate') {
+              setSessionDone((c) => Math.max(0, c - 1));
+            }
+          }
+          await loadQueueAndActiveCard({ preserveCurrentCache: false, quiet: false });
           showToast('작업을 되돌렸습니다.', 'info');
         } catch {
           showToast('되돌리지 못했습니다.', 'error');
+        } finally {
+          answeringRef.current = false;
+          if (!unmountedRef.current) {
+            setAnswering(false);
+          }
         }
       },
     }),
@@ -723,6 +926,8 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
       const nextFlag = activeFlag === flag && flag !== 0 ? 0 : flag;
       try {
         await anki.setFlag([cid], nextFlag);
+        undoActionKindsRef.current.push('other');
+        redoActionKindsRef.current = [];
         setActiveFlag(nextFlag);
         setFlagPickerOpen(false);
         const label = FLAG_OPTIONS.find((f) => f.flag === nextFlag)?.label ?? '깃발';
@@ -753,6 +958,8 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
         setIsMarked(true);
         showToast('노트에 별표를 표시했습니다.', 'info');
       }
+      undoActionKindsRef.current.push('other');
+      redoActionKindsRef.current = [];
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : '별표를 변경하지 못했습니다.',
@@ -761,77 +968,110 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
     }
   }, [activeCard, isMarked, showToast]);
 
+  const replayAvTags = useMemo(
+    () => getReplayAvTags(prepared, showAnswer),
+    [prepared, showAnswer]
+  );
+
   const handleReplayAudio = useCallback(() => {
     if (!prepared) return;
-    const tags = showAnswer ? prepared.aAvTags : prepared.qAvTags;
+    const tags = getReplayAvTags(prepared, showAnswerRef.current);
     if (tags.length > 0) {
       void playAvTagList(tags);
     } else {
       showToast('이 카드에는 재생할 오디오가 없습니다.', 'info');
     }
-  }, [prepared, showAnswer, playAvTagList, showToast]);
+  }, [prepared, playAvTagList, showToast]);
 
   const handleBuryCard = useCallback(async () => {
     const cid = activeCard?.card?.id;
-    if (cid == null) return;
+    if (cid == null || answeringRef.current) return;
+    answeringRef.current = true;
+    setAnswering(true);
     stopAudio();
     try {
       await anki.buryOrSuspendCards([cid], [], anki.BuryOrSuspendMode.BURY_USER);
+      undoActionKindsRef.current.push('other');
+      redoActionKindsRef.current = [];
       showToast('이 카드를 내일까지 숨겼습니다.', 'info', undoToastAction);
-      await loadQueueAndActiveCard(false);
+      await loadQueueAndActiveCard({ preserveCurrentCache: false, quiet: false });
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : '카드를 숨기지 못했습니다.',
         'error'
       );
+    } finally {
+      answeringRef.current = false;
+      if (!unmountedRef.current) setAnswering(false);
     }
   }, [activeCard, stopAudio, loadQueueAndActiveCard, showToast, undoToastAction]);
 
   const handleBuryNote = useCallback(async () => {
     const nid = activeCard?.card?.noteId;
-    if (nid == null) return;
+    if (nid == null || answeringRef.current) return;
+    answeringRef.current = true;
+    setAnswering(true);
     stopAudio();
     try {
       await anki.buryOrSuspendCards([], [nid], anki.BuryOrSuspendMode.BURY_USER);
+      undoActionKindsRef.current.push('other');
+      redoActionKindsRef.current = [];
       showToast('이 노트의 카드를 내일까지 숨겼습니다.', 'info', undoToastAction);
-      await loadQueueAndActiveCard(false);
+      await loadQueueAndActiveCard({ preserveCurrentCache: false, quiet: false });
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : '노트를 숨기지 못했습니다.',
         'error'
       );
+    } finally {
+      answeringRef.current = false;
+      if (!unmountedRef.current) setAnswering(false);
     }
   }, [activeCard, stopAudio, loadQueueAndActiveCard, showToast, undoToastAction]);
 
   const handleSuspendCard = useCallback(async () => {
     const cid = activeCard?.card?.id;
-    if (cid == null) return;
+    if (cid == null || answeringRef.current) return;
+    answeringRef.current = true;
+    setAnswering(true);
     stopAudio();
     try {
       await anki.buryOrSuspendCards([cid], [], anki.BuryOrSuspendMode.SUSPEND);
+      undoActionKindsRef.current.push('other');
+      redoActionKindsRef.current = [];
       showToast('카드를 일시 중지했습니다.', 'info', undoToastAction);
-      await loadQueueAndActiveCard(false);
+      await loadQueueAndActiveCard({ preserveCurrentCache: false, quiet: false });
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : '카드를 일시 중지하지 못했습니다.',
         'error'
       );
+    } finally {
+      answeringRef.current = false;
+      if (!unmountedRef.current) setAnswering(false);
     }
   }, [activeCard, stopAudio, loadQueueAndActiveCard, showToast, undoToastAction]);
 
   const handleSuspendNote = useCallback(async () => {
     const nid = activeCard?.card?.noteId;
-    if (nid == null) return;
+    if (nid == null || answeringRef.current) return;
+    answeringRef.current = true;
+    setAnswering(true);
     stopAudio();
     try {
       await anki.buryOrSuspendCards([], [nid], anki.BuryOrSuspendMode.SUSPEND);
+      undoActionKindsRef.current.push('other');
+      redoActionKindsRef.current = [];
       showToast('이 노트의 모든 카드를 일시 중지했습니다.', 'info', undoToastAction);
-      await loadQueueAndActiveCard(false);
+      await loadQueueAndActiveCard({ preserveCurrentCache: false, quiet: false });
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : '노트를 일시 중지하지 못했습니다.',
         'error'
       );
+    } finally {
+      answeringRef.current = false;
+      if (!unmountedRef.current) setAnswering(false);
     }
   }, [activeCard, stopAudio, loadQueueAndActiveCard, showToast, undoToastAction]);
 
@@ -854,9 +1094,11 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
     stopAudio();
     try {
       await anki.forgetCards([cid], forgetRestorePos, forgetResetCounts, true, 1);
+      undoActionKindsRef.current.push('other');
+      redoActionKindsRef.current = [];
       setForgetOpen(false);
       showToast('카드를 새 카드 상태로 되돌렸습니다.', 'success');
-      await loadQueueAndActiveCard(false);
+      await loadQueueAndActiveCard({ preserveCurrentCache: false, quiet: false });
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : '카드를 초기화하지 못했습니다.',
@@ -892,9 +1134,11 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
     stopAudio();
     try {
       await anki.setDueDate([cid], days, anki.ConfigKeyString.SET_DUE_REVIEWER);
+      undoActionKindsRef.current.push('other');
+      redoActionKindsRef.current = [];
       setDueDialogOpen(false);
       showToast('복습 날짜를 변경했습니다.', 'success');
-      await loadQueueAndActiveCard(false);
+      await loadQueueAndActiveCard({ preserveCurrentCache: false, quiet: false });
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : '복습 날짜를 바꾸지 못했습니다.',
@@ -924,9 +1168,11 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
     stopAudio();
     try {
       await anki.removeNotes([nid], []);
+      undoActionKindsRef.current.push('other');
+      redoActionKindsRef.current = [];
       setDeleteConfirmOpen(false);
       showToast('노트를 삭제했습니다.', 'success');
-      await loadQueueAndActiveCard(false);
+      await loadQueueAndActiveCard({ preserveCurrentCache: false, quiet: false });
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : '노트를 삭제하지 못했습니다.',
@@ -937,231 +1183,94 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
     }
   };
 
-  // Back handler for open study modals
+  // Back handler: block while a modal mutation is in flight; otherwise stop audio on exit
   useEffect(() => {
     return registerBackHandler(() => {
       if (busyModal) return true;
-      if (cardInfoId !== null) {
-        setCardInfoId(null);
-        return true;
-      }
-      if (deleteConfirmOpen) {
-        setDeleteConfirmOpen(false);
-        return true;
-      }
-      if (dueDialogOpen) {
-        setDueDialogOpen(false);
-        return true;
-      }
-      if (forgetOpen) {
-        setForgetOpen(false);
-        return true;
-      }
-      if (customOpen) {
-        setCustomOpen(false);
-        return true;
-      }
-      if (overflowOpen) {
-        setOverflowOpen(false);
-        return true;
-      }
-      if (flagPickerOpen) {
-        setFlagPickerOpen(false);
-        return true;
-      }
       stopAudio();
       return false;
     });
-  }, [
-    busyModal,
-    cardInfoId,
-    deleteConfirmOpen,
-    dueDialogOpen,
-    forgetOpen,
-    customOpen,
-    overflowOpen,
-    flagPickerOpen,
-    stopAudio,
-    registerBackHandler,
-  ]);
+  }, [busyModal, stopAudio, registerBackHandler]);
 
-  // Unified action dispatcher for keyboard & Host SSE remote/volume keys
+  // Unified action dispatcher for keyboard, iframe-forwarded keys, and Host SSE hardware keys
   const handleStudyKeyAction = useCallback(
-    (keyRaw: string, opts: { shift?: boolean; ctrl?: boolean; meta?: boolean }) => {
-      const key = keyRaw.trim();
-      const lower = key.toLowerCase();
-      const hasCtrl = Boolean(opts.ctrl || opts.meta);
-      const hasShift = Boolean(opts.shift);
+    (
+      keyRaw: string,
+      opts: { code?: string; shift?: boolean; ctrl?: boolean; meta?: boolean; alt?: boolean }
+    ): boolean => {
+      const action = resolveStudyKeyAction(keyRaw, opts, {
+        showAnswer: showAnswerRef.current,
+        twoButtonMode,
+        volumeKeysEnabled,
+      });
+      if (!action) return false;
 
-      // Volume / Page remote keys
-      if (
-        lower === 'volumedown' ||
-        lower === 'volume_down' ||
-        lower === 'keycode_volume_down' ||
-        lower === 'pagedown' ||
-        lower === 'page_down' ||
-        lower === 'keycode_page_down' ||
-        lower === 'dpad_right' ||
-        lower === 'keycode_dpad_right'
-      ) {
-        if (!volumeKeysEnabled && lower.includes('volume')) return false;
-        if (!showAnswer) {
+      switch (action.type) {
+        case 'showAnswer':
           void handleShowAnswer();
-        } else {
-          void handleRate(anki.Rating.GOOD);
-        }
-        return true;
-      }
-
-      if (
-        lower === 'volumeup' ||
-        lower === 'volume_up' ||
-        lower === 'keycode_volume_up' ||
-        lower === 'pageup' ||
-        lower === 'page_up' ||
-        lower === 'keycode_page_up' ||
-        lower === 'dpad_left' ||
-        lower === 'keycode_dpad_left'
-      ) {
-        if (!volumeKeysEnabled && lower.includes('volume')) return false;
-        if (!showAnswer) {
-          void handleShowAnswer();
-        } else {
-          void handleRate(anki.Rating.AGAIN);
-        }
-        return true;
-      }
-
-      if (lower === 'dpad_center' || lower === 'keycode_dpad_center') {
-        if (!showAnswer) {
-          void handleShowAnswer();
-        } else {
-          void handleRate(anki.Rating.GOOD);
-        }
-        return true;
-      }
-
-      if (hasCtrl && /^[0-7]$/.test(key)) {
-        void handleSetFlag(Number(key));
-        return true;
-      }
-
-      if (hasCtrl && lower === 'z' && hasShift) {
-        void handleRedo();
-        return true;
-      }
-
-      if (hasCtrl && lower === 'y') {
-        void handleRedo();
-        return true;
-      }
-
-      if (hasCtrl && lower === 'z') {
-        void handleUndo();
-        return true;
-      }
-
-      if (key === ' ' || key === 'Spacebar' || key === 'Enter') {
-        if (!showAnswer) {
-          void handleShowAnswer();
-        } else {
-          void handleRate(anki.Rating.GOOD);
-        }
-        return true;
-      }
-
-      if (key === '1') {
-        if (showAnswer) void handleRate(anki.Rating.AGAIN);
-        return showAnswer;
-      }
-
-      if (key === '2') {
-        if (!showAnswer) return false;
-        void handleRate(twoButtonMode ? anki.Rating.GOOD : anki.Rating.HARD);
-        return true;
-      }
-
-      if (key === '3') {
-        if (!showAnswer || twoButtonMode) return twoButtonMode;
-        void handleRate(anki.Rating.GOOD);
-        return true;
-      }
-
-      if (key === '4') {
-        if (!showAnswer || twoButtonMode) return twoButtonMode;
-        void handleRate(anki.Rating.EASY);
-        return true;
-      }
-
-      if (lower === 'u' && !hasCtrl) {
-        void handleUndo();
-        return true;
-      }
-
-      if (lower === 'b' && !hasCtrl) {
-        setWhiteboardOpen((v) => !v);
-        return true;
-      }
-
-      if (key === '?') {
-        setShortcutsOpen((v) => !v);
-        return true;
-      }
-
-      if (lower === 'e' && !hasCtrl) {
-        const nid = activeCard?.card?.noteId;
-        if (nid !== undefined) {
-          stopAudio();
-          navigate(`#/note/${anki.toNumber(nid)}?from=study`);
+          return true;
+        case 'rate': {
+          const ratingMap = {
+            again: anki.Rating.AGAIN,
+            hard: anki.Rating.HARD,
+            good: anki.Rating.GOOD,
+            easy: anki.Rating.EASY,
+          } as const;
+          void handleRate(ratingMap[action.rating]);
           return true;
         }
+        case 'setFlag':
+          void handleSetFlag(action.flag);
+          return true;
+        case 'undo':
+          void handleUndo();
+          return true;
+        case 'redo':
+          void handleRedo();
+          return true;
+        case 'toggleWhiteboard':
+          setWhiteboardOpen((v) => !v);
+          return true;
+        case 'toggleShortcuts':
+          setShortcutsOpen((v) => !v);
+          return true;
+        case 'editNote': {
+          const nid = activeCard?.card?.noteId;
+          if (nid !== undefined) {
+            stopAudio();
+            navigate(`#/note/${anki.toNumber(nid)}?from=study`);
+            return true;
+          }
+          return false;
+        }
+        case 'replayAudio':
+          handleReplayAudio();
+          return true;
+        case 'stopAudio':
+          stopAudio();
+          return true;
+        case 'toggleMark':
+          void handleToggleMark();
+          return true;
+        case 'buryCard':
+          void handleBuryCard();
+          return true;
+        case 'buryNote':
+          void handleBuryNote();
+          return true;
+        case 'suspendCard':
+          void handleSuspendCard();
+          return true;
+        case 'suspendNote':
+          void handleSuspendNote();
+          return true;
+        case 'hanja':
+          cardFrameRef.current?.hanjaKey(action.action);
+          return true;
       }
-
-      if (lower === 'r' && !hasCtrl) {
-        handleReplayAudio();
-        return true;
-      }
-
-      if (key === '*') {
-        void handleToggleMark();
-        return true;
-      }
-
-      if (key === '-') {
-        void handleBuryCard();
-        return true;
-      }
-
-      if (key === '=') {
-        void handleBuryNote();
-        return true;
-      }
-
-      if (key === '@') {
-        void handleSuspendCard();
-        return true;
-      }
-
-      if (key === '!') {
-        void handleSuspendNote();
-        return true;
-      }
-
-      if (lower === 'q' && !hasCtrl) {
-        cardFrameRef.current?.hanjaKey('open');
-        return true;
-      }
-
-      if (lower === 'w' && !hasCtrl) {
-        cardFrameRef.current?.hanjaKey(hasShift ? 'prev' : 'next');
-        return true;
-      }
-
-      return false;
     },
     [
       volumeKeysEnabled,
-      showAnswer,
       twoButtonMode,
       activeCard,
       handleShowAnswer,
@@ -1183,7 +1292,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
   // Window keyboard listener
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.isComposing) return;
+      if (e.isComposing || e.keyCode === 229 || e.repeat) return;
       const target = e.target as HTMLElement | null;
       if (
         target &&
@@ -1194,13 +1303,22 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
       ) {
         return;
       }
-      if (document.querySelector('[role="dialog"]')) return;
+      // Do not hijack Space/Enter when focus is explicitly on a button or link (e.g. Tab to "다시" or "뒤로").
+      if (
+        (e.key === ' ' || e.key === 'Enter' || e.code === 'Space') &&
+        target?.closest('button, a[href], [role="button"], summary')
+      ) {
+        return;
+      }
+      if (hasBlockingOverlay()) return;
       if (!activeCard) return;
 
       const handled = handleStudyKeyAction(e.key, {
+        code: e.code,
         shift: e.shiftKey,
         ctrl: e.ctrlKey,
         meta: e.metaKey,
+        alt: e.altKey,
       });
       if (handled) {
         e.preventDefault();
@@ -1211,15 +1329,46 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [activeCard, handleStudyKeyAction]);
 
-  // Host SSE hardware key listener
+  // Host SSE hardware key listener (Android volume, page, dpad, media, Q/W keys)
   useEffect(() => {
     return registerKeyHandler((ev) => {
-      if (document.querySelector('[role="dialog"]')) return false;
+      if (hasBlockingOverlay()) return false;
+      const active = document.activeElement as HTMLElement | null;
+      if (
+        active &&
+        (active.tagName === 'INPUT' ||
+          active.tagName === 'TEXTAREA' ||
+          active.tagName === 'SELECT' ||
+          active.isContentEditable)
+      ) {
+        return false;
+      }
+      if (!activeCard) return false;
       const keyStr = ev.action || ev.key || '';
       if (!keyStr) return false;
       return handleStudyKeyAction(keyStr, { shift: ev.shift, ctrl: ev.ctrl });
     });
-  }, [registerKeyHandler, handleStudyKeyAction]);
+  }, [activeCard, registerKeyHandler, handleStudyKeyAction]);
+
+  // Forwarded keyboard events from inside the card iframe
+  const handleFrameKeyDown = useCallback(
+    (ev: CardFrameKeyEvent) => {
+      if (ev.repeat) return;
+      if (ev.key === 'Escape' && openOverlayCount() > 0) {
+        closeTopOverlay();
+        return;
+      }
+      if (hasBlockingOverlay() || !activeCard) return;
+      handleStudyKeyAction(ev.key, {
+        code: ev.code,
+        shift: ev.shift,
+        ctrl: ev.ctrl,
+        meta: ev.meta,
+        alt: ev.alt,
+      });
+    },
+    [activeCard, handleStudyKeyAction]
+  );
 
   const handlePlaySoundTag = useCallback(
     (tag: string) => {
@@ -1254,23 +1403,51 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
   const showRemainingCounts = ankiPrefs?.reviewing?.showRemainingDueCounts !== false;
   const showIntervals = ankiPrefs?.reviewing?.showIntervalsOnButtons !== false;
   const activeQueue = activeCard?.queue ?? -1;
-  const currentSideAvTags = prepared
-    ? showAnswer
-      ? prepared.aAvTags
-      : prepared.qAvTags
-    : [];
-
   const intervals = prepared?.intervals ?? ['', '', '', ''];
+  const currentFlagMeta = FLAG_OPTIONS.find((f) => f.flag === activeFlag);
+
+  const shortcutItems = useMemo<Array<[string, string]>>(
+    () => [
+      [
+        twoButtonMode ? '정답 보기 / 암기 완료' : '정답 보기 / 알맞음',
+        'Space / Enter',
+      ],
+      twoButtonMode
+        ? ['모름 · 암기 완료', '1 · 2']
+        : ['다시 · 어려움 · 알맞음 · 쉬움', '1 · 2 · 3 · 4'],
+      [
+        twoButtonMode ? '모름 · 암기 완료 (방향/페이지)' : '다시 · 알맞음 (방향/페이지)',
+        '← / → · PgUp / PgDn',
+      ],
+      ['되돌리기 / 다시 실행', 'U · Ctrl+Z / Ctrl+Shift+Z'],
+      ['필기장 켜기 / 닫기', 'B / Esc'],
+      ['노트 편집', 'E'],
+      ['오디오 다시 재생', 'R'],
+      ['별표 표시 토글', '*'],
+      ['카드 숨기기 / 노트 숨기기', '- / ='],
+      ['카드 일시 중지 / 노트 일시 중지', '@ / !'],
+      ['깃발 1~7 / 해제', 'Ctrl+1~7 / Ctrl+0'],
+      ['한자 조회 / 다음·이전 한자', 'Q / W · Shift+W'],
+    ],
+    [twoButtonMode]
+  );
+
+  const clampCustomVal = (raw: string): number => {
+    const parsed = Number.parseInt(raw.trim(), 10);
+    if (!Number.isFinite(parsed) || parsed < 1) return 1;
+    return Math.min(9999, parsed);
+  };
 
   return (
     <div className="amgi-study-screen">
-      {/* Calm 50px Studio Top Bar (56px E-Ink) */}
+      {/* Slim, calm top bar */}
       <header className="amgi-study-topbar">
         <button
           type="button"
-          className="amgi-study-top-btn amgi-btn-icon"
+          className="amgi-study-top-btn"
           aria-label="뒤로 가기"
-          onClick={() => {
+          onClick={(e) => {
+            e.currentTarget.blur();
             stopAudio();
             goBack('#/decks');
           }}
@@ -1313,11 +1490,14 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
         <div className="amgi-study-actions">
           <button
             type="button"
-            className="amgi-study-top-btn amgi-btn-icon"
+            className="amgi-study-top-btn"
             aria-label="되돌리기"
             title="되돌리기 (Ctrl+Z)"
             disabled={!canUndo || answering}
-            onClick={() => void handleUndo()}
+            onClick={(e) => {
+              e.currentTarget.blur();
+              void handleUndo();
+            }}
           >
             <IconUndo size={19} />
           </button>
@@ -1326,20 +1506,26 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
             <>
               <button
                 type="button"
-                className={`amgi-study-top-btn amgi-btn-icon ${whiteboardOpen ? 'is-active' : ''}`}
+                className={`amgi-study-top-btn amgi-study-top-wide-only ${whiteboardOpen ? 'is-active' : ''}`}
                 aria-label={whiteboardOpen ? '필기장 끄기' : '필기장 켜기'}
                 title="필기장 (B)"
-                onClick={() => setWhiteboardOpen((v) => !v)}
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  setWhiteboardOpen((v) => !v);
+                }}
               >
                 <IconPen size={18} />
               </button>
 
               <button
                 type="button"
-                className={`amgi-study-top-btn amgi-btn-icon ${activeFlag > 0 ? 'has-flag' : ''}`}
+                className={`amgi-study-top-btn amgi-study-top-wide-only ${activeFlag > 0 ? 'has-flag' : ''}`}
                 aria-label="깃발 지정"
                 title="깃발 지정 (Ctrl+1~7)"
-                onClick={() => setFlagPickerOpen(true)}
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  setFlagPickerOpen(true);
+                }}
               >
                 {activeFlag > 0 && resolvedTheme === 'eink' ? (
                   <span className="amgi-flag-badge">{activeFlag}</span>
@@ -1357,9 +1543,12 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
 
               <button
                 type="button"
-                className="amgi-study-top-btn amgi-btn-icon"
+                className="amgi-study-top-btn"
                 aria-label="학습 메뉴"
-                onClick={() => setOverflowOpen(true)}
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  setOverflowOpen(true);
+                }}
               >
                 <IconMore size={20} />
               </button>
@@ -1370,10 +1559,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
 
       {/* Whisper-thin Session Progress Bar */}
       {activeCard && queued && (
-        <div
-          className="amgi-study-progress-track"
-          aria-hidden="true"
-        >
+        <div className="amgi-study-progress-track" aria-hidden="true">
           <div
             className="amgi-study-progress-fill"
             style={{
@@ -1384,7 +1570,10 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                   (queued.reviewCount ?? 0);
                 const total = sessionDone + remaining;
                 if (total <= 0) return 0;
-                return Math.min(100, Math.max(sessionDone > 0 ? 4 : 0, Math.round((sessionDone / total) * 100)));
+                return Math.min(
+                  100,
+                  Math.max(sessionDone > 0 ? 4 : 0, Math.round((sessionDone / total) * 100))
+                );
               })()}%`,
             }}
           />
@@ -1394,7 +1583,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
       {/* Main Content Area: Loading / Error / Congrats / Card Stage */}
       {loading ? (
         <div className="amgi-study-loading-box">
-          <strong>카드를 불러오는 중입니다...</strong>
+          <strong>카드를 불러오고 있어요</strong>
           <span className="amgi-study-loading-sub">잠시만 기다려 주세요.</span>
         </div>
       ) : error ? (
@@ -1405,7 +1594,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
               message={error}
               onRetry={() => {
                 setLoading(true);
-                void loadQueueAndActiveCard(false);
+                void loadQueueAndActiveCard({ preserveCurrentCache: false, quiet: false });
               }}
             />
           </div>
@@ -1415,7 +1604,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
           <div className="amgi-study-congrats-card">
             <CelebrationBadge size={44} />
             <div className="amgi-study-congrats-header">
-              <h2 className="amgi-study-congrats-title">오늘 학습을 모두 마쳤습니다!</h2>
+              <h2 className="amgi-study-congrats-title">오늘 학습 완료</h2>
               <div className="amgi-study-congrats-deck">{deckName}</div>
             </div>
 
@@ -1432,7 +1621,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
 
             {congratsData && congratsData.secsUntilNextLearn > 0 && (
               <p className="amgi-study-congrats-wait">
-                다음 학습 카드가 {formatWaitKo(congratsData.secsUntilNextLearn)} 뒤에 열립니다.
+                다음 학습 카드가 {formatWaitKo(congratsData.secsUntilNextLearn)} 뒤에 열려요.
               </p>
             )}
 
@@ -1443,7 +1632,9 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                 onClick={() => {
                   void anki
                     .unburyDeck(deckId, anki.UnburyDeckMode.ALL)
-                    .then(() => loadQueueAndActiveCard(false))
+                    .then(() =>
+                      loadQueueAndActiveCard({ preserveCurrentCache: false, quiet: false })
+                    )
                     .catch((err) =>
                       showToast(
                         err instanceof Error ? err.message : '숨긴 카드를 불러오지 못했습니다.',
@@ -1474,6 +1665,18 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                 <span>맞춤 학습</span>
               </button>
             </div>
+
+            {canUndo && (
+              <button
+                type="button"
+                className="amgi-btn amgi-btn-ghost amgi-study-congrats-undo"
+                disabled={answering}
+                onClick={() => void handleUndo()}
+              >
+                <IconUndo size={16} />
+                <span>방금 카드 되돌리기</span>
+              </button>
+            )}
           </div>
         </div>
       ) : (
@@ -1487,27 +1690,30 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                 />
               )}
 
-              {(currentSideAvTags.length > 0 || isMarked || showTimer) && (
-                <div className="amgi-study-stage-overlay">
-                  <div className="amgi-study-overlay-left">
-                    {currentSideAvTags.length > 0 && (
+              {(replayAvTags.length > 0 || isMarked || showTimer) && (
+                <div className="amgi-study-card-meta">
+                  <div className="amgi-study-meta-left">
+                    {replayAvTags.length > 0 && (
                       <button
                         type="button"
-                        className={`amgi-audio-pill compact ${isAudioPlaying ? 'is-playing' : ''}`}
-                        onClick={handleReplayAudio}
+                        className={`amgi-audio-pill ${isAudioPlaying ? 'is-playing' : ''}`}
+                        onClick={(e) => {
+                          e.currentTarget.blur();
+                          handleReplayAudio();
+                        }}
                       >
                         <IconVolume size={15} />
                         <span>{isAudioPlaying ? '재생 중' : '다시 듣기'}</span>
                       </button>
                     )}
                   </div>
-                  <div className="amgi-study-overlay-right">
+                  <div className="amgi-study-meta-right">
                     {showTimer && (
                       <span className="amgi-timer-pill tabular">{elapsedSecs}초</span>
                     )}
                     {isMarked && (
                       <span className="amgi-mark-pill" aria-label="별표 표시됨">
-                        ★
+                        <IconStar size={14} fill="currentColor" />
                       </span>
                     )}
                   </div>
@@ -1524,18 +1730,18 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                   hanjaEnabled={hanjaEnabled}
                   onFrameReady={() => {
                     frameReadyRef.current = true;
-                    if (prepared && !showAnswer) {
+                    if (prepared && !showAnswerRef.current) {
                       sendFrontToFrame(prepared);
                     }
                   }}
                   onCardTap={() => {
-                    if (!showAnswer && tapToFlip) {
+                    if (!showAnswerRef.current && tapToFlip) {
                       void handleShowAnswer();
                     }
                   }}
                   onPlaySound={handlePlaySoundTag}
                   onTypeAnsSubmit={(val) => {
-                    if (!showAnswer) {
+                    if (!showAnswerRef.current) {
                       void handleShowAnswer(val);
                     }
                   }}
@@ -1545,6 +1751,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                       .catch(() => undefined);
                   }}
                   onBridgeCommand={handleBridgeCommand}
+                  onKeyDown={handleFrameKeyDown}
                 />
               </div>
 
@@ -1557,18 +1764,43 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
             </div>
           </main>
 
-          {/* Bottom Answer & Rating Dock */}
+          {/* Bottom Answer & Rating Dock (unified 56px height / 64px e-ink) */}
           <footer className="amgi-answer-bar">
             <div className="amgi-answer-bar-inner">
               {!showAnswer ? (
-                <button
-                  type="button"
-                  className="amgi-btn amgi-btn-primary amgi-show-answer-btn"
-                  onClick={() => void handleShowAnswer()}
-                >
-                  <span>정답 보기</span>
-                  <span className="amgi-show-answer-key" aria-hidden="true">Space</span>
-                </button>
+                <div className="amgi-show-answer-row">
+                  {canUndo && (
+                    <button
+                      type="button"
+                      className="amgi-study-undo-btn"
+                      aria-label="방금 평가 되돌리기"
+                      title="되돌리기 (Ctrl+Z)"
+                      disabled={answering}
+                      onClick={(e) => {
+                        e.currentTarget.blur();
+                        void handleUndo();
+                      }}
+                    >
+                      <IconUndo size={18} />
+                      <span className="amgi-study-undo-label">되돌리기</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="amgi-show-answer-btn"
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      void handleShowAnswer();
+                    }}
+                  >
+                    <span>정답 보기</span>
+                    <span className="amgi-show-answer-key" aria-hidden="true">
+                      Space
+                    </span>
+                  </button>
+                </div>
+              ) : !twoButtonKnown ? (
+                <div className="amgi-answer-bar-placeholder" aria-hidden="true" />
               ) : twoButtonMode ? (
                 <div
                   className={`amgi-rate-grid-2 ${leftHandedMode ? 'is-left-handed' : ''}`}
@@ -1577,31 +1809,35 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                     type="button"
                     className="amgi-rate-btn amgi-rate-again"
                     disabled={answering}
-                    onClick={() => void handleRate(anki.Rating.AGAIN)}
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      void handleRate(anki.Rating.AGAIN);
+                    }}
                   >
-                    <span className="amgi-rate-key" aria-hidden="true">1</span>
+                    <span className="amgi-rate-key" aria-hidden="true">
+                      1
+                    </span>
                     {showIntervals && intervals[0] && (
                       <span className="amgi-rate-ivl tabular">{intervals[0]}</span>
                     )}
-                    <span className="amgi-rate-label-row">
-                      <span className="amgi-rate-dot" aria-hidden="true" />
-                      <span className="amgi-rate-label">모름</span>
-                    </span>
+                    <span className="amgi-rate-label">모름</span>
                   </button>
                   <button
                     type="button"
                     className="amgi-rate-btn amgi-rate-good"
                     disabled={answering}
-                    onClick={() => void handleRate(anki.Rating.GOOD)}
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      void handleRate(anki.Rating.GOOD);
+                    }}
                   >
-                    <span className="amgi-rate-key" aria-hidden="true">2</span>
+                    <span className="amgi-rate-key" aria-hidden="true">
+                      2
+                    </span>
                     {showIntervals && intervals[2] && (
                       <span className="amgi-rate-ivl tabular">{intervals[2]}</span>
                     )}
-                    <span className="amgi-rate-label-row">
-                      <span className="amgi-rate-dot" aria-hidden="true" />
-                      <span className="amgi-rate-label">암기 완료</span>
-                    </span>
+                    <span className="amgi-rate-label">암기 완료</span>
                   </button>
                 </div>
               ) : (
@@ -1610,61 +1846,69 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                     type="button"
                     className="amgi-rate-btn amgi-rate-again"
                     disabled={answering}
-                    onClick={() => void handleRate(anki.Rating.AGAIN)}
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      void handleRate(anki.Rating.AGAIN);
+                    }}
                   >
-                    <span className="amgi-rate-key" aria-hidden="true">1</span>
+                    <span className="amgi-rate-key" aria-hidden="true">
+                      1
+                    </span>
                     {showIntervals && intervals[0] && (
                       <span className="amgi-rate-ivl tabular">{intervals[0]}</span>
                     )}
-                    <span className="amgi-rate-label-row">
-                      <span className="amgi-rate-dot" aria-hidden="true" />
-                      <span className="amgi-rate-label">다시</span>
-                    </span>
+                    <span className="amgi-rate-label">다시</span>
                   </button>
                   <button
                     type="button"
                     className="amgi-rate-btn amgi-rate-hard"
                     disabled={answering}
-                    onClick={() => void handleRate(anki.Rating.HARD)}
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      void handleRate(anki.Rating.HARD);
+                    }}
                   >
-                    <span className="amgi-rate-key" aria-hidden="true">2</span>
+                    <span className="amgi-rate-key" aria-hidden="true">
+                      2
+                    </span>
                     {showIntervals && intervals[1] && (
                       <span className="amgi-rate-ivl tabular">{intervals[1]}</span>
                     )}
-                    <span className="amgi-rate-label-row">
-                      <span className="amgi-rate-dot" aria-hidden="true" />
-                      <span className="amgi-rate-label">어려움</span>
-                    </span>
+                    <span className="amgi-rate-label">어려움</span>
                   </button>
                   <button
                     type="button"
                     className="amgi-rate-btn amgi-rate-good"
                     disabled={answering}
-                    onClick={() => void handleRate(anki.Rating.GOOD)}
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      void handleRate(anki.Rating.GOOD);
+                    }}
                   >
-                    <span className="amgi-rate-key" aria-hidden="true">3</span>
+                    <span className="amgi-rate-key" aria-hidden="true">
+                      3
+                    </span>
                     {showIntervals && intervals[2] && (
                       <span className="amgi-rate-ivl tabular">{intervals[2]}</span>
                     )}
-                    <span className="amgi-rate-label-row">
-                      <span className="amgi-rate-dot" aria-hidden="true" />
-                      <span className="amgi-rate-label">알맞음</span>
-                    </span>
+                    <span className="amgi-rate-label">알맞음</span>
                   </button>
                   <button
                     type="button"
                     className="amgi-rate-btn amgi-rate-easy"
                     disabled={answering}
-                    onClick={() => void handleRate(anki.Rating.EASY)}
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      void handleRate(anki.Rating.EASY);
+                    }}
                   >
-                    <span className="amgi-rate-key" aria-hidden="true">4</span>
+                    <span className="amgi-rate-key" aria-hidden="true">
+                      4
+                    </span>
                     {showIntervals && intervals[3] && (
                       <span className="amgi-rate-ivl tabular">{intervals[3]}</span>
                     )}
-                    <span className="amgi-rate-label-row">
-                      <span className="amgi-rate-dot" aria-hidden="true" />
-                      <span className="amgi-rate-label">쉬움</span>
-                    </span>
+                    <span className="amgi-rate-label">쉬움</span>
                   </button>
                 </div>
               )}
@@ -1722,6 +1966,23 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
               ]
             : []),
           {
+            id: 'toggle-whiteboard',
+            label: whiteboardOpen ? '필기장 끄기' : '필기장 켜기 (S펜·손글씨)',
+            description: '화면 위에 직접 써보며 한자·단어를 연습합니다 (B)',
+            icon: <IconPen size={18} />,
+            onSelect: () => setWhiteboardOpen((v) => !v),
+          },
+          {
+            id: 'set-flag',
+            label: '깃발 지정',
+            description:
+              activeFlag > 0 && currentFlagMeta
+                ? `현재: ${currentFlagMeta.label} (${activeFlag}번)`
+                : '카드에 색깔 깃발을 표시합니다 (Ctrl+1~7)',
+            icon: <IconFlag size={18} />,
+            onSelect: () => setFlagPickerOpen(true),
+          },
+          {
             id: 'edit-note',
             label: '노트 편집',
             icon: <IconEdit size={18} />,
@@ -1732,13 +1993,6 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                 navigate(`#/note/${anki.toNumber(nid)}?from=study`);
               }
             },
-          },
-          {
-            id: 'toggle-whiteboard',
-            label: whiteboardOpen ? '필기장 끄기' : '필기장 켜기 (S펜·손글씨)',
-            description: '화면 위에 직접 써보며 한자·단어를 연습합니다 (B)',
-            icon: <IconPen size={18} />,
-            onSelect: () => setWhiteboardOpen((v) => !v),
           },
           {
             id: 'toggle-mark',
@@ -1846,22 +2100,14 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
         open={shortcutsOpen}
         onClose={() => setShortcutsOpen(false)}
         title="학습 키보드 단축키"
-        subtitle="Anki 표준 단축키를 그대로 사용할 수 있습니다"
+        subtitle={
+          twoButtonMode
+            ? '현재 2버튼 모드가 적용되어 있습니다'
+            : 'Anki 표준 단축키를 그대로 사용할 수 있습니다'
+        }
       >
         <div className="amgi-shortcut-grid">
-          {[
-            ['정답 보기 / 알맞음', 'Space / Enter'],
-            ['다시 · 어려움 · 알맞음 · 쉬움', '1 · 2 · 3 · 4'],
-            ['되돌리기 / 다시 실행', 'Ctrl+Z / Ctrl+Shift+Z'],
-            ['필기장 (화이트보드) 켜기/끄기', 'B'],
-            ['노트 편집', 'E'],
-            ['오디오 다시 재생', 'R'],
-            ['별표 표시 토글', '*'],
-            ['카드 숨기기 / 노트 숨기기', '- / ='],
-            ['카드 일시 중지 / 노트 일시 중지', '@ / !'],
-            ['깃발 1~7 / 해제', 'Ctrl+1~7 / Ctrl+0'],
-            ['한자 조회 / 다음·이전 한자', 'Q / W · Shift+W'],
-          ].map(([label, keys]) => (
+          {shortcutItems.map(([label, keys]) => (
             <div key={label} className="amgi-shortcut-row">
               <span>{label}</span>
               <span className="amgi-kbd">{keys}</span>
@@ -1968,6 +2214,11 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
               autoFocus
               value={dueDaysInput}
               onChange={(e) => setDueDaysInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.nativeEvent.isComposing || e.keyCode === 229) {
+                  e.stopPropagation();
+                }
+              }}
               placeholder="예: 0 (오늘), 3 (3일 뒤), 1-7 (무작위), 7! (간격 재설정)"
             />
             <span className="amgi-field-hint">
@@ -2052,7 +2303,8 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
               disabled={busyModal}
               onClick={() => {
                 setBusyModal(true);
-                const val = Math.max(1, customVal);
+                const val = clampCustomVal(customValInput);
+                setCustomValInput(String(val));
                 const req: Parameters<typeof anki.customStudy>[0] =
                   customPreset === 'newLimitDelta'
                     ? { deckId, newLimitDelta: val }
@@ -2073,14 +2325,20 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                       customPreset === 'newLimitDelta' ||
                       customPreset === 'reviewLimitDelta'
                     ) {
-                      await loadQueueAndActiveCard(false);
+                      await loadQueueAndActiveCard({
+                        preserveCurrentCache: false,
+                        quiet: false,
+                      });
                     } else {
                       const tree = await anki.deckTree();
                       const filteredId = findCustomStudyDeckId(tree);
                       if (filteredId) {
                         navigate(`#/study/${filteredId}`);
                       } else {
-                        await loadQueueAndActiveCard(false);
+                        await loadQueueAndActiveCard({
+                          preserveCurrentCache: false,
+                          quiet: false,
+                        });
                       }
                     }
                   })
@@ -2104,7 +2362,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
             className={`amgi-radio-card ${customPreset === 'newLimitDelta' ? 'active' : ''}`}
             onClick={() => {
               setCustomPreset('newLimitDelta');
-              setCustomVal(10);
+              setCustomValInput('10');
             }}
           >
             <span className="amgi-radio-card-title">오늘 새 카드 더 공부하기</span>
@@ -2114,7 +2372,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
             className={`amgi-radio-card ${customPreset === 'reviewLimitDelta' ? 'active' : ''}`}
             onClick={() => {
               setCustomPreset('reviewLimitDelta');
-              setCustomVal(20);
+              setCustomValInput('20');
             }}
           >
             <span className="amgi-radio-card-title">오늘 복습 카드 더 공부하기</span>
@@ -2124,7 +2382,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
             className={`amgi-radio-card ${customPreset === 'forgotDays' ? 'active' : ''}`}
             onClick={() => {
               setCustomPreset('forgotDays');
-              setCustomVal(1);
+              setCustomValInput('1');
             }}
           >
             <span className="amgi-radio-card-title">최근 틀린 카드 다시 보기</span>
@@ -2134,7 +2392,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
             className={`amgi-radio-card ${customPreset === 'reviewAheadDays' ? 'active' : ''}`}
             onClick={() => {
               setCustomPreset('reviewAheadDays');
-              setCustomVal(1);
+              setCustomValInput('1');
             }}
           >
             <span className="amgi-radio-card-title">미리 복습하기</span>
@@ -2144,7 +2402,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
             className={`amgi-radio-card ${customPreset === 'previewDays' ? 'active' : ''}`}
             onClick={() => {
               setCustomPreset('previewDays');
-              setCustomVal(1);
+              setCustomValInput('1');
             }}
           >
             <span className="amgi-radio-card-title">최근 새 카드 미리 보기</span>
@@ -2158,12 +2416,13 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
             </label>
             <input
               id="study-cs-val"
-              type="number"
-              min={1}
-              max={9999}
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
               className="amgi-input tabular"
-              value={customVal}
-              onChange={(e) => setCustomVal(Number(e.target.value) || 1)}
+              value={customValInput}
+              onChange={(e) => setCustomValInput(e.target.value.replace(/[^0-9]/g, ''))}
+              onBlur={() => setCustomValInput(String(clampCustomVal(customValInput)))}
             />
           </div>
         </div>

@@ -13,12 +13,23 @@ import {
   SheetOrDialog,
   useToast,
 } from '../../ui';
+import { pushOverlay } from '../../ui/overlayStack';
 import { CardFrame, type CardFrameHandle } from '../shared/CardFrame';
-import { RichFieldInput, type RichFieldInputHandle } from './RichFieldInput';
-import { TagChipInput } from './TagChipInput';
+import {
+  normalizeEmptyFieldHtml,
+  RichFieldInput,
+  type RichFieldInputHandle,
+} from './RichFieldInput';
+import { TagChipInput, type TagChipInputHandle } from './TagChipInput';
 import './editor.css';
 
-const COLOR_SWATCHES = ['#D93025', '#2F6FED', '#1E8E3E', '#B26A00', '#8B5CF6'];
+const COLOR_SWATCHES: Array<{ label: string; colorValue: string; tokenVar: string }> = [
+  { label: '빨강', colorValue: '#D93025', tokenVar: 'var(--danger)' },
+  { label: '파랑', colorValue: '#3182F6', tokenVar: 'var(--primary)' },
+  { label: '초록', colorValue: '#0BA360', tokenVar: 'var(--good)' },
+  { label: '주황', colorValue: '#E07400', tokenVar: 'var(--hard)' },
+  { label: '보라', colorValue: '#8B5CF6', tokenVar: 'var(--flag-7)' },
+];
 
 function renderNodesToHtml(
   nodes: anki.RenderCardResponse['questionNodes'] | undefined
@@ -29,17 +40,88 @@ function renderNodesToHtml(
     .join('');
 }
 
-function extractClozeNumsFallback(fields: string[]): number[] {
+function stripHtmlPreview(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function extractClozeNumsFallback(fields: string[]): number[] {
   const nums = new Set<number>();
   const re = /\{\{c(\d+)::/gi;
   for (const f of fields) {
     let m: RegExpExecArray | null;
+    re.lastIndex = 0;
     while ((m = re.exec(f)) !== null) {
       const n = Number(m[1]);
       if (Number.isInteger(n) && n >= 1) nums.add(n);
     }
   }
   return Array.from(nums).sort((a, b) => a - b);
+}
+
+/**
+ * Maps current field values to a target notetype in Add mode by matching field names first,
+ * then falling back to positional mapping for unmapped non-empty values.
+ */
+function mapFieldsForAddSwitch(
+  oldFields: Array<{ name?: string | null }>,
+  oldValues: string[],
+  newFields: Array<{ name?: string | null }>,
+  blankDefaults: string[]
+): { mapped: string[]; droppedCount: number } {
+  const mapped = newFields.map((_, idx) => blankDefaults[idx] ?? '');
+  const usedOldIndices = new Set<number>();
+  const usedNewIndices = new Set<number>();
+
+  // 1. Match by normalized field name
+  const newNameMap = new Map<string, number>();
+  newFields.forEach((f, idx) => {
+    const key = (f.name ?? '').trim().toLowerCase();
+    if (key && !newNameMap.has(key)) newNameMap.set(key, idx);
+  });
+
+  oldFields.forEach((f, oldIdx) => {
+    const val = normalizeEmptyFieldHtml(oldValues[oldIdx] ?? '');
+    if (!val) return;
+    const key = (f.name ?? '').trim().toLowerCase();
+    const targetIdx = key ? newNameMap.get(key) : undefined;
+    if (targetIdx !== undefined && !usedNewIndices.has(targetIdx)) {
+      mapped[targetIdx] = val;
+      usedOldIndices.add(oldIdx);
+      usedNewIndices.add(targetIdx);
+    }
+  });
+
+  // 2. Map remaining non-empty fields into remaining target slots
+  let droppedCount = 0;
+  oldValues.forEach((raw, oldIdx) => {
+    if (usedOldIndices.has(oldIdx)) return;
+    const val = normalizeEmptyFieldHtml(raw ?? '');
+    if (!val) return;
+    let targetIdx = -1;
+    if (oldIdx < newFields.length && !usedNewIndices.has(oldIdx)) {
+      targetIdx = oldIdx;
+    } else {
+      for (let i = 0; i < newFields.length; i++) {
+        if (!usedNewIndices.has(i)) {
+          targetIdx = i;
+          break;
+        }
+      }
+    }
+    if (targetIdx >= 0) {
+      mapped[targetIdx] = val;
+      usedNewIndices.add(targetIdx);
+    } else {
+      droppedCount += 1;
+    }
+  });
+
+  return { mapped, droppedCount };
 }
 
 function useIsWide(breakpoint = 900): boolean {
@@ -105,17 +187,41 @@ export const NoteEditorView: React.FC<{
   const [fieldCheckState, setFieldCheckState] = useState<number>(
     anki.NoteFieldsState.NORMAL
   );
+  const [duplicateIds, setDuplicateIds] = useState<number[]>([]);
+  const [dupesSheetOpen, setDupesSheetOpen] = useState(false);
+  const [dupeNotes, setDupeNotes] = useState<anki.Note[]>([]);
+  const [loadingDupes, setLoadingDupes] = useState(false);
+  const [confirmLeaveForDupesOpen, setConfirmLeaveForDupesOpen] = useState(false);
+
   const [clozeNums, setClozeNums] = useState<number[]>([]);
+
+  // Pending Add-mode notetype switch confirmation when fields would be dropped
+  const [pendingAddSwitch, setPendingAddSwitch] = useState<{
+    ntid: number;
+    loadedNt: anki.Notetype;
+    blank: anki.Note;
+    mapped: string[];
+    droppedCount: number;
+  } | null>(null);
 
   // Toolbar popovers & file pickers
   const [colorPaletteOpen, setColorPaletteOpen] = useState(false);
   const [moreToolsOpen, setMoreToolsOpen] = useState(false);
   const [recording, setRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
+  const mountedRef = useRef(true);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const audioInputRef = useRef<HTMLInputElement | null>(null);
   const fieldRefs = useRef<Array<RichFieldInputHandle | null>>([]);
+  const tagInputRef = useRef<TagChipInputHandle | null>(null);
+
+  const fieldsRef = useRef(fields);
+  fieldsRef.current = fields;
+  const loadSeqRef = useRef(0);
+  const checkSeqRef = useRef(0);
+  const previewSeqRef = useRef(0);
 
   // Preview state
   const [showPreview, setShowPreview] = useState(() =>
@@ -130,10 +236,53 @@ export const NoteEditorView: React.FC<{
 
   // Change notetype dialog in Edit Mode
   const [changeNtOpen, setChangeNtOpen] = useState(false);
+  const [changingNt, setChangingNt] = useState(false);
+  const [loadingNtInfo, setLoadingNtInfo] = useState(false);
   const [targetNtId, setTargetNtId] = useState<number>(0);
   const [changeNtInfo, setChangeNtInfo] = useState<anki.ChangeNotetypeInfo | null>(null);
   const [ntFieldMap, setNtFieldMap] = useState<number[]>([]);
   const [ntTemplateMap, setNtTemplateMap] = useState<number[]>([]);
+  const changeNtSeqRef = useRef(0);
+
+  // Cleanup active mic stream and recorder on unmount
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state !== 'inactive') {
+        recorder.onstop = null;
+        try {
+          recorder.stop();
+        } catch {
+          // Ignore stop errors during teardown
+        }
+      }
+      mediaRecorderRef.current = null;
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+        mediaStreamRef.current = null;
+      }
+    };
+  }, []);
+
+  // Register inline popovers on global overlayStack so Android hardware back closes them first
+  useEffect(() => {
+    if (!moreToolsOpen) return;
+    return pushOverlay({
+      close: () => {
+        setColorPaletteOpen(false);
+        setMoreToolsOpen(false);
+      },
+    });
+  }, [moreToolsOpen]);
+
+  useEffect(() => {
+    if (!colorPaletteOpen) return;
+    return pushOverlay({
+      close: () => setColorPaletteOpen(false),
+    });
+  }, [colorPaletteOpen]);
 
   const applyStickyFromNotetype = useCallback(
     (nt: anki.Notetype) => {
@@ -154,6 +303,7 @@ export const NoteEditorView: React.FC<{
   );
 
   const loadInitial = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     setLoadError(null);
     try {
@@ -162,12 +312,14 @@ export const NoteEditorView: React.FC<{
         anki.getNotetypeNames(),
         anki.getPreferences().catch(() => null),
       ]);
+      if (seq !== loadSeqRef.current) return;
       setDecks(deckList);
       setNotetypeList(ntNames);
       setPasteStrips(Boolean(ankiPrefs?.editing?.pasteStripsFormatting));
 
       if (isAddMode) {
         const defaults = await anki.defaultsForAdding(defaultDeckId ?? 0);
+        if (seq !== loadSeqRef.current) return;
         const prefDeck =
           typeof prefs['editor.lastDeckId'] === 'number'
             ? (prefs['editor.lastDeckId'] as number)
@@ -191,6 +343,7 @@ export const NoteEditorView: React.FC<{
           anki.getNotetype(targetNt),
           anki.newNote(targetNt),
         ]);
+        if (seq !== loadSeqRef.current) return;
         setSelectedDeckId(targetDeck || 1);
         setInitialDeckId(targetDeck || 1);
         setNotetype(loadedNt);
@@ -206,10 +359,13 @@ export const NoteEditorView: React.FC<{
           anki.getNote(noteId!),
           anki.cardsOfNote(noteId!),
         ]);
+        if (seq !== loadSeqRef.current) return;
         const loadedNt = await anki.getNotetype(loadedNote.notetypeId);
+        if (seq !== loadSeqRef.current) return;
         let deckForNote = 1;
         if (cids.length > 0) {
           const firstCard = await anki.getCard(cids[0]);
+          if (seq !== loadSeqRef.current) return;
           deckForNote = anki.toNumber(firstCard.deckId) || 1;
         }
         setCardIdsOfEditedNote(cids);
@@ -224,11 +380,14 @@ export const NoteEditorView: React.FC<{
         setDirty(false);
       }
     } catch (err) {
+      if (seq !== loadSeqRef.current) return;
       setLoadError(
         err instanceof Error ? err.message : '노트 편집기를 불러오지 못했습니다.'
       );
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) {
+        setLoading(false);
+      }
     }
   }, [isAddMode, noteId, defaultDeckId, prefs, applyStickyFromNotetype]);
 
@@ -238,31 +397,24 @@ export const NoteEditorView: React.FC<{
   }, [noteId, defaultDeckId]);
 
   const attemptGoBack = useCallback(() => {
-    if (dirty) {
+    if (dirty || Boolean(tagInputRef.current?.hasPendingInput())) {
       setDiscardDialogOpen(true);
       return true;
     }
-    goBack('#/decks');
+    goBack(isAddMode ? '#/decks' : '#/browse', { force: true });
     return true;
-  }, [dirty, goBack]);
+  }, [dirty, goBack, isAddMode]);
 
+  // Overlays (sheets, dialogs, inline popovers) close via overlayStack before this runs.
   useEffect(() => {
     return registerBackHandler(() => {
-      if (discardDialogOpen) {
-        setDiscardDialogOpen(false);
-        return true;
-      }
-      if (!isWide && showPreview) {
-        setShowPreview(false);
-        return true;
-      }
-      if (dirty) {
+      if (dirty || Boolean(tagInputRef.current?.hasPendingInput())) {
         setDiscardDialogOpen(true);
         return true;
       }
       return false;
     });
-  }, [registerBackHandler, discardDialogOpen, isWide, showPreview, dirty]);
+  }, [registerBackHandler, dirty]);
 
   const isClozeNotetype =
     notetype?.config?.kind === anki.NotetypeKind.KIND_CLOZE;
@@ -279,43 +431,68 @@ export const NoteEditorView: React.FC<{
     };
   }, [note, notetype, fields, tags]);
 
-  // Live duplicate & cloze check (debounced 250ms)
+  // Live duplicate (via anki.findDuplicates) & cloze check (debounced 250ms)
   useEffect(() => {
     if (!notetype || fields.length === 0) return;
-    let cancelled = false;
+    const seq = ++checkSeqRef.current;
+    const firstField = normalizeEmptyFieldHtml(fields[0] ?? '');
+    const currentNoteIdNum = note?.id ? anki.toNumber(note.id) : 0;
+
     const timer = window.setTimeout(async () => {
       try {
-        const [checkRes, clozeRes] = await Promise.all([
+        const [checkRes, dupeRes, clozeRes] = await Promise.all([
           anki.noteFieldsCheck(currentNotePayload),
+          firstField
+            ? anki.findDuplicates(notetype.id, firstField).catch(() => [] as number[])
+            : Promise.resolve([] as number[]),
           isClozeNotetype
             ? anki.clozeNumbersInNote(currentNotePayload).catch(() =>
                 extractClozeNumsFallback(fields)
               )
             : Promise.resolve([] as number[]),
         ]);
-        if (cancelled) return;
-        setFieldCheckState(checkRes.state);
+        if (seq !== checkSeqRef.current) return;
+
+        const filteredDupes = currentNoteIdNum
+          ? dupeRes.filter((id) => id !== currentNoteIdNum)
+          : dupeRes;
+        setDuplicateIds(filteredDupes);
+
+        // Reflect accurate findDuplicates semantics for duplicate state
+        if (
+          checkRes.state === anki.NoteFieldsState.DUPLICATE &&
+          filteredDupes.length === 0
+        ) {
+          setFieldCheckState(anki.NoteFieldsState.NORMAL);
+        } else if (
+          checkRes.state === anki.NoteFieldsState.NORMAL &&
+          filteredDupes.length > 0
+        ) {
+          setFieldCheckState(anki.NoteFieldsState.DUPLICATE);
+        } else {
+          setFieldCheckState(checkRes.state);
+        }
+
         if (isClozeNotetype) {
           setClozeNums(clozeRes);
         } else {
           setClozeNums([]);
         }
       } catch {
-        if (!cancelled && isClozeNotetype) {
+        if (seq === checkSeqRef.current && isClozeNotetype) {
           setClozeNums(extractClozeNumsFallback(fields));
         }
       }
     }, 250);
     return () => {
-      cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [currentNotePayload, notetype, fields, isClozeNotetype]);
+  }, [currentNotePayload, notetype, note?.id, fields, isClozeNotetype]);
 
   // Live Card Preview rendering (debounced 200ms)
   useEffect(() => {
     if (!showPreview || !notetype || !notetype.templates?.length) return;
-    let cancelled = false;
+    const seq = ++previewSeqRef.current;
     const timer = window.setTimeout(async () => {
       try {
         const tpl = isClozeNotetype
@@ -331,7 +508,7 @@ export const NoteEditorView: React.FC<{
           true,
           false
         );
-        if (!cancelled) {
+        if (seq === previewSeqRef.current) {
           setRenderedPreview(res);
         }
       } catch {
@@ -339,7 +516,6 @@ export const NoteEditorView: React.FC<{
       }
     }, 200);
     return () => {
-      cancelled = true;
       window.clearTimeout(timer);
     };
   }, [
@@ -365,6 +541,18 @@ export const NoteEditorView: React.FC<{
     });
   }, [renderedPreview, previewSide, resolvedTheme, notetype?.config?.css]);
 
+  const readLiveFields = useCallback((): string[] => {
+    const count = notetype?.fields?.length ?? fieldsRef.current.length;
+    const out: string[] = [];
+    for (let i = 0; i < count; i++) {
+      const live = fieldRefs.current[i]?.getValue();
+      out.push(
+        normalizeEmptyFieldHtml(live !== undefined ? live : fieldsRef.current[i] ?? '')
+      );
+    }
+    return out;
+  }, [notetype?.fields?.length]);
+
   const handleSelectDeck = (did: number) => {
     setSelectedDeckId(did);
     setDirty(true);
@@ -373,21 +561,37 @@ export const NoteEditorView: React.FC<{
     }
   };
 
+  const applyAddNotetypeSwitch = useCallback(
+    (ntid: number, loadedNt: anki.Notetype, blank: anki.Note, mapped: string[]) => {
+      setNotetype(loadedNt);
+      setNote(blank);
+      setFields(mapped);
+      setPreviewOrd(0);
+      applyStickyFromNotetype(loadedNt);
+      void setPref('editor.lastNotetypeId', ntid).catch(() => undefined);
+    },
+    [applyStickyFromNotetype, setPref]
+  );
+
   const handleSwitchNotetypeInAddMode = async (ntid: number) => {
-    if (!isAddMode) return;
+    if (!isAddMode || !notetype || anki.toNumber(notetype.id) === ntid) return;
     try {
       const [loadedNt, blank] = await Promise.all([
         anki.getNotetype(ntid),
         anki.newNote(ntid),
       ]);
-      setNotetype(loadedNt);
-      setNote(blank);
-      setFields((prev) =>
-        (loadedNt.fields ?? []).map((_, idx) => prev[idx] ?? blank.fields?.[idx] ?? '')
+      const liveFields = readLiveFields();
+      const { mapped, droppedCount } = mapFieldsForAddSwitch(
+        notetype.fields ?? [],
+        liveFields,
+        loadedNt.fields ?? [],
+        (loadedNt.fields ?? []).map((_, idx) => blank.fields?.[idx] ?? '')
       );
-      setPreviewOrd(0);
-      applyStickyFromNotetype(loadedNt);
-      void setPref('editor.lastNotetypeId', ntid).catch(() => undefined);
+      if (droppedCount > 0) {
+        setPendingAddSwitch({ ntid, loadedNt, blank, mapped, droppedCount });
+        return;
+      }
+      applyAddNotetypeSwitch(ntid, loadedNt, blank, mapped);
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : '노트 유형을 바꾸지 못했습니다.',
@@ -406,13 +610,17 @@ export const NoteEditorView: React.FC<{
     }
   };
 
+  // Recompute cloze numbering synchronously from live field contents on every insert
   const handleInsertCloze = (sameNumber: boolean) => {
     const target = fieldRefs.current[focusedFieldIdx];
     if (!target) return;
-    const nums = clozeNums.length > 0 ? clozeNums : extractClozeNumsFallback(fields);
+    const liveFields = readLiveFields();
+    const nums = extractClozeNumsFallback(liveFields);
     const maxNum = nums.length > 0 ? Math.max(...nums) : 0;
     const nextNum = sameNumber ? Math.max(1, maxNum) : maxNum + 1;
     target.insertCloze(nextNum);
+    const updatedFields = readLiveFields();
+    setClozeNums(extractClozeNumsFallback(updatedFields));
     setDirty(true);
   };
 
@@ -471,6 +679,11 @@ export const NoteEditorView: React.FC<{
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!mountedRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      mediaStreamRef.current = stream;
       const recorder = new MediaRecorder(stream);
       recordedChunksRef.current = [];
       recorder.ondataavailable = (ev) => {
@@ -478,6 +691,10 @@ export const NoteEditorView: React.FC<{
       };
       recorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
+        if (mediaStreamRef.current === stream) {
+          mediaStreamRef.current = null;
+        }
+        if (!mountedRef.current) return;
         const blob = new Blob(recordedChunksRef.current, {
           type: recorder.mimeType || 'audio/webm',
         });
@@ -485,10 +702,12 @@ export const NoteEditorView: React.FC<{
         try {
           const data = new Uint8Array(await blob.arrayBuffer());
           const savedName = await anki.addMediaFile(`rec_${Date.now()}.${ext}`, data);
+          if (!mountedRef.current) return;
           fieldRefs.current[focusedFieldIdx]?.insertMediaHtml(`[sound:${savedName}]`);
           setDirty(true);
           showToast('녹음 파일을 추가했습니다.', 'success');
         } catch (err) {
+          if (!mountedRef.current) return;
           showToast(
             err instanceof Error ? err.message : '녹음 저장에 실패했습니다.',
             'error'
@@ -499,17 +718,70 @@ export const NoteEditorView: React.FC<{
       recorder.start();
       setRecording(true);
     } catch {
+      if (!mountedRef.current) return;
       showToast('마이크 권한을 사용할 수 없어 파일 선택기를 엽니다.');
       audioInputRef.current?.click();
     }
   };
 
+  const handleOpenDuplicatesSheet = async () => {
+    if (!notetype) return;
+    setDupesSheetOpen(true);
+    setLoadingDupes(true);
+    try {
+      const liveFirst = readLiveFields()[0] ?? '';
+      const ids =
+        duplicateIds.length > 0
+          ? duplicateIds
+          : await anki.findDuplicates(notetype.id, liveFirst);
+      const currentNid = note?.id ? anki.toNumber(note.id) : 0;
+      const filtered = currentNid ? ids.filter((id) => id !== currentNid) : ids;
+      setDuplicateIds(filtered);
+      const loaded = await Promise.all(
+        filtered.slice(0, 10).map((nid) => anki.getNote(nid).catch(() => null))
+      );
+      if (mountedRef.current) {
+        setDupeNotes(loaded.filter((n): n is anki.Note => n !== null));
+      }
+    } catch {
+      if (mountedRef.current) setDupeNotes([]);
+    } finally {
+      if (mountedRef.current) setLoadingDupes(false);
+    }
+  };
+
+  const navigateToDuplicatesInBrowser = () => {
+    setConfirmLeaveForDupesOpen(false);
+    setDupesSheetOpen(false);
+    setDirty(false);
+    const query =
+      duplicateIds.length > 0
+        ? `nid:${duplicateIds.join(',')}`
+        : `"${stripHtmlPreview(readLiveFields()[0] ?? '')}"`;
+    navigate(`#/browse?q=${encodeURIComponent(query)}`);
+  };
+
   const handleSubmit = async () => {
     if (!notetype || saving) return;
+    // Flush any uncommitted Korean/text tags and read live normalized fields before saving
+    const finalTags = tagInputRef.current?.flush() ?? tags;
+    const finalFields = readLiveFields();
+    setFields(finalFields);
+
+    const payloadToSave: AnkiTypes.notes.Note.$Properties = {
+      id: note?.id ?? 0,
+      guid: note?.guid ?? '',
+      notetypeId: notetype.id,
+      mtimeSecs: note?.mtimeSecs ?? 0,
+      usn: note?.usn ?? 0,
+      fields: finalFields,
+      tags: finalTags,
+    };
+
     setSaving(true);
     try {
       if (isAddMode) {
-        const res = await anki.addNote(currentNotePayload, selectedDeckId);
+        const res = await anki.addNote(payloadToSave, selectedDeckId);
         const createdCount = res.changes?.count ?? 1;
         bumpCollection();
         showToast(
@@ -519,23 +791,23 @@ export const NoteEditorView: React.FC<{
 
         const blank = await anki.newNote(notetype.id);
         setNote(blank);
-        setFields((prev) =>
+        setFields(
           (notetype.fields ?? []).map((_, idx) =>
-            pinnedFields[idx] ? prev[idx] ?? '' : ''
+            pinnedFields[idx] ? finalFields[idx] ?? '' : ''
           )
         );
         setDirty(false);
         setFocusedFieldIdx(0);
         window.setTimeout(() => fieldRefs.current[0]?.focus(), 30);
       } else {
-        await anki.updateNotes([currentNotePayload], false);
+        await anki.updateNotes([payloadToSave], false);
         if (selectedDeckId !== initialDeckId && cardIdsOfEditedNote.length > 0) {
           await anki.setDeck(cardIdsOfEditedNote, selectedDeckId);
         }
         bumpCollection();
         setDirty(false);
         showToast('노트를 저장했습니다.', 'success');
-        goBack('#/browse');
+        goBack('#/browse', { force: true });
       }
     } catch (err) {
       showToast(
@@ -554,6 +826,7 @@ export const NoteEditorView: React.FC<{
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.isComposing || e.keyCode === 229) return;
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
         void handleSubmitRef.current();
@@ -589,8 +862,34 @@ export const NoteEditorView: React.FC<{
   };
 
   const handleConfirmChangeNtInEdit = async () => {
-    if (!changeNtInfo?.input || !note || !notetype) return;
+    if (!changeNtInfo?.input || !note || !notetype || changingNt || loadingNtInfo) return;
+    setChangingNt(true);
     try {
+      // Preserve unsaved edits by committing them before Anki remaps fields to the new notetype
+      const finalTags = tagInputRef.current?.flush() ?? tags;
+      const finalFields = readLiveFields();
+      const tagsChanged =
+        finalTags.length !== tags.length || finalTags.some((t, i) => t !== tags[i]);
+      if (dirty || tagsChanged) {
+        await anki.updateNotes(
+          [
+            {
+              id: note.id,
+              guid: note.guid,
+              notetypeId: notetype.id,
+              mtimeSecs: note.mtimeSecs,
+              usn: note.usn,
+              fields: finalFields,
+              tags: finalTags,
+            },
+          ],
+          false
+        );
+        if (selectedDeckId !== initialDeckId && cardIdsOfEditedNote.length > 0) {
+          await anki.setDeck(cardIdsOfEditedNote, selectedDeckId);
+        }
+      }
+
       await anki.changeNotetype({
         noteIds: [note.id],
         newFields: ntFieldMap,
@@ -610,6 +909,8 @@ export const NoteEditorView: React.FC<{
         err instanceof Error ? err.message : '노트 유형을 변경하지 못했습니다.',
         'error'
       );
+    } finally {
+      setChangingNt(false);
     }
   };
 
@@ -617,7 +918,10 @@ export const NoteEditorView: React.FC<{
     switch (fieldCheckState) {
       case anki.NoteFieldsState.DUPLICATE:
         return {
-          text: '이미 같은 첫 번째 필드를 가진 노트가 있습니다.',
+          text:
+            duplicateIds.length > 0
+              ? `같은 첫 번째 필드를 가진 노트가 ${duplicateIds.length}개 있습니다.`
+              : '이미 같은 첫 번째 필드를 가진 노트가 있습니다.',
           canSearchDupes: true,
         };
       case anki.NoteFieldsState.EMPTY:
@@ -643,7 +947,7 @@ export const NoteEditorView: React.FC<{
       default:
         return null;
     }
-  }, [fieldCheckState]);
+  }, [fieldCheckState, duplicateIds.length]);
 
   const previewTabs = useMemo(() => {
     if (!notetype) return [];
@@ -660,7 +964,7 @@ export const NoteEditorView: React.FC<{
   if (loading) {
     return (
       <div className="amgi-editor-root">
-        <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-2)' }}>
+        <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-3)' }}>
           편집기를 불러오는 중...
         </div>
       </div>
@@ -763,7 +1067,9 @@ export const NoteEditorView: React.FC<{
           <button
             type="button"
             disabled={saving}
-            className="amgi-btn amgi-btn-primary amgi-btn-sm"
+            className={`amgi-btn amgi-btn-primary amgi-btn-sm ${
+              !isWide ? 'amgi-editor-topbar-save-mobile' : ''
+            }`.trim()}
             onClick={() => void handleSubmit()}
           >
             <IconCheck size={16} />
@@ -778,15 +1084,15 @@ export const NoteEditorView: React.FC<{
         }`.trim()}
       >
         <div className="amgi-editor-form-pane">
-          {/* Deck & NoteType Pickers */}
-          <div className="amgi-editor-pickers">
-            <div className="amgi-editor-picker-box">
+          {/* Deck & NoteType Pickers as clean Toss rows on a flat white card */}
+          <section className="amgi-editor-meta-card" aria-label="덱 및 노트 유형">
+            <div className="amgi-editor-picker-row">
               <label htmlFor="note-deck-select" className="amgi-editor-picker-label">
                 덱
               </label>
               <select
                 id="note-deck-select"
-                className="amgi-select"
+                className="amgi-editor-picker-select"
                 value={selectedDeckId}
                 onChange={(e) => handleSelectDeck(Number(e.target.value))}
               >
@@ -801,14 +1107,14 @@ export const NoteEditorView: React.FC<{
               </select>
             </div>
 
-            <div className="amgi-editor-picker-box">
+            <div className="amgi-editor-picker-row">
               <label htmlFor="note-type-select" className="amgi-editor-picker-label">
                 노트 유형
               </label>
               {isAddMode ? (
                 <select
                   id="note-type-select"
-                  className="amgi-select"
+                  className="amgi-editor-picker-select"
                   value={anki.toNumber(notetype.id)}
                   onChange={(e) =>
                     void handleSwitchNotetypeInAddMode(Number(e.target.value))
@@ -825,26 +1131,22 @@ export const NoteEditorView: React.FC<{
                 </select>
               ) : (
                 <div className="amgi-editor-nt-row">
-                  <input
-                    id="note-type-select"
-                    type="text"
-                    className="amgi-input"
-                    readOnly
-                    value={notetype.name}
-                  />
+                  <span id="note-type-select" className="amgi-editor-nt-value">
+                    {notetype.name}
+                  </span>
                   <button
                     type="button"
                     className="amgi-btn amgi-btn-secondary amgi-btn-sm"
                     onClick={() => void handleOpenChangeNtInEdit()}
                   >
-                    변경...
+                    변경
                   </button>
                 </div>
               )}
             </div>
-          </div>
+          </section>
 
-          {/* Sticky Formatting Toolbar */}
+          {/* Compact Sticky Formatting Toolbar (single row when collapsed) */}
           <div className="amgi-rich-toolbar-wrap">
             <div className="amgi-rich-toolbar" role="toolbar" aria-label="서식 도구 모음">
               <button
@@ -916,12 +1218,19 @@ export const NoteEditorView: React.FC<{
 
               <button
                 type="button"
-                className={`amgi-rich-tool-btn ${moreToolsOpen || colorPaletteOpen || recording ? 'active' : ''}`}
+                className={`amgi-rich-tool-btn amgi-rich-tool-more ${
+                  moreToolsOpen || colorPaletteOpen || recording ? 'active' : ''
+                }`}
                 aria-label="서식 도구 더보기"
                 aria-expanded={moreToolsOpen}
                 title="색상 · 수식 · 오디오 · 추가 서식"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => setMoreToolsOpen((v) => !v)}
+                onClick={() => {
+                  setMoreToolsOpen((v) => {
+                    if (v) setColorPaletteOpen(false);
+                    return !v;
+                  });
+                }}
               >
                 <span>{moreToolsOpen ? '접기' : '더보기'}</span>
               </button>
@@ -947,6 +1256,7 @@ export const NoteEditorView: React.FC<{
                   type="button"
                   className={`amgi-rich-tool-btn ${colorPaletteOpen ? 'active' : ''}`}
                   aria-label="글자 색상"
+                  aria-expanded={colorPaletteOpen}
                   title="글자 색상"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => setColorPaletteOpen((v) => !v)}
@@ -1077,39 +1387,39 @@ export const NoteEditorView: React.FC<{
                 </button>
               </div>
             )}
-          </div>
 
-          {colorPaletteOpen && (
-            <div className="amgi-color-palette">
-              {COLOR_SWATCHES.map((hex) => (
+            {colorPaletteOpen && (
+              <div className="amgi-color-palette" role="group" aria-label="글자 색상 선택">
+                {COLOR_SWATCHES.map((sw) => (
+                  <button
+                    key={sw.colorValue}
+                    type="button"
+                    className="amgi-color-swatch"
+                    style={{ background: sw.tokenVar }}
+                    aria-label={`글자 색상 ${sw.label}`}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      fieldRefs.current[focusedFieldIdx]?.execFormat('foreColor', sw.colorValue);
+                      setColorPaletteOpen(false);
+                      setDirty(true);
+                    }}
+                  />
+                ))}
                 <button
-                  key={hex}
                   type="button"
-                  className="amgi-color-swatch"
-                  style={{ background: hex }}
-                  aria-label={`글자 색상 ${hex}`}
+                  className="amgi-btn amgi-btn-secondary amgi-btn-sm"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => {
-                    fieldRefs.current[focusedFieldIdx]?.execFormat('foreColor', hex);
+                    fieldRefs.current[focusedFieldIdx]?.execFormat('foreColor', '');
                     setColorPaletteOpen(false);
                     setDirty(true);
                   }}
-                />
-              ))}
-              <button
-                type="button"
-                className="amgi-btn amgi-btn-secondary amgi-btn-sm"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => {
-                  fieldRefs.current[focusedFieldIdx]?.execFormat('foreColor', '');
-                  setColorPaletteOpen(false);
-                  setDirty(true);
-                }}
-              >
-                색상 지우기
-              </button>
-            </div>
-          )}
+                >
+                  색상 지우기
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* Hidden Media File Inputs */}
           <input
@@ -1129,7 +1439,7 @@ export const NoteEditorView: React.FC<{
 
           {/* Field Editors */}
           {(notetype.fields ?? []).map((f, idx) => (
-            <div key={f.ord?.val ?? idx} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div key={f.ord?.val ?? idx} className="amgi-field-stack">
               <RichFieldInput
                 ref={(el) => {
                   fieldRefs.current[idx] = el;
@@ -1162,21 +1472,14 @@ export const NoteEditorView: React.FC<{
 
               {idx === 0 && fieldCheckBanner && (
                 <div className="amgi-field-check-banner" role="status">
-                  <span>⚠ {fieldCheckBanner.text}</span>
+                  <span>{fieldCheckBanner.text}</span>
                   {fieldCheckBanner.canSearchDupes && (
                     <button
                       type="button"
                       className="amgi-btn amgi-btn-secondary amgi-btn-sm"
-                      onClick={() => {
-                        const firstPlain = (fields[0] ?? '')
-                          .replace(/<[^>]+>/g, '')
-                          .trim();
-                        navigate(
-                          `#/browse?q=${encodeURIComponent(`"${firstPlain}"`)}`
-                        );
-                      }}
+                      onClick={() => void handleOpenDuplicatesSheet()}
                     >
-                      브라우저에서 보기
+                      중복 확인
                     </button>
                   )}
                 </div>
@@ -1186,12 +1489,28 @@ export const NoteEditorView: React.FC<{
 
           {/* Tag Chip Input */}
           <TagChipInput
+            ref={tagInputRef}
             tags={tags}
             onChange={(next) => {
               setTags(next);
               setDirty(true);
             }}
           />
+
+          {/* Full-width 54px primary save CTA on phones */}
+          {!isWide && (
+            <div className="amgi-editor-bottom-cta">
+              <button
+                type="button"
+                disabled={saving}
+                className="amgi-btn amgi-btn-primary amgi-editor-save-cta"
+                onClick={() => void handleSubmit()}
+              >
+                <IconCheck size={18} />
+                <span>{saving ? '처리 중...' : isAddMode ? '노트 추가' : '변경 사항 저장'}</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Wide Right Preview Pane */}
@@ -1216,6 +1535,140 @@ export const NoteEditorView: React.FC<{
         </SheetOrDialog>
       )}
 
+      {/* Duplicate Notes Inspector Sheet (preserves current draft) */}
+      <SheetOrDialog
+        open={dupesSheetOpen}
+        onClose={() => setDupesSheetOpen(false)}
+        title="중복 노트 확인"
+        subtitle={`일치하는 노트 ${duplicateIds.length}개`}
+        footer={
+          <>
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-secondary"
+              onClick={() => setDupesSheetOpen(false)}
+            >
+              편집으로 돌아가기
+            </button>
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-primary"
+              onClick={() => {
+                if (dirty) {
+                  setConfirmLeaveForDupesOpen(true);
+                } else {
+                  navigateToDuplicatesInBrowser();
+                }
+              }}
+            >
+              찾아보기에서 열기
+            </button>
+          </>
+        }
+      >
+        {loadingDupes ? (
+          <p className="amgi-prose" style={{ margin: 0, color: 'var(--text-3)' }}>
+            중복 노트를 불러오는 중...
+          </p>
+        ) : dupeNotes.length === 0 ? (
+          <p className="amgi-prose" style={{ margin: 0, color: 'var(--text-3)' }}>
+            표시할 중복 노트가 없습니다.
+          </p>
+        ) : (
+          <div className="amgi-dupe-list">
+            {dupeNotes.map((dn) => {
+              const nid = anki.toNumber(dn.id);
+              const f0 = stripHtmlPreview(dn.fields?.[0] ?? '') || '(내용 없음)';
+              const f1 = stripHtmlPreview(dn.fields?.[1] ?? '');
+              return (
+                <div key={nid} className="amgi-dupe-item">
+                  <div className="amgi-dupe-q">{f0}</div>
+                  {f1 && <div className="amgi-dupe-a">{f1}</div>}
+                  {dn.tags && dn.tags.length > 0 && (
+                    <div className="amgi-dupe-tags">
+                      {dn.tags.slice(0, 6).map((t) => (
+                        <span key={t} className="amgi-dupe-tag">
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {duplicateIds.length > dupeNotes.length && (
+              <p className="amgi-prose" style={{ margin: 0, fontSize: 13, color: 'var(--text-3)' }}>
+                외 {duplicateIds.length - dupeNotes.length}개의 중복 노트가 더 있습니다.
+              </p>
+            )}
+          </div>
+        )}
+      </SheetOrDialog>
+
+      {/* Confirm Leaving Draft for Duplicates in Browser */}
+      <SheetOrDialog
+        open={confirmLeaveForDupesOpen}
+        onClose={() => setConfirmLeaveForDupesOpen(false)}
+        title="작성 중인 내용 확인"
+        footer={
+          <>
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-secondary"
+              onClick={() => setConfirmLeaveForDupesOpen(false)}
+            >
+              계속 편집
+            </button>
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-danger"
+              onClick={navigateToDuplicatesInBrowser}
+            >
+              버리고 이동
+            </button>
+          </>
+        }
+      >
+        <p className="amgi-prose" style={{ margin: 0 }}>
+          찾아보기로 이동하면 저장하지 않은 작성 내용이 사라집니다. 이동할까요?
+        </p>
+      </SheetOrDialog>
+
+      {/* Confirm Add-mode Notetype Switch when Non-empty Fields Would Be Dropped */}
+      <SheetOrDialog
+        open={pendingAddSwitch !== null}
+        onClose={() => setPendingAddSwitch(null)}
+        title="노트 유형 변경 확인"
+        footer={
+          <>
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-secondary"
+              onClick={() => setPendingAddSwitch(null)}
+            >
+              취소
+            </button>
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-danger"
+              onClick={() => {
+                if (!pendingAddSwitch) return;
+                const { ntid, loadedNt, blank, mapped } = pendingAddSwitch;
+                setPendingAddSwitch(null);
+                applyAddNotetypeSwitch(ntid, loadedNt, blank, mapped);
+              }}
+            >
+              변경하기
+            </button>
+          </>
+        }
+      >
+        <p className="amgi-prose" style={{ margin: 0 }}>
+          새 노트 유형의 필드 수가 적어 입력된 필드 {pendingAddSwitch?.droppedCount ?? 1}개의
+          내용이 제외됩니다. 계속 변경할까요?
+        </p>
+      </SheetOrDialog>
+
       {/* Discard Unsaved Changes Confirm */}
       <SheetOrDialog
         open={discardDialogOpen}
@@ -1236,7 +1689,7 @@ export const NoteEditorView: React.FC<{
               onClick={() => {
                 setDiscardDialogOpen(false);
                 setDirty(false);
-                goBack('#/decks');
+                goBack(isAddMode ? '#/decks' : '#/browse', { force: true });
               }}
             >
               버리고 나가기
@@ -1252,13 +1705,16 @@ export const NoteEditorView: React.FC<{
       {/* Change Notetype Sheet in Edit Mode */}
       <SheetOrDialog
         open={changeNtOpen}
-        onClose={() => setChangeNtOpen(false)}
+        onClose={() => {
+          if (!changingNt) setChangeNtOpen(false);
+        }}
         title="노트 유형 변경"
         footer={
           <>
             <button
               type="button"
               className="amgi-btn amgi-btn-secondary"
+              disabled={changingNt}
               onClick={() => setChangeNtOpen(false)}
             >
               취소
@@ -1266,29 +1722,52 @@ export const NoteEditorView: React.FC<{
             <button
               type="button"
               className="amgi-btn amgi-btn-primary"
+              disabled={changingNt || loadingNtInfo || !changeNtInfo}
               onClick={() => void handleConfirmChangeNtInEdit()}
             >
-              변경 적용
+              {changingNt ? '변경 중...' : loadingNtInfo ? '불러오는 중...' : '변경 적용'}
             </button>
           </>
         }
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {dirty && (
+            <div className="amgi-editor-info-note">
+              저장하지 않은 수정 내용은 먼저 저장된 뒤 새 노트 유형의 필드로 연결됩니다.
+            </div>
+          )}
           <label className="form-field">
             <span>새 노트 유형</span>
             <select
               className="amgi-select"
               value={targetNtId}
+              disabled={changingNt}
               onChange={async (e) => {
                 const nextId = Number(e.target.value);
+                const seq = ++changeNtSeqRef.current;
                 setTargetNtId(nextId);
+                setLoadingNtInfo(true);
+                setChangeNtInfo(null);
+                setNtFieldMap([]);
+                setNtTemplateMap([]);
                 try {
                   const info = await anki.getChangeNotetypeInfo(notetype.id, nextId);
+                  if (seq !== changeNtSeqRef.current) return;
                   setChangeNtInfo(info);
                   setNtFieldMap(info.input?.newFields ?? []);
                   setNtTemplateMap(info.input?.newTemplates ?? []);
-                } catch {
-                  // Ignore
+                } catch (err) {
+                  if (seq !== changeNtSeqRef.current) return;
+                  showToast(
+                    err instanceof Error
+                      ? err.message
+                      : '유형 매핑 정보를 불러오지 못했습니다.',
+                    'error'
+                  );
+                } finally {
+                  if (seq === changeNtSeqRef.current) {
+                    setLoadingNtInfo(false);
+                  }
                 }
               }}
             >
@@ -1304,6 +1783,9 @@ export const NoteEditorView: React.FC<{
           </label>
           {changeNtInfo && (
             <>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-2)' }}>
+                필드 연결
+              </div>
               {changeNtInfo.oldFieldNames.map((oldName, idx) => (
                 <label key={`${oldName}-${idx}`} className="form-field">
                   <span>{oldName} →</span>
@@ -1325,6 +1807,41 @@ export const NoteEditorView: React.FC<{
                   </select>
                 </label>
               ))}
+              {changeNtInfo.oldTemplateNames.length > 0 && (
+                <>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 700,
+                      color: 'var(--text-2)',
+                      marginTop: 4,
+                    }}
+                  >
+                    카드 기록 연결
+                  </div>
+                  {changeNtInfo.oldTemplateNames.map((oldT, idx) => (
+                    <label key={`${oldT}-${idx}`} className="form-field">
+                      <span>{oldT} →</span>
+                      <select
+                        className="amgi-select"
+                        value={ntTemplateMap[idx] ?? -1}
+                        onChange={(e) => {
+                          const copy = [...ntTemplateMap];
+                          copy[idx] = Number(e.target.value);
+                          setNtTemplateMap(copy);
+                        }}
+                      >
+                        <option value={-1}>(카드 삭제)</option>
+                        {changeNtInfo.newTemplateNames.map((nT, nIdx) => (
+                          <option key={nIdx} value={nIdx}>
+                            {nT}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                </>
+              )}
             </>
           )}
         </div>

@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as anki from '../../anki';
-import { useApp } from '../../context/AppContext';
 import {
   ActionMenu,
   IconCheck,
@@ -74,7 +73,6 @@ export function BatchActionBar({
   onClearSelection,
   onMutated,
 }: BatchActionBarProps) {
-  const { bumpCollection } = useApp();
   const { showToast } = useToast();
 
   const [modal, setModal] = useState<BatchModal>(null);
@@ -96,9 +94,9 @@ export function BatchActionBar({
   // Set due date
   const [dueDays, setDueDays] = useState('0');
 
-  // Reposition new cards
-  const [repoStart, setRepoStart] = useState(0);
-  const [repoStep, setRepoStep] = useState(1);
+  // Reposition new cards (string drafts clamped on blur/submit)
+  const [repoStartDraft, setRepoStartDraft] = useState('0');
+  const [repoStepDraft, setRepoStepDraft] = useState('1');
   const [repoRandomize, setRepoRandomize] = useState(false);
   const [repoShift, setRepoShift] = useState(true);
 
@@ -115,15 +113,18 @@ export function BatchActionBar({
   const [oldNtId, setOldNtId] = useState<number>(0);
   const [newNtId, setNewNtId] = useState<number>(0);
   const [changeNtInfo, setChangeNtInfo] = useState<anki.ChangeNotetypeInfo | null>(null);
+  const [loadingNtInfo, setLoadingNtInfo] = useState(false);
   const [fieldMap, setFieldMap] = useState<number[]>([]);
   const [templateMap, setTemplateMap] = useState<number[]>([]);
   const [resolvedNtNoteIds, setResolvedNtNoteIds] = useState<number[]>([]);
+  const changeNtSeqRef = useRef(0);
 
-  // Delete counts
+  // Delete counts (exact note count + all sibling cards belonging to those notes)
   const [deleteCounts, setDeleteCounts] = useState<{ notes: number; cards: number }>({
     notes: 0,
     cards: 0,
   });
+  const [deleteCountsLoading, setDeleteCountsLoading] = useState(false);
 
   const selectedArray = useMemo(() => Array.from(selectedIds), [selectedIds]);
   const count = selectedArray.length;
@@ -150,20 +151,30 @@ export function BatchActionBar({
   };
 
   useEffect(() => {
+    let cancelled = false;
     if (modal === 'deck') {
       anki
         .getDeckNames(false, true)
-        .then(setDecks)
-        .catch(() => setDecks([]));
+        .then((list) => {
+          if (!cancelled) setDecks(list);
+        })
+        .catch(() => {
+          if (!cancelled) setDecks([]);
+        });
     } else if (modal === 'tags') {
       anki
         .getAllTags()
-        .then(setAllTags)
-        .catch(() => setAllTags([]));
+        .then((list) => {
+          if (!cancelled) setAllTags(list);
+        })
+        .catch(() => {
+          if (!cancelled) setAllTags([]);
+        });
     } else if (modal === 'forget') {
       anki
         .scheduleCardsAsNewDefaults(anki.ScheduleCardsAsNewContext.BROWSER)
         .then((def) => {
+          if (cancelled) return;
           setForgetRestorePos(Boolean(def.restorePosition));
           setForgetResetCounts(Boolean(def.resetCounts));
         })
@@ -172,42 +183,53 @@ export function BatchActionBar({
       anki
         .getConfigString(anki.ConfigKeyString.SET_DUE_BROWSER)
         .then((val) => {
-          if (val) setDueDays(val);
+          if (!cancelled && val) setDueDays(val);
         })
         .catch(() => undefined);
     } else if (modal === 'findReplace') {
       resolveNoteIds()
         .then((nids) => anki.fieldNamesForNotes(nids))
-        .then(setFrFields)
-        .catch(() => setFrFields([]));
+        .then((fields) => {
+          if (!cancelled) setFrFields(fields);
+        })
+        .catch(() => {
+          if (!cancelled) setFrFields([]);
+        });
     } else if (modal === 'delete') {
-      if (isNotesMode) {
-        runPooled(selectedArray, 6, (nid) => anki.cardsOfNote(nid))
-          .then((lists) => {
-            const totalCards = lists.reduce((acc, c) => acc + c.length, 0);
-            setDeleteCounts({ notes: selectedArray.length, cards: totalCards });
-          })
-          .catch(() =>
-            setDeleteCounts({ notes: selectedArray.length, cards: selectedArray.length })
-          );
-      } else {
-        resolveNoteIds()
-          .then((nids) =>
-            setDeleteCounts({ notes: nids.length, cards: selectedArray.length })
-          )
-          .catch(() =>
-            setDeleteCounts({ notes: selectedArray.length, cards: selectedArray.length })
-          );
-      }
+      setDeleteCountsLoading(true);
+      resolveNoteIds()
+        .then(async (nids) => {
+          const lists = await runPooled(nids, 6, (nid) => anki.cardsOfNote(nid));
+          const cardSet = new Set<number>();
+          for (const cids of lists) {
+            for (const cid of cids) cardSet.add(cid);
+          }
+          if (!cancelled) {
+            setDeleteCounts({ notes: nids.length, cards: cardSet.size });
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setDeleteCounts({ notes: selectedArray.length, cards: selectedArray.length });
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setDeleteCountsLoading(false);
+        });
     }
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modal]);
 
-  const finishSuccess = (message: string) => {
+  const finishSuccess = (
+    message: string,
+    action?: { label: string; onClick: () => void | Promise<void> }
+  ) => {
     setModal(null);
-    bumpCollection();
     onMutated();
-    showToast(message, 'success');
+    showToast(message, 'success', action);
   };
 
   const handleMoveDeck = async (deckId: number, deckName: string) => {
@@ -402,22 +424,33 @@ export function BatchActionBar({
   };
 
   const handleSelectTargetNotetype = async (targetId: number) => {
+    const seq = ++changeNtSeqRef.current;
     setNewNtId(targetId);
+    setLoadingNtInfo(true);
+    setChangeNtInfo(null);
+    setFieldMap([]);
+    setTemplateMap([]);
     try {
       const info = await anki.getChangeNotetypeInfo(oldNtId, targetId);
+      if (seq !== changeNtSeqRef.current) return;
       setChangeNtInfo(info);
       setFieldMap(info.input?.newFields ?? []);
       setTemplateMap(info.input?.newTemplates ?? []);
     } catch (err) {
+      if (seq !== changeNtSeqRef.current) return;
       showToast(
         err instanceof Error ? err.message : '유형 매핑 정보를 불러오지 못했습니다.',
         'error'
       );
+    } finally {
+      if (seq === changeNtSeqRef.current) {
+        setLoadingNtInfo(false);
+      }
     }
   };
 
   const handleConfirmChangeNotetype = async () => {
-    if (!changeNtInfo?.input || busy) return;
+    if (!changeNtInfo?.input || busy || loadingNtInfo) return;
     setBusy(true);
     try {
       await anki.changeNotetype({
@@ -446,10 +479,34 @@ export function BatchActionBar({
     setBusy(true);
     try {
       const nids = await resolveNoteIds();
-      await anki.removeNotes(nids, []);
+      const cardLists = await runPooled(nids, 6, (nid) => anki.cardsOfNote(nid)).catch(
+        () => [] as number[][]
+      );
+      const cardSet = new Set<number>();
+      for (const cids of cardLists) {
+        for (const cid of cids) cardSet.add(cid);
+      }
+      const res = await anki.removeNotes(nids, []);
+      const deletedNotes = res.count || nids.length;
+      const deletedCards = cardSet.size > 0 ? cardSet.size : deleteCounts.cards;
       onClearSelection();
       finishSuccess(
-        `노트 ${deleteCounts.notes}개(카드 ${deleteCounts.cards}장)를 삭제했습니다.`
+        `노트 ${deletedNotes.toLocaleString()}개(카드 ${deletedCards.toLocaleString()}장)를 삭제했습니다.`,
+        {
+          label: '되돌리기',
+          onClick: async () => {
+            try {
+              await anki.undo();
+              onMutated();
+              showToast('삭제를 되돌렸습니다.', 'info');
+            } catch (err) {
+              showToast(
+                err instanceof Error ? err.message : '되돌리기에 실패했습니다.',
+                'error'
+              );
+            }
+          },
+        }
       );
     } catch (err) {
       showToast(err instanceof Error ? err.message : '삭제에 실패했습니다.', 'error');
@@ -477,50 +534,64 @@ export function BatchActionBar({
       <div className="amgi-batch-bar" role="region" aria-label="선택 항목 일괄 작업">
         <button
           type="button"
-          className="amgi-btn amgi-btn-secondary amgi-btn-sm"
+          className="amgi-batch-btn amgi-batch-btn--close"
+          aria-label={`선택 해제 (${count}개 선택됨)`}
           onClick={onClearSelection}
         >
-          <IconClose size={15} />
-          <span className="tabular">선택 해제 ({count})</span>
+          <IconClose size={16} />
+          <span className="tabular">{count.toLocaleString()}</span>
         </button>
 
-        <button
-          type="button"
-          className="amgi-btn amgi-btn-secondary amgi-btn-sm"
-          onClick={() => setModal('suspend')}
-        >
-          <span>일시 중지/해제</span>
-        </button>
+        <div className="amgi-batch-actions">
+          <button
+            type="button"
+            className="amgi-batch-btn"
+            onClick={() => {
+              setDeckSearch('');
+              setModal('deck');
+            }}
+          >
+            <IconFolder size={16} />
+            <span className="amgi-batch-label-short">덱</span>
+            <span className="amgi-batch-label-full">덱 이동</span>
+          </button>
 
-        <button
-          type="button"
-          className="amgi-btn amgi-btn-secondary amgi-btn-sm"
-          onClick={() => setModal('flag')}
-        >
-          <IconFlag size={15} />
-          <span>깃발</span>
-        </button>
+          <button
+            type="button"
+            className="amgi-batch-btn"
+            onClick={() => setModal('flag')}
+          >
+            <IconFlag size={16} />
+            <span>깃발</span>
+          </button>
 
-        <button
-          type="button"
-          className="amgi-btn amgi-btn-secondary amgi-btn-sm"
-          onClick={() => {
-            setDeckSearch('');
-            setModal('deck');
-          }}
-        >
-          <IconFolder size={15} />
-          <span>덱 이동</span>
-        </button>
+          <button
+            type="button"
+            className="amgi-batch-btn amgi-batch-wide-only"
+            onClick={() => setModal('suspend')}
+          >
+            <span>일시 중지</span>
+          </button>
 
-        <button
-          type="button"
-          className="amgi-btn amgi-btn-primary amgi-btn-sm"
-          onClick={() => setModal('menu')}
-        >
-          <IconMore size={15} />
-          <span>작업 ▾</span>
-        </button>
+          <button
+            type="button"
+            className="amgi-batch-btn amgi-batch-btn--danger"
+            aria-label="선택 항목 삭제"
+            onClick={() => setModal('delete')}
+          >
+            <IconTrash size={16} />
+            <span>삭제</span>
+          </button>
+
+          <button
+            type="button"
+            className="amgi-batch-btn amgi-batch-btn--primary"
+            onClick={() => setModal('menu')}
+          >
+            <IconMore size={16} />
+            <span>더보기</span>
+          </button>
+        </div>
       </div>
 
       {/* Full Batch Action Menu */}
@@ -585,8 +656,8 @@ export function BatchActionBar({
             label: '새 카드 순서 변경 (위치 재지정)',
             description: '선택한 새 카드의 학습 시작 순서를 바꿉니다',
             onSelect: () => {
-              setRepoStart(0);
-              setRepoStep(1);
+              setRepoStartDraft('0');
+              setRepoStepDraft('1');
               setRepoRandomize(false);
               setRepoShift(true);
               setModal('reposition');
@@ -626,6 +697,7 @@ export function BatchActionBar({
         onClose={() => setModal(null)}
         title="덱 이동"
         subtitle={`선택한 ${count}개 항목 이동`}
+        variant="full"
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div className="amgi-browser-search-wrap">
@@ -1025,11 +1097,11 @@ export function BatchActionBar({
             </button>
             <button
               type="button"
-              disabled={busy || !changeNtInfo}
+              disabled={busy || loadingNtInfo || !changeNtInfo}
               className="amgi-btn amgi-btn-primary"
               onClick={() => void handleConfirmChangeNotetype()}
             >
-              변경 적용
+              {loadingNtInfo ? '불러오는 중...' : '변경 적용'}
             </button>
           </>
         }
@@ -1114,20 +1186,23 @@ export function BatchActionBar({
       {/* Delete Confirm */}
       <SheetOrDialog
         open={modal === 'delete'}
-        onClose={() => setModal(null)}
+        onClose={() => {
+          if (!busy) setModal(null);
+        }}
         title="선택 항목 삭제"
         footer={
           <>
             <button
               type="button"
               className="amgi-btn amgi-btn-secondary"
+              disabled={busy}
               onClick={() => setModal(null)}
             >
               취소
             </button>
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || deleteCountsLoading}
               className="amgi-btn amgi-btn-danger"
               onClick={() => void handleDelete()}
             >
@@ -1137,9 +1212,16 @@ export function BatchActionBar({
         }
       >
         <p className="amgi-prose" style={{ margin: 0 }}>
-          선택한 카드 <strong className="tabular">{deleteCounts.cards}장</strong>
-          (노트 <strong className="tabular">{deleteCounts.notes}개</strong>)를 삭제합니다.
-          삭제 후 되돌리기(Ctrl+Z)로 복구할 수 있습니다.
+          {deleteCountsLoading ? (
+            '삭제할 노트와 카드 수를 계산하는 중...'
+          ) : (
+            <>
+              노트 <strong className="tabular">{deleteCounts.notes.toLocaleString()}개</strong>
+              (연결된 카드{' '}
+              <strong className="tabular">{deleteCounts.cards.toLocaleString()}장</strong>)를
+              삭제합니다. 삭제 직후 알림의 되돌리기로 복구할 수 있습니다.
+            </>
+          )}
         </p>
       </SheetOrDialog>
       {/* Reposition New Cards Modal */}
@@ -1165,13 +1247,17 @@ export function BatchActionBar({
               className="amgi-btn amgi-btn-primary"
               disabled={busy}
               onClick={async () => {
+                const parsedStart = Math.max(0, Math.floor(Number(repoStartDraft) || 0));
+                const parsedStep = Math.max(1, Math.floor(Number(repoStepDraft) || 1));
+                setRepoStartDraft(String(parsedStart));
+                setRepoStepDraft(String(parsedStep));
                 setBusy(true);
                 try {
                   const cids = await resolveCardIds();
                   await anki.repositionNewCards({
                     cardIds: cids,
-                    startingFrom: Math.max(0, repoStart),
-                    stepSize: Math.max(1, repoStep),
+                    startingFrom: parsedStart,
+                    stepSize: parsedStep,
                     randomize: repoRandomize,
                     shiftExisting: repoShift,
                   });
@@ -1199,23 +1285,33 @@ export function BatchActionBar({
             <input
               id="batch-repo-start"
               type="number"
+              inputMode="numeric"
               min={0}
               className="amgi-input tabular"
-              value={repoStart}
-              onChange={(e) => setRepoStart(Math.max(0, Number(e.target.value) || 0))}
+              value={repoStartDraft}
+              onChange={(e) => setRepoStartDraft(e.target.value)}
+              onBlur={() => {
+                const clamped = Math.max(0, Math.floor(Number(repoStartDraft) || 0));
+                setRepoStartDraft(String(clamped));
+              }}
             />
           </div>
           <div className="amgi-field-group">
             <label className="amgi-field-label" htmlFor="batch-repo-step">
-              간격 (Step)
+              간격
             </label>
             <input
               id="batch-repo-step"
               type="number"
+              inputMode="numeric"
               min={1}
               className="amgi-input tabular"
-              value={repoStep}
-              onChange={(e) => setRepoStep(Math.max(1, Number(e.target.value) || 1))}
+              value={repoStepDraft}
+              onChange={(e) => setRepoStepDraft(e.target.value)}
+              onBlur={() => {
+                const clamped = Math.max(1, Math.floor(Number(repoStepDraft) || 1));
+                setRepoStepDraft(String(clamped));
+              }}
             />
           </div>
           <div className="amgi-switch-row">

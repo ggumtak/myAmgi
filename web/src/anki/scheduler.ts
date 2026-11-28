@@ -45,7 +45,8 @@ export async function answerCard(
   cardId: number | Long,
   states: SchedulingStates,
   rating: Rating,
-  msTaken: number
+  msTaken: number,
+  maxTakenSecs = 60
 ): Promise<AnkiTypes.collection.OpChanges> {
   let newState: AnkiTypes.scheduler.SchedulingState.$Properties | null | undefined;
   switch (rating) {
@@ -66,13 +67,19 @@ export async function answerCard(
       break;
   }
 
+  const effectiveCapSecs =
+    typeof maxTakenSecs === 'number' && Number.isFinite(maxTakenSecs) && maxTakenSecs > 0
+      ? maxTakenSecs
+      : 60;
+  const maxMs = Math.max(100, Math.round(effectiveCapSecs * 1000));
+
   return rpc('answerCard', anki.scheduler.CardAnswer, anki.collection.OpChanges, {
     cardId,
     currentState: states.current,
     newState,
     rating,
     answeredAtMillis: Date.now(),
-    millisecondsTaken: Math.max(100, Math.min(60_000, Math.round(msTaken))),
+    millisecondsTaken: Math.max(100, Math.min(maxMs, Math.round(msTaken))),
   });
 }
 

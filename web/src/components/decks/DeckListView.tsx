@@ -27,6 +27,7 @@ import {
   Switch,
   useToast,
 } from '../../ui';
+import { openOverlayCount } from '../../ui/overlayStack';
 import {
   DailyProgressRing,
   DeckCategoryIcon,
@@ -34,6 +35,14 @@ import {
   resolveDeckTheme,
 } from './DeckBadge';
 import { DeckOverviewPane } from './DeckOverviewPane';
+import {
+  buildDeckSearchQuery,
+  getLeafNameSelectionRange,
+  isImeComposing,
+  isTouchInsideScrollableOrOverlay,
+  parseClampedInt,
+  preventImeEnterSubmit,
+} from './deckUtils';
 import './decks.css';
 
 export interface DeckListViewProps {
@@ -144,7 +153,6 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
     bumpCollection,
     navigate,
     openAddSheet,
-    registerBackHandler,
   } = useApp();
   const { showToast } = useToast();
 
@@ -173,6 +181,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
   const [menuDeck, setMenuDeck] = useState<FlatDeckRow | null>(null);
   const [renameTarget, setRenameTarget] = useState<FlatDeckRow | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
   const [moveTarget, setMoveTarget] = useState<FlatDeckRow | null>(null);
   const [moveParentId, setMoveParentId] = useState<number>(0);
   const [subdeckParent, setSubdeckParent] = useState<FlatDeckRow | null>(null);
@@ -194,7 +203,8 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
   const [customPreset, setCustomPreset] = useState<
     'newLimitDelta' | 'reviewLimitDelta' | 'forgotDays' | 'reviewAheadDays' | 'previewDays'
   >('newLimitDelta');
-  const [customValue, setCustomValue] = useState(10);
+  const [customValueDraft, setCustomValueDraft] = useState('10');
+  const customLoadSeqRef = useRef(0);
 
   // Export modal (triggered from Deck ActionMenu)
   const [exportDeck, setExportDeck] = useState<FlatDeckRow | null>(null);
@@ -203,12 +213,19 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
   const [exportLegacy, setExportLegacy] = useState(false);
   const [exportResult, setExportResult] = useState<host.ExportResult | null>(null);
 
+  // Async load sequencing & dedup refs
+  const loadSeqRef = useRef(0);
+  const hasLoadedTreeRef = useRef(false);
+  const lastResumeRefreshRef = useRef(0);
+  const navigatingRef = useRef(false);
+
   // Pull-to-refresh state
   const touchStartYRef = useRef<number | null>(null);
   const [pullDistance, setPullDistance] = useState(0);
 
-  // Long-press tracking
+  // Long-press tracking with 10px movement cancellation threshold
   const longPressTimerRef = useRef<number | null>(null);
+  const longPressOriginRef = useRef<{ x: number; y: number } | null>(null);
   const longPressFiredRef = useRef(false);
 
   // File input for empty-state import
@@ -236,9 +253,40 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
     }
   }, [initialSelectedDeckId]);
 
+  // Preselect only the leaf name (after last '::') when opening the rename dialog
+  useEffect(() => {
+    if (!renameTarget) return;
+    const [start, end] = getLeafNameSelectionRange(renameTarget.fullName);
+    const frame = window.requestAnimationFrame(() => {
+      const el = renameInputRef.current;
+      if (!el) return;
+      el.focus();
+      try {
+        el.setSelectionRange(start, end);
+      } catch {
+        // Ignore selection errors on unsupported input types
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [renameTarget]);
+
+  const cancelLongPress = useCallback(() => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    longPressOriginRef.current = null;
+  }, []);
+
+  // Clean up pending long-press timer on unmount
+  useEffect(() => cancelLongPress, [cancelLongPress]);
+
   const loadDecks = useCallback(async (quiet = false) => {
+    const seq = ++loadSeqRef.current;
     if (!quiet) {
-      setLoading((prev) => (treeRoot === null ? true : prev));
+      if (!hasLoadedTreeRef.current) {
+        setLoading(true);
+      }
     } else {
       setRefreshing(true);
     }
@@ -248,6 +296,8 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
         anki.deckTree(),
         anki.graphs('', 60).catch(() => null),
       ]);
+      if (seq !== loadSeqRef.current) return;
+      hasLoadedTreeRef.current = true;
       setTreeRoot(tree);
       const countMap = g?.reviews?.count ?? {};
       const dayTotal = (offset: number) => {
@@ -273,26 +323,28 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
         streakDays: streak,
       });
     } catch (err) {
+      if (seq !== loadSeqRef.current) return;
       setError(err instanceof Error ? err.message : '덱 목록을 불러오지 못했습니다.');
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (seq === loadSeqRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, [treeRoot]);
+  }, []);
 
   useEffect(() => {
     void loadDecks(false);
-  }, [collectionVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [collectionVersion, loadDecks]);
 
-  // Refresh when tab/window regains focus
+  // Refresh when tab/window regains focus (deduped so focus + visibilitychange only fires once)
   useEffect(() => {
-    const onFocus = () => {
+    const triggerResumeRefresh = () => {
+      if (document.visibilityState === 'hidden') return;
+      const now = Date.now();
+      if (now - lastResumeRefreshRef.current < 600) return;
+      lastResumeRefreshRef.current = now;
       void loadDecks(true);
-    };
-    const onVis = () => {
-      if (document.visibilityState === 'visible') {
-        void loadDecks(true);
-      }
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'F5') {
@@ -300,84 +352,15 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
         void loadDecks(true);
       }
     };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', triggerResumeRefresh);
+    document.addEventListener('visibilitychange', triggerResumeRefresh);
     window.addEventListener('keydown', onKeyDown);
     return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', triggerResumeRefresh);
+      document.removeEventListener('visibilitychange', triggerResumeRefresh);
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [loadDecks]);
-
-  // Register back handler for open sheets/modals
-  useEffect(() => {
-    if (
-      !menuDeck &&
-      !renameTarget &&
-      !moveTarget &&
-      !subdeckParent &&
-      !deleteTarget &&
-      !customDeck &&
-      !exportDeck &&
-      !emptyCreateOpen &&
-      !colpkgConfirm
-    ) {
-      return;
-    }
-    return registerBackHandler(() => {
-      if (busyModal) return true;
-      if (colpkgConfirm) {
-        setColpkgConfirm(null);
-        return true;
-      }
-      if (emptyCreateOpen) {
-        setEmptyCreateOpen(false);
-        return true;
-      }
-      if (exportDeck) {
-        setExportDeck(null);
-        return true;
-      }
-      if (customDeck) {
-        setCustomDeck(null);
-        return true;
-      }
-      if (deleteTarget) {
-        setDeleteTarget(null);
-        return true;
-      }
-      if (subdeckParent) {
-        setSubdeckParent(null);
-        return true;
-      }
-      if (moveTarget) {
-        setMoveTarget(null);
-        return true;
-      }
-      if (renameTarget) {
-        setRenameTarget(null);
-        return true;
-      }
-      if (menuDeck) {
-        setMenuDeck(null);
-        return true;
-      }
-      return false;
-    });
-  }, [
-    menuDeck,
-    renameTarget,
-    moveTarget,
-    subdeckParent,
-    deleteTarget,
-    customDeck,
-    exportDeck,
-    emptyCreateOpen,
-    colpkgConfirm,
-    busyModal,
-    registerBackHandler,
-  ]);
 
   const rows = useMemo(
     () => (treeRoot ? flattenDeckTree(treeRoot, 0, '', [], false) : []),
@@ -402,18 +385,40 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
     [treeRoot]
   );
 
-  const totalDue = useMemo(
-    () =>
-      topLevelNodes.reduce(
-        (sum, n) => sum + (n.newCount ?? 0) + (n.learnCount ?? 0) + (n.reviewCount ?? 0),
-        0
-      ),
-    [topLevelNodes]
-  );
+  const { totalNew, totalLearn, totalReview, totalDue, totalCardsAll } = useMemo(() => {
+    let nCount = 0;
+    let lCount = 0;
+    let rCount = 0;
+    let cTotal = 0;
+    for (const node of topLevelNodes) {
+      nCount += node.newCount ?? 0;
+      lCount += node.learnCount ?? 0;
+      rCount += node.reviewCount ?? 0;
+      cTotal += node.totalIncludingChildren ?? 0;
+    }
+    return {
+      totalNew: nCount,
+      totalLearn: lCount,
+      totalReview: rCount,
+      totalDue: nCount + lCount + rCount,
+      totalCardsAll: cTotal,
+    };
+  }, [topLevelNodes]);
 
-  const totalCardsAll = useMemo(
-    () => topLevelNodes.reduce((sum, n) => sum + (n.totalIncludingChildren ?? 0), 0),
-    [topLevelNodes]
+  const navigateToStudy = useCallback(
+    async (deckId: number) => {
+      if (navigatingRef.current) return;
+      navigatingRef.current = true;
+      try {
+        await anki.setCurrentDeck(deckId).catch(() => undefined);
+        navigate(`#/study/${deckId}`);
+      } finally {
+        window.setTimeout(() => {
+          navigatingRef.current = false;
+        }, 400);
+      }
+    },
+    [navigate]
   );
 
   const handleRowTap = async (row: FlatDeckRow) => {
@@ -421,16 +426,16 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
       setSelectedDeckId(row.deckId);
       return;
     }
+    if (navigatingRef.current) return;
     const rowDue = row.newCount + row.learnCount + row.reviewCount;
     if (rowDue > 0) {
-      try {
-        await anki.setCurrentDeck(row.deckId);
-      } catch {
-        // Proceed to study route even if setCurrentDeck fails silently
-      }
-      navigate(`#/study/${row.deckId}`);
+      await navigateToStudy(row.deckId);
     } else {
+      navigatingRef.current = true;
       navigate(`#/deck/${row.deckId}`);
+      window.setTimeout(() => {
+        navigatingRef.current = false;
+      }, 350);
     }
   };
 
@@ -451,25 +456,36 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
     }
   };
 
-  const cancelLongPress = () => {
-    if (longPressTimerRef.current !== null) {
-      window.clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = null;
-    }
-  };
-
-  const startLongPress = (row: FlatDeckRow) => {
+  const startLongPress = (e: React.TouchEvent, row: FlatDeckRow) => {
     cancelLongPress();
+    if (e.touches.length !== 1) return;
+    if (e.target instanceof Element && e.target.closest('button')) return;
+    const touch = e.touches[0];
+    longPressOriginRef.current = { x: touch.clientX, y: touch.clientY };
     longPressFiredRef.current = false;
     longPressTimerRef.current = window.setTimeout(() => {
       longPressFiredRef.current = true;
+      longPressOriginRef.current = null;
       setMenuDeck(row);
     }, 480);
   };
 
+  const moveLongPress = (e: React.TouchEvent) => {
+    const origin = longPressOriginRef.current;
+    if (!origin || e.touches.length !== 1) {
+      cancelLongPress();
+      return;
+    }
+    const touch = e.touches[0];
+    const dist = Math.hypot(touch.clientX - origin.x, touch.clientY - origin.y);
+    if (dist >= 10) {
+      cancelLongPress();
+    }
+  };
+
   const handleRenameSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!renameTarget) return;
+    if (!renameTarget || busyModal) return;
     const trimmed = renameValue.trim();
     if (!trimmed) {
       showToast('새 이름을 입력해 주세요.', 'error');
@@ -493,7 +509,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
 
   const handleCreateSubdeck = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!subdeckParent) return;
+    if (!subdeckParent || busyModal) return;
     const trimmed = subdeckName.trim();
     if (!trimmed) {
       showToast('하위 덱 이름을 입력해 주세요.', 'error');
@@ -506,11 +522,13 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
     try {
       await anki.createSimpleDeck(targetFullName);
       if (subdeckParent.collapsed) {
-        await anki.setDeckCollapsed(
-          subdeckParent.deckId,
-          false,
-          anki.SetDeckCollapsedScope.REVIEWER
-        ).catch(() => undefined);
+        await anki
+          .setDeckCollapsed(
+            subdeckParent.deckId,
+            false,
+            anki.SetDeckCollapsedScope.REVIEWER
+          )
+          .catch(() => undefined);
       }
       setSubdeckParent(null);
       setSubdeckName('');
@@ -528,7 +546,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
 
   const handleMoveDeckSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!moveTarget) return;
+    if (!moveTarget || busyModal) return;
     setBusyModal(true);
     try {
       await anki.reparentDecks([moveTarget.deckId], moveParentId);
@@ -547,25 +565,50 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
   };
 
   const handleConfirmDelete = async () => {
-    if (!deleteTarget) return;
+    if (!deleteTarget || busyModal) return;
+    const deletedFullName = deleteTarget.fullName;
+    const deletedCardCount = deleteTarget.totalIncludingChildren;
+    const targetDeckId = deleteTarget.deckId;
+
     setBusyModal(true);
     try {
-      await anki.removeDecks([deleteTarget.deckId]);
-      const deletedName = deleteTarget.shortName;
-      if (selectedDeckId === deleteTarget.deckId) {
+      await anki.removeDecks([targetDeckId]);
+      const statusAfterDelete = await anki.undoStatus().catch(() => null);
+      const deletedStep = statusAfterDelete?.lastStep;
+
+      if (selectedDeckId === targetDeckId) {
         setSelectedDeckId(null);
       }
       setDeleteTarget(null);
       bumpCollection();
-      showToast(`'${deletedName}' 덱을 삭제했습니다.`, 'success', {
+
+      const deleteSummary =
+        deletedCardCount > 0
+          ? `'${deletedFullName}' 덱(카드 ${deletedCardCount.toLocaleString()}장)을 삭제했습니다.`
+          : `'${deletedFullName}' 덱을 삭제했습니다.`;
+
+      let undoTriggered = false;
+      showToast(deleteSummary, 'success', {
         label: '되돌리기',
         onClick: async () => {
+          if (undoTriggered) return;
+          undoTriggered = true;
           try {
+            if (deletedStep !== undefined) {
+              const latest = await anki.undoStatus().catch(() => null);
+              if (latest && latest.lastStep !== deletedStep) {
+                showToast(
+                  '이후 다른 작업이 실행되어 삭제를 바로 되돌릴 수 없습니다.',
+                  'info'
+                );
+                return;
+              }
+            }
             await anki.undo();
             bumpCollection();
-            showToast('덱 삭제를 되돌렸습니다.', 'info');
+            showToast(`'${deletedFullName}' 덱을 복구했습니다.`, 'success');
           } catch {
-            showToast('되돌리지 못했습니다.', 'error');
+            showToast(`'${deletedFullName}' 덱 삭제를 되돌리지 못했습니다.`, 'error');
           }
         },
       });
@@ -580,29 +623,45 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
   };
 
   const openQuickCustomStudy = async (row: FlatDeckRow) => {
+    const seq = ++customLoadSeqRef.current;
     setCustomDeck(row);
     setCustomPreset('newLimitDelta');
-    setCustomValue(10);
+    setCustomValueDraft('10');
     setCustomLoading(true);
     try {
       const defaults = await anki.customStudyDefaults(row.deckId);
+      if (seq !== customLoadSeqRef.current) return;
       setCustomAvail({
         newAvail: defaults.availableNew ?? 0,
         revAvail: defaults.availableReview ?? 0,
       });
-      setCustomValue(Math.max(1, defaults.extendNew || 10));
+      setCustomValueDraft(String(Math.max(1, defaults.extendNew || 10)));
     } catch {
+      if (seq !== customLoadSeqRef.current) return;
       setCustomAvail({ newAvail: 0, revAvail: 0 });
     } finally {
-      setCustomLoading(false);
+      if (seq === customLoadSeqRef.current) {
+        setCustomLoading(false);
+      }
     }
   };
 
+  const getCustomBounds = (
+    p: 'newLimitDelta' | 'reviewLimitDelta' | 'forgotDays' | 'reviewAheadDays' | 'previewDays'
+  ) => {
+    if (p === 'newLimitDelta') return { min: 1, max: 9999, fallback: 10 };
+    if (p === 'reviewLimitDelta') return { min: 1, max: 9999, fallback: 20 };
+    return { min: 1, max: 365, fallback: 1 };
+  };
+
   const handleSubmitQuickCustom = async () => {
-    if (!customDeck) return;
+    if (!customDeck || busyModal) return;
+    const bounds = getCustomBounds(customPreset);
+    const val = parseClampedInt(customValueDraft, bounds.min, bounds.max, bounds.fallback);
+    setCustomValueDraft(String(val));
+
     setBusyModal(true);
     try {
-      const val = Math.max(1, customValue);
       const req: Parameters<typeof anki.customStudy>[0] =
         customPreset === 'newLimitDelta'
           ? { deckId: customDeck.deckId, newLimitDelta: val }
@@ -618,11 +677,21 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
       const targetId = customDeck.deckId;
       setCustomDeck(null);
       bumpCollection();
+
       if (customPreset === 'newLimitDelta' || customPreset === 'reviewLimitDelta') {
         await anki.setCurrentDeck(targetId);
+        showToast('오늘 학습 한도를 늘렸습니다.', 'success');
         navigate(`#/study/${targetId}`);
       } else {
-        showToast('맞춤 학습 세션을 만들었습니다.', 'success');
+        // Anki sets the created/updated filtered deck as the current deck
+        const currentDeck = await anki.getCurrentDeck().catch(() => null);
+        const filteredId = currentDeck ? anki.toNumber(currentDeck.id) : 0;
+        showToast('맞춤 학습 세션을 준비했습니다.', 'success');
+        if (filteredId > 0 && (Boolean(currentDeck?.filtered) || filteredId !== targetId)) {
+          navigate(`#/study/${filteredId}`);
+        } else {
+          void loadDecks(true);
+        }
       }
     } catch (err) {
       showToast(
@@ -635,7 +704,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
   };
 
   const handleRunExport = async () => {
-    if (!exportDeck) return;
+    if (!exportDeck || busyModal) return;
     setBusyModal(true);
     try {
       const res = await host.host.exportPackage({
@@ -658,6 +727,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
 
   const handleEmptyCreateDeck = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (busyModal) return;
     const trimmed = emptyDeckName.trim();
     if (!trimmed) {
       showToast('덱 이름을 입력해 주세요.', 'error');
@@ -707,9 +777,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
         label: '학습 시작',
         icon: <IconPlay size={18} />,
         onSelect: () => {
-          void anki.setCurrentDeck(row.deckId).finally(() => {
-            navigate(`#/study/${row.deckId}`);
-          });
+          void navigateToStudy(row.deckId);
         },
       },
       {
@@ -818,7 +886,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
         label: '카드 찾아보기',
         icon: <IconSearch size={18} />,
         onSelect: () =>
-          navigate(`#/browse?q=${encodeURIComponent(`deck:"${row.fullName}"`)}`),
+          navigate(`#/browse?q=${encodeURIComponent(buildDeckSearchQuery(row.fullName))}`),
       },
       {
         id: 'export',
@@ -860,49 +928,104 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
     );
   }, [allRows, deckFilterQuery]);
 
-  const anyHasChildren = useMemo(() => rows.some((r) => r.hasChildren), [rows]);
-
-  // Compact, Serene Today Focus Header Card
+  // Toss-style Today Focus Summary Card
   const renderSummaryCard = () => {
     const todayTotalGoal = todayStats.answerCount + totalDue;
+    const isEmptyDay = todayTotalGoal === 0;
     const progressPct =
       todayTotalGoal > 0
         ? Math.min(100, Math.round((todayStats.answerCount / todayTotalGoal) * 100))
-        : 100;
+        : 0;
     const allDone = totalDue === 0 && todayStats.answerCount > 0;
     const greeting = getPersonalGreeting(totalDue, todayStats.answerCount);
 
-    let statSummary: string;
+    let subNote: string;
     if (totalDue > 0) {
-      statSummary =
+      subNote =
         todayStats.answerCount > 0
-          ? `남은 ${totalDue.toLocaleString()}장 · 오늘 ${todayStats.answerCount.toLocaleString()}장 완료`
-          : `남은 ${totalDue.toLocaleString()}장`;
+          ? `오늘 ${todayStats.answerCount.toLocaleString()}장 완료 · ${formatDurationKo(todayStats.answerMillis)}`
+          : '오늘 복습할 카드를 가볍게 시작해 보세요';
     } else if (todayStats.answerCount > 0) {
-      statSummary = `오늘 ${todayStats.answerCount.toLocaleString()}장 완료 · ${formatDurationKo(todayStats.answerMillis)}`;
+      subNote = `오늘 ${todayStats.answerCount.toLocaleString()}장 완료 · ${formatDurationKo(todayStats.answerMillis)}`;
     } else {
-      statSummary = '새 카드를 추가하거나 덱을 가져와 시작해 보세요';
+      subNote = '새 카드를 추가하거나 덱을 가져와 시작해 보세요';
     }
 
     return (
       <section className="amgi-summary-card" aria-label="오늘의 학습 요약">
-        <div className="amgi-summary-lead">
-          <DailyProgressRing pct={progressPct} done={allDone} size={48} />
-
-          <div className="amgi-summary-body">
-            <div className="amgi-summary-title-row">
-              <span className="amgi-summary-primary">{greeting}</span>
+        <div className="amgi-summary-top">
+          <div className="amgi-summary-headline">
+            <div className="amgi-summary-kicker-row">
+              <span className="amgi-summary-kicker">{greeting}</span>
               {todayStats.streakDays > 0 && (
                 <span
                   className="amgi-streak-pill"
                   title={`${todayStats.streakDays}일 연속 학습`}
                 >
-                  <IconFlame size={11} />
-                  <span>{todayStats.streakDays}일</span>
+                  <IconFlame size={12} />
+                  <span>{todayStats.streakDays}일 연속</span>
                 </span>
               )}
             </div>
-            <div className="amgi-summary-secondary tabular">{statSummary}</div>
+            <div className="amgi-summary-big-row">
+              <span className="amgi-summary-big-num tabular">
+                {totalDue > 0
+                  ? `${totalDue.toLocaleString()}장`
+                  : allDone
+                    ? '오늘 완료'
+                    : '0장'}
+              </span>
+              {totalDue > 0 && <span className="amgi-summary-big-unit">남음</span>}
+            </div>
+            <div className="amgi-summary-secondary tabular">{subNote}</div>
+          </div>
+
+          <div className="amgi-summary-side">
+            <DailyProgressRing
+              pct={progressPct}
+              done={allDone}
+              empty={isEmptyDay}
+              size={50}
+            />
+            <button
+              type="button"
+              className="amgi-summary-refresh-btn"
+              onClick={() => void loadDecks(true)}
+              aria-label="카운트 새로고침"
+              title="카운트 새로고침"
+            >
+              <IconRefresh size={18} />
+            </button>
+          </div>
+        </div>
+
+        <div className="amgi-summary-breakdown tabular" aria-label="오늘 학습 항목별 카드 수">
+          <div className={`amgi-summary-metric ${totalNew === 0 ? 'is-zero' : ''}`}>
+            <span className="amgi-summary-metric-label">
+              <span className="amgi-legend-dot amgi-legend-dot--new" aria-hidden="true" />
+              <span>새 카드</span>
+            </span>
+            <span className="amgi-summary-metric-val amgi-summary-metric-val--new">
+              {totalNew.toLocaleString()}
+            </span>
+          </div>
+          <div className={`amgi-summary-metric ${totalLearn === 0 ? 'is-zero' : ''}`}>
+            <span className="amgi-summary-metric-label">
+              <span className="amgi-legend-dot amgi-legend-dot--learn" aria-hidden="true" />
+              <span>학습</span>
+            </span>
+            <span className="amgi-summary-metric-val amgi-summary-metric-val--learn">
+              {totalLearn.toLocaleString()}
+            </span>
+          </div>
+          <div className={`amgi-summary-metric ${totalReview === 0 ? 'is-zero' : ''}`}>
+            <span className="amgi-summary-metric-label">
+              <span className="amgi-legend-dot amgi-legend-dot--review" aria-hidden="true" />
+              <span>복습</span>
+            </span>
+            <span className="amgi-summary-metric-val amgi-summary-metric-val--review">
+              {totalReview.toLocaleString()}
+            </span>
           </div>
         </div>
 
@@ -911,13 +1034,9 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
             <button
               type="button"
               className="amgi-btn amgi-btn-primary amgi-summary-play-btn"
-              onClick={() => {
-                void anki.setCurrentDeck(firstDueDeck.deckId).finally(() => {
-                  navigate(`#/study/${firstDueDeck.deckId}`);
-                });
-              }}
+              onClick={() => void navigateToStudy(firstDueDeck.deckId)}
             >
-              <IconPlay size={15} />
+              <IconPlay size={17} />
               <span>학습 시작</span>
             </button>
           ) : (
@@ -926,29 +1045,16 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
               className="amgi-btn amgi-btn-secondary amgi-summary-play-btn"
               onClick={() => openAddSheet()}
             >
-              <IconEdit size={15} />
+              <IconEdit size={17} />
               <span>노트 추가</span>
             </button>
           )}
-          <button
-            type="button"
-            className="amgi-summary-refresh-btn"
-            onClick={() => void loadDecks(true)}
-            aria-label="카운트 새로고침"
-            title="카운트 새로고침"
-          >
-            <IconRefresh size={16} />
-          </button>
         </div>
       </section>
     );
   };
 
-  const renderDeckRow = (
-    row: FlatDeckRow,
-    mode: 'root' | 'child' | 'search',
-    showChevronSlot: boolean
-  ) => {
+  const renderDeckRow = (row: FlatDeckRow, mode: 'root' | 'child' | 'search') => {
     const isSelected = isWide && selectedDeckId === row.deckId;
     const rowDue = row.newCount + row.learnCount + row.reviewCount;
     const themeMeta = resolveDeckTheme(row.fullName);
@@ -960,7 +1066,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
       rowVariantClass = 'amgi-deck-row--search';
     } else if (mode === 'child') {
       const clampedDepth = Math.min(Math.max(row.depth - 1, 0), 3);
-      const indentPx = 20 + clampedDepth * 16;
+      const indentPx = 22 + clampedDepth * 16;
       indentStyle = { '--deck-indent': `${indentPx}px` } as React.CSSProperties;
       rowVariantClass =
         row.depth === 1
@@ -970,9 +1076,22 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
             : 'amgi-deck-row--child amgi-deck-row--deep';
     }
 
+    const subLine =
+      mode === 'search'
+        ? breadcrumb
+          ? `${breadcrumb} · 전체 ${row.totalIncludingChildren.toLocaleString()}장`
+          : `전체 ${row.totalIncludingChildren.toLocaleString()}장`
+        : row.totalIncludingChildren === 0
+          ? '카드 없음'
+          : row.hasChildren && row.collapsed
+            ? `하위 덱 포함 · ${row.totalIncludingChildren.toLocaleString()}장`
+            : `전체 ${row.totalIncludingChildren.toLocaleString()}장`;
+
     const countsAria =
       rowDue === 0
-        ? '오늘 학습 완료'
+        ? row.totalIncludingChildren === 0
+          ? '카드 없음'
+          : '오늘 학습 완료'
         : `새 카드 ${row.newCount}장, 학습 중 ${row.learnCount}장, 복습 ${row.reviewCount}장`;
 
     return (
@@ -996,8 +1115,8 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
             void handleRowTap(row);
           }
         }}
-        onTouchStart={() => startLongPress(row)}
-        onTouchMove={cancelLongPress}
+        onTouchStart={(e) => startLongPress(e, row)}
+        onTouchMove={moveLongPress}
         onTouchEnd={cancelLongPress}
         onTouchCancel={cancelLongPress}
         onContextMenu={(e) => {
@@ -1006,7 +1125,19 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
         }}
       >
         <div className="amgi-deck-row-left">
-          {mode === 'root' && (
+          {mode !== 'search' && row.hasChildren ? (
+            <button
+              type="button"
+              className={`amgi-deck-chevron ${!row.collapsed ? 'is-expanded' : ''}`}
+              aria-label={
+                row.collapsed ? `${row.shortName} 펼치기` : `${row.shortName} 접기`
+              }
+              aria-expanded={!row.collapsed}
+              onClick={(e) => void handleToggleCollapse(e, row)}
+            >
+              <IconChevronRight size={18} />
+            </button>
+          ) : mode === 'root' ? (
             <span
               className={`amgi-deck-emblem amgi-deck-emblem--${
                 row.filtered ? 'blue' : themeMeta.tone
@@ -1014,22 +1145,19 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
               aria-hidden="true"
             >
               {row.filtered ? (
-                <IconSpark size={15} />
+                <IconSpark size={16} />
               ) : (
-                <DeckCategoryIcon deckName={row.fullName} size={16} />
+                <DeckCategoryIcon deckName={row.fullName} size={17} />
               )}
             </span>
-          )}
-
-          {mode === 'child' && row.depth >= 2 && (
+          ) : mode === 'child' ? (
             <span
               className={`amgi-deck-depth-dot ${row.depth >= 3 ? 'is-deep' : ''}`}
               aria-hidden="true"
             />
-          )}
+          ) : null}
 
           <div className="amgi-deck-row-text">
-            {breadcrumb && <span className="amgi-deck-breadcrumb">{breadcrumb}</span>}
             <div className="amgi-deck-title-wrap">
               <span
                 className={`amgi-deck-title ${
@@ -1040,16 +1168,21 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
               </span>
               {row.filtered && <span className="amgi-filtered-pill">맞춤</span>}
             </div>
+            <span className="amgi-deck-subline tabular">{subLine}</span>
           </div>
         </div>
 
         <div className="amgi-deck-row-right">
           <div className="amgi-deck-counts tabular" aria-label={countsAria}>
             {rowDue === 0 ? (
-              <span className="amgi-deck-done-badge">
-                <IconCheck size={11} />
-                <span>완료</span>
-              </span>
+              row.totalIncludingChildren === 0 ? (
+                <span className="amgi-deck-empty-pill">비어 있음</span>
+              ) : (
+                <span className="amgi-deck-done-badge">
+                  <IconCheck size={12} />
+                  <span>완료</span>
+                </span>
+              )
             ) : (
               <>
                 <span
@@ -1077,36 +1210,17 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
             )}
           </div>
 
-          <div className="amgi-deck-actions">
-            {showChevronSlot &&
-              (row.hasChildren ? (
-                <button
-                  type="button"
-                  className={`amgi-deck-chevron ${!row.collapsed ? 'is-expanded' : ''}`}
-                  aria-label={
-                    row.collapsed ? `${row.shortName} 펼치기` : `${row.shortName} 접기`
-                  }
-                  aria-expanded={!row.collapsed}
-                  onClick={(e) => void handleToggleCollapse(e, row)}
-                >
-                  <IconChevronRight size={16} />
-                </button>
-              ) : (
-                <span className="amgi-deck-chevron-spacer" aria-hidden="true" />
-              ))}
-
-            <button
-              type="button"
-              className="amgi-deck-more-btn"
-              aria-label={`${row.shortName} 덱 메뉴`}
-              onClick={(e) => {
-                e.stopPropagation();
-                setMenuDeck(row);
-              }}
-            >
-              <IconMore size={17} />
-            </button>
-          </div>
+          <button
+            type="button"
+            className="amgi-deck-more-btn"
+            aria-label={`${row.shortName} 덱 메뉴`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setMenuDeck(row);
+            }}
+          >
+            <IconMore size={19} />
+          </button>
         </div>
       </div>
     );
@@ -1115,7 +1229,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
   const renderDeckTreeCard = () => {
     if (loading && rows.length === 0) {
       return (
-        <div className="amgi-empty-card">
+        <div className="amgi-empty-card" aria-busy="true">
           <div className="amgi-empty-title">덱을 불러오는 중입니다...</div>
           <p className="amgi-empty-desc">잠시만 기다려 주세요.</p>
         </div>
@@ -1138,9 +1252,9 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
           <div className="amgi-empty-icon-wrap" aria-hidden="true">
             <IconDeck size={32} />
           </div>
-          <h2 className="amgi-empty-title">아직 덱이 없습니다</h2>
+          <h2 className="amgi-empty-title">아직 덱이 없어요</h2>
           <p className="amgi-empty-desc">
-            가지고 있는 Anki 파일(.apkg · .colpkg)을 불러오거나 새 덱을 만들어 시작해 보세요.
+            가지고 있는 Anki 파일(.apkg · .colpkg)을 불러오거나 새 덱을 만들어 학습을 시작해 보세요.
           </p>
           <div className="amgi-empty-actions">
             <button
@@ -1169,8 +1283,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
 
     const onlyEmptyDefault =
       rows.length === 1 && rows[0].deckId === 1 && totalCardsAll === 0;
-    const showChevronSlot = !isFiltering && anyHasChildren;
-    const deckCountDisplay = isFiltering ? filteredRows.length : allRows.length;
+    const visibleDeckCount = isFiltering ? filteredRows.length : deckGroups.length;
 
     return (
       <>
@@ -1178,14 +1291,21 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
           <div className="amgi-deck-filter-bar">
             <div className="amgi-deck-filter-input-wrap">
               <span className="amgi-deck-filter-icon" aria-hidden="true">
-                <IconSearch size={15} />
+                <IconSearch size={17} />
               </span>
               <input
                 type="search"
                 className="amgi-deck-filter-input"
                 value={deckFilterQuery}
                 onChange={(e) => setDeckFilterQuery(e.target.value)}
-                placeholder="암기장 이름으로 빠르게 찾기..."
+                onKeyDown={(e) => {
+                  if (isImeComposing(e)) return;
+                  if (e.key === 'Escape' && deckFilterQuery) {
+                    e.preventDefault();
+                    setDeckFilterQuery('');
+                  }
+                }}
+                placeholder="암기장 이름으로 빠르게 찾기"
                 aria-label="덱 필터"
               />
               {isFiltering && (
@@ -1195,39 +1315,40 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
                   onClick={() => setDeckFilterQuery('')}
                   aria-label="검색어 지우기"
                 >
-                  <IconClose size={14} />
+                  <IconClose size={16} />
                 </button>
               )}
             </div>
           </div>
         )}
 
-        <div className={`amgi-deck-list-shell ${showChevronSlot ? 'has-chevrons' : ''}`}>
+        <div className="amgi-deck-list-shell">
           <div className="amgi-deck-list-header">
             <div className="amgi-deck-section-left">
               <h2 className="amgi-deck-section-title">
                 {isFiltering ? '검색 결과' : '내 암기장'}
               </h2>
               <span className="amgi-deck-section-count tabular">
-                {!isFiltering && allRows.length > deckGroups.length
-                  ? `총 ${deckCountDisplay}개`
-                  : `${deckCountDisplay}개`}
+                {visibleDeckCount}개
               </span>
             </div>
 
-            <div className="amgi-deck-legend-cols" aria-hidden="true">
-              <span className="amgi-deck-legend-col">
-                <span className="amgi-legend-dot amgi-legend-dot--new" />
-                <span>새</span>
-              </span>
-              <span className="amgi-deck-legend-col">
-                <span className="amgi-legend-dot amgi-legend-dot--learn" />
-                <span>학습</span>
-              </span>
-              <span className="amgi-deck-legend-col">
-                <span className="amgi-legend-dot amgi-legend-dot--review" />
-                <span>복습</span>
-              </span>
+            <div className="amgi-deck-header-right" aria-hidden="true">
+              <div className="amgi-deck-legend-cols">
+                <span className="amgi-deck-legend-col">
+                  <span className="amgi-legend-dot amgi-legend-dot--new" />
+                  <span>새</span>
+                </span>
+                <span className="amgi-deck-legend-col">
+                  <span className="amgi-legend-dot amgi-legend-dot--learn" />
+                  <span>학습</span>
+                </span>
+                <span className="amgi-deck-legend-col">
+                  <span className="amgi-legend-dot amgi-legend-dot--review" />
+                  <span>복습</span>
+                </span>
+              </div>
+              <span className="amgi-deck-header-more-spacer" />
             </div>
           </div>
 
@@ -1239,7 +1360,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
                 </div>
               ) : (
                 <div className="amgi-deck-group amgi-deck-group--search" role="presentation">
-                  {filteredRows.map((row) => renderDeckRow(row, 'search', false))}
+                  {filteredRows.map((row) => renderDeckRow(row, 'search'))}
                 </div>
               )
             ) : (
@@ -1251,16 +1372,14 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
                     role="presentation"
                     className={`amgi-deck-group ${hasVisibleChildren ? 'is-expanded' : ''}`}
                   >
-                    {renderDeckRow(group.root, 'root', showChevronSlot)}
+                    {renderDeckRow(group.root, 'root')}
                     {hasVisibleChildren && (
                       <div
                         className="amgi-deck-children"
                         role="group"
                         aria-label={`${group.root.shortName} 하위 덱`}
                       >
-                        {group.descendants.map((child) =>
-                          renderDeckRow(child, 'child', showChevronSlot)
-                        )}
+                        {group.descendants.map((child) => renderDeckRow(child, 'child'))}
                       </div>
                     )}
                   </div>
@@ -1272,7 +1391,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
 
         {onlyEmptyDefault && (
           <div className="amgi-onboarding-banner">
-            <div className="amgi-summary-primary">처음 시작하시나요?</div>
+            <div className="amgi-onboarding-title">처음 시작하시나요?</div>
             <p className="amgi-empty-desc" style={{ maxWidth: 'none', textAlign: 'left' }}>
               기존 Anki 덱 파일(.apkg · .colpkg)을 불러오거나 새 노트를 직접 추가해 학습을 시작해 보세요.
             </p>
@@ -1300,18 +1419,29 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
     );
   };
 
+  const ptrVisible = pullDistance > 24 || refreshing;
+
   return (
     <div
       className="amgi-decks-page"
       onTouchStart={(e) => {
-        if (window.scrollY <= 0 && e.touches.length === 1) {
-          touchStartYRef.current = e.touches[0].clientY;
-        } else {
+        if (
+          openOverlayCount() > 0 ||
+          window.scrollY > 0 ||
+          e.touches.length !== 1 ||
+          isTouchInsideScrollableOrOverlay(e.target, e.currentTarget)
+        ) {
           touchStartYRef.current = null;
+          return;
         }
+        touchStartYRef.current = e.touches[0].clientY;
       }}
       onTouchMove={(e) => {
-        if (touchStartYRef.current === null || window.scrollY > 0) {
+        if (
+          touchStartYRef.current === null ||
+          openOverlayCount() > 0 ||
+          window.scrollY > 0
+        ) {
           touchStartYRef.current = null;
           if (pullDistance !== 0) setPullDistance(0);
           return;
@@ -1325,9 +1455,13 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
         }
       }}
       onTouchEnd={() => {
-        if (pullDistance >= 64) {
+        if (openOverlayCount() === 0 && pullDistance >= 64) {
           void loadDecks(true);
         }
+        touchStartYRef.current = null;
+        setPullDistance(0);
+      }}
+      onTouchCancel={() => {
         touchStartYRef.current = null;
         setPullDistance(0);
       }}
@@ -1340,20 +1474,23 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
         onChange={(e) => void handleEmptyImportFile(e)}
       />
 
-      {(pullDistance > 24 || refreshing) && (
-        <div className="amgi-ptr-banner">
-          <IconRefresh size={16} />
-          <span>
-            {refreshing
-              ? resolvedTheme === 'eink'
-                ? '목록 새로고침 중'
-                : '카운트를 새로고침하는 중...'
-              : pullDistance >= 56
-                ? '손을 놓으면 새로고침합니다'
-                : '당겨서 새로고침'}
-          </span>
-        </div>
-      )}
+      {/* Zero-layout-jump floating pull-to-refresh indicator */}
+      <div className="amgi-ptr-float" aria-live="polite">
+        {ptrVisible && (
+          <div className="amgi-ptr-banner">
+            <IconRefresh size={15} />
+            <span>
+              {refreshing
+                ? resolvedTheme === 'eink'
+                  ? '목록 새로고침 중'
+                  : '카운트를 새로고침하는 중...'
+                : pullDistance >= 64
+                  ? '손을 놓으면 새로고침합니다'
+                  : '당겨서 새로고침'}
+            </span>
+          </div>
+        )}
+      </div>
 
       {isWide ? (
         <div className="amgi-deck-split">
@@ -1433,12 +1570,13 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
               새 덱 이름
             </label>
             <input
+              ref={renameInputRef}
               id="rename-deck-input"
               type="text"
               className="amgi-input"
-              autoFocus
               value={renameValue}
               onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={preventImeEnterSubmit}
             />
             <span className="amgi-field-hint">
               <code>::</code>를 사용해 상위 덱 경로를 함께 바꿀 수 있습니다.
@@ -1555,6 +1693,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
               autoFocus
               value={subdeckName}
               onChange={(e) => setSubdeckName(e.target.value)}
+              onKeyDown={preventImeEnterSubmit}
               placeholder="예: 문법 또는 1단원"
             />
           </div>
@@ -1595,7 +1734,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
           <strong className="tabular">
             {(deleteTarget?.totalIncludingChildren ?? 0).toLocaleString()}장
           </strong>
-          을 삭제합니다. 되돌리기(Ctrl+Z)로 복구할 수 있습니다.
+          을 삭제합니다. 삭제 직후 안내 알림의 &apos;되돌리기&apos;로 복구할 수 있습니다.
         </p>
       </SheetOrDialog>
 
@@ -1639,12 +1778,12 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
               className={`amgi-radio-card ${customPreset === 'newLimitDelta' ? 'active' : ''}`}
               onClick={() => {
                 setCustomPreset('newLimitDelta');
-                setCustomValue(10);
+                setCustomValueDraft('10');
               }}
             >
               <span className="amgi-radio-card-title">오늘 새 카드 더 공부하기</span>
               <span className="amgi-radio-card-desc">
-                더 공부 가능: {customAvail.newAvail}장
+                더 공부 가능: {customAvail.newAvail.toLocaleString()}장
               </span>
             </button>
             <button
@@ -1652,12 +1791,12 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
               className={`amgi-radio-card ${customPreset === 'reviewLimitDelta' ? 'active' : ''}`}
               onClick={() => {
                 setCustomPreset('reviewLimitDelta');
-                setCustomValue(20);
+                setCustomValueDraft('20');
               }}
             >
               <span className="amgi-radio-card-title">오늘 복습 카드 더 공부하기</span>
               <span className="amgi-radio-card-desc">
-                더 공부 가능: {customAvail.revAvail}장
+                더 공부 가능: {customAvail.revAvail.toLocaleString()}장
               </span>
             </button>
             <button
@@ -1665,7 +1804,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
               className={`amgi-radio-card ${customPreset === 'forgotDays' ? 'active' : ''}`}
               onClick={() => {
                 setCustomPreset('forgotDays');
-                setCustomValue(1);
+                setCustomValueDraft('1');
               }}
             >
               <span className="amgi-radio-card-title">최근 틀린 카드 다시 보기</span>
@@ -1676,7 +1815,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
               className={`amgi-radio-card ${customPreset === 'reviewAheadDays' ? 'active' : ''}`}
               onClick={() => {
                 setCustomPreset('reviewAheadDays');
-                setCustomValue(1);
+                setCustomValueDraft('1');
               }}
             >
               <span className="amgi-radio-card-title">미리 복습하기</span>
@@ -1687,7 +1826,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
               className={`amgi-radio-card ${customPreset === 'previewDays' ? 'active' : ''}`}
               onClick={() => {
                 setCustomPreset('previewDays');
-                setCustomValue(1);
+                setCustomValueDraft('1');
               }}
             >
               <span className="amgi-radio-card-title">최근 새 카드 미리 보기</span>
@@ -1703,11 +1842,30 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
               <input
                 id="quick-cs-val"
                 type="number"
+                inputMode="numeric"
                 min={1}
-                max={9999}
+                max={
+                  customPreset === 'newLimitDelta' || customPreset === 'reviewLimitDelta'
+                    ? 9999
+                    : 365
+                }
                 className="amgi-input tabular"
-                value={customValue}
-                onChange={(e) => setCustomValue(Number(e.target.value) || 1)}
+                value={customValueDraft}
+                onChange={(e) => setCustomValueDraft(e.target.value)}
+                onBlur={() => {
+                  const bounds = getCustomBounds(customPreset);
+                  setCustomValueDraft(
+                    String(
+                      parseClampedInt(
+                        customValueDraft,
+                        bounds.min,
+                        bounds.max,
+                        bounds.fallback
+                      )
+                    )
+                  );
+                }}
+                onKeyDown={preventImeEnterSubmit}
               />
             </div>
           </div>
@@ -1878,6 +2036,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
               autoFocus
               value={emptyDeckName}
               onChange={(e) => setEmptyDeckName(e.target.value)}
+              onKeyDown={preventImeEnterSubmit}
               placeholder="예: 일본어::한자"
             />
           </div>
@@ -1907,7 +2066,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
               className="amgi-btn amgi-btn-danger"
               disabled={busyModal}
               onClick={() => {
-                if (!colpkgConfirm) return;
+                if (!colpkgConfirm || busyModal) return;
                 setBusyModal(true);
                 void host.host
                   .importFile({

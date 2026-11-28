@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as anki from '../../anki';
 import { useApp } from '../../context/AppContext';
 import {
+  IconClose,
   IconEdit,
   IconSearch,
   IconSpark,
@@ -24,23 +25,29 @@ export const TagManagerSheet: React.FC<TagManagerSheetProps> = ({ open, onClose 
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
+  const loadSeqRef = useRef(0);
 
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   const loadTags = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     try {
       const list = await anki.getAllTags();
+      if (seq !== loadSeqRef.current) return;
       setTags(list.slice().sort((a, b) => a.localeCompare(b, 'ko')));
     } catch (err) {
+      if (seq !== loadSeqRef.current) return;
       showToast(
         err instanceof Error ? err.message : '태그 목록을 불러오지 못했습니다.',
         'error'
       );
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) {
+        setLoading(false);
+      }
     }
   }, [showToast]);
 
@@ -48,6 +55,9 @@ export const TagManagerSheet: React.FC<TagManagerSheetProps> = ({ open, onClose 
     if (open) {
       setQuery('');
       void loadTags();
+    } else {
+      setRenameTarget(null);
+      setDeleteTarget(null);
     }
   }, [open, loadTags]);
 
@@ -115,7 +125,22 @@ export const TagManagerSheet: React.FC<TagManagerSheetProps> = ({ open, onClose 
       setDeleteTarget(null);
       bumpCollection();
       await loadTags();
-      showToast(`'${removed}' 태그를 삭제했습니다.`, 'success');
+      showToast(`'${removed}' 태그를 삭제했습니다.`, 'success', {
+        label: '되돌리기',
+        onClick: async () => {
+          try {
+            await anki.undo();
+            bumpCollection();
+            await loadTags();
+            showToast('태그 삭제를 되돌렸습니다.', 'info');
+          } catch (err) {
+            showToast(
+              err instanceof Error ? err.message : '되돌리기에 실패했습니다.',
+              'error'
+            );
+          }
+        },
+      });
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : '태그를 삭제하지 못했습니다.',
@@ -134,6 +159,7 @@ export const TagManagerSheet: React.FC<TagManagerSheetProps> = ({ open, onClose 
         title="태그 관리"
         subtitle={`총 ${tags.length.toLocaleString('ko-KR')}개의 태그`}
         maxWidth={540}
+        variant="full"
         footer={
           <>
             <button
@@ -156,7 +182,7 @@ export const TagManagerSheet: React.FC<TagManagerSheetProps> = ({ open, onClose 
         }
       >
         <div className="amgi-cmd-search">
-          <IconSearch size={17} style={{ color: 'var(--text-2)', flexShrink: 0 }} />
+          <IconSearch size={17} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
           <input
             type="search"
             value={query}
@@ -164,14 +190,24 @@ export const TagManagerSheet: React.FC<TagManagerSheetProps> = ({ open, onClose 
             placeholder="태그 이름으로 검색..."
             aria-label="태그 검색"
           />
+          {query && (
+            <button
+              type="button"
+              className="amgi-cmd-clear"
+              aria-label="검색어 지우기"
+              onClick={() => setQuery('')}
+            >
+              <IconClose size={14} />
+            </button>
+          )}
         </div>
 
         {loading ? (
-          <p className="amgi-prose" style={{ margin: '12px 0', color: 'var(--text-2)' }}>
+          <p className="amgi-prose" style={{ margin: '12px 0', color: 'var(--text-3)' }}>
             태그 목록을 불러오는 중...
           </p>
         ) : filtered.length === 0 ? (
-          <p className="amgi-prose" style={{ margin: '12px 0', color: 'var(--text-2)' }}>
+          <p className="amgi-prose" style={{ margin: '12px 0', color: 'var(--text-3)' }}>
             {tags.length === 0
               ? '아직 등록된 태그가 없습니다.'
               : '검색 결과와 일치하는 태그가 없습니다.'}
@@ -187,13 +223,13 @@ export const TagManagerSheet: React.FC<TagManagerSheetProps> = ({ open, onClose 
                     flex: 1,
                     justifyContent: 'flex-start',
                     padding: '0 6px',
-                    minHeight: 44,
                     color: 'var(--text)',
                     overflow: 'hidden',
                   }}
                   onClick={() => {
                     onClose();
-                    navigate(`#/browse?q=${encodeURIComponent(`tag:"${tag}"`)}`);
+                    const escaped = tag.replace(/"/g, '\\"');
+                    navigate(`#/browse?q=${encodeURIComponent(`tag:"${escaped}"`)}`);
                   }}
                 >
                   <IconTag size={16} style={{ color: 'var(--primary)', flexShrink: 0 }} />
@@ -210,8 +246,7 @@ export const TagManagerSheet: React.FC<TagManagerSheetProps> = ({ open, onClose 
                 <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
                   <button
                     type="button"
-                    className="amgi-btn amgi-btn-ghost amgi-btn-icon compact"
-                    data-compact="true"
+                    className="amgi-btn amgi-btn-ghost amgi-btn-icon"
                     aria-label={`${tag} 이름 바꾸기`}
                     onClick={() => {
                       setRenameTarget(tag);
@@ -222,8 +257,7 @@ export const TagManagerSheet: React.FC<TagManagerSheetProps> = ({ open, onClose 
                   </button>
                   <button
                     type="button"
-                    className="amgi-btn amgi-btn-ghost amgi-btn-icon compact"
-                    data-compact="true"
+                    className="amgi-btn amgi-btn-ghost amgi-btn-icon"
                     aria-label={`${tag} 삭제`}
                     onClick={() => setDeleteTarget(tag)}
                   >
@@ -280,6 +314,11 @@ export const TagManagerSheet: React.FC<TagManagerSheetProps> = ({ open, onClose 
               autoFocus
               value={renameValue}
               onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.nativeEvent.isComposing || e.keyCode === 229) && e.key === 'Enter') {
+                  e.preventDefault();
+                }
+              }}
               placeholder="예: 일본어::JLPT"
             />
             <span className="amgi-field-hint">

@@ -8,6 +8,16 @@ import {
 } from 'react';
 import type { ResolvedTheme } from '../../context/AppContext';
 
+export interface CardFrameKeyEvent {
+  key: string;
+  code: string;
+  shift: boolean;
+  ctrl: boolean;
+  meta: boolean;
+  alt: boolean;
+  repeat: boolean;
+}
+
 export interface CardRenderPayload {
   side: 'question' | 'answer';
   html: string;
@@ -19,6 +29,7 @@ export interface CardRenderPayload {
   lineHeight?: number;
   tapToFlip?: boolean;
   hanjaEnabled?: boolean;
+  forwardKeys?: boolean;
 }
 
 export interface CardFrameProps {
@@ -37,6 +48,7 @@ export interface CardFrameProps {
   onTypeAnsSubmit?: (value: string) => void;
   onHanjaLookup?: (text: string, sentence?: string) => void;
   onBridgeCommand?: (cmd: string) => void;
+  onKeyDown?: (ev: CardFrameKeyEvent) => void;
 }
 
 export interface CardFrameHandle {
@@ -53,8 +65,20 @@ type FrameOutboundMessage =
   | { type: 'setTheme'; theme: ResolvedTheme }
   | { type: 'setFontScale'; fontScale: number }
   | { type: 'setLineHeight'; lineHeight: number }
+  | { type: 'setForwardKeys'; enabled: boolean }
   | { type: 'hanjaKey'; action: 'open' | 'next' | 'prev' }
   | { type: 'getTypedAnswer' };
+
+function getTargetOrigin(): string {
+  try {
+    if (window.location?.origin && window.location.origin !== 'null') {
+      return window.location.origin;
+    }
+  } catch {
+    // Ignore location access errors
+  }
+  return '*';
+}
 
 export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
   function CardFrame(
@@ -74,6 +98,7 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
       onTypeAnsSubmit,
       onHanjaLookup,
       onBridgeCommand,
+      onKeyDown,
     },
     ref
   ) {
@@ -82,6 +107,8 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
     const readyRef = useRef(false);
     const queueRef = useRef<FrameOutboundMessage[]>([]);
     const typedAnswerResolversRef = useRef<Array<(val: string) => void>>([]);
+    const frameInputFocusedRef = useRef(false);
+    const forwardKeys = Boolean(onKeyDown);
 
     const callbacksRef = useRef({
       onFrameReady,
@@ -91,6 +118,7 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
       onTypeAnsSubmit,
       onHanjaLookup,
       onBridgeCommand,
+      onKeyDown,
     });
     callbacksRef.current = {
       onFrameReady,
@@ -100,6 +128,7 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
       onTypeAnsSubmit,
       onHanjaLookup,
       onBridgeCommand,
+      onKeyDown,
     };
 
     const defaultsRef = useRef({
@@ -108,6 +137,7 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
       lineHeight,
       tapToFlip,
       hanjaEnabled,
+      forwardKeys,
     });
     defaultsRef.current = {
       theme,
@@ -115,6 +145,7 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
       lineHeight,
       tapToFlip,
       hanjaEnabled,
+      forwardKeys,
     };
 
     const flushQueue = useCallback(() => {
@@ -123,8 +154,9 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
       const queued = queueRef.current;
       if (queued.length === 0) return;
       queueRef.current = [];
+      const targetOrigin = getTargetOrigin();
       for (const msg of queued) {
-        win.postMessage(msg, '*');
+        win.postMessage(msg, targetOrigin);
       }
     }, []);
 
@@ -133,7 +165,7 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
         const win = iframeRef.current?.contentWindow;
         if (win && (loadedRef.current || readyRef.current)) {
           flushQueue();
-          win.postMessage(msg, '*');
+          win.postMessage(msg, getTargetOrigin());
         } else {
           queueRef.current.push(msg);
         }
@@ -146,6 +178,10 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
       const onMessage = (event: MessageEvent) => {
         const win = iframeRef.current?.contentWindow;
         if (!win || event.source !== win) return;
+        const expectedOrigin = getTargetOrigin();
+        if (expectedOrigin !== '*' && event.origin && event.origin !== expectedOrigin) {
+          return;
+        }
         const data = event.data as Record<string, unknown> | null;
         if (!data || typeof data !== 'object') return;
 
@@ -196,6 +232,27 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
               callbacksRef.current.onBridgeCommand?.(data.cmd);
             }
             break;
+          case 'inputFocus': {
+            const focused = Boolean(data.focused);
+            if (focused !== frameInputFocusedRef.current) {
+              frameInputFocusedRef.current = focused;
+              window.dispatchEvent(
+                new CustomEvent('amgi:frame-input-focus', { detail: focused })
+              );
+            }
+            break;
+          }
+          case 'keyDown':
+            callbacksRef.current.onKeyDown?.({
+              key: typeof data.key === 'string' ? data.key : '',
+              code: typeof data.code === 'string' ? data.code : '',
+              shift: Boolean(data.shift),
+              ctrl: Boolean(data.ctrl),
+              meta: Boolean(data.meta),
+              alt: Boolean(data.alt),
+              repeat: Boolean(data.repeat),
+            });
+            break;
           default:
             break;
         }
@@ -204,6 +261,12 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
       window.addEventListener('message', onMessage);
       return () => {
         window.removeEventListener('message', onMessage);
+        if (frameInputFocusedRef.current) {
+          frameInputFocusedRef.current = false;
+          window.dispatchEvent(
+            new CustomEvent('amgi:frame-input-focus', { detail: false })
+          );
+        }
         const pending = typedAnswerResolversRef.current.splice(0);
         for (const resolve of pending) {
           resolve('');
@@ -211,7 +274,7 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
       };
     }, [flushQueue]);
 
-    // Sync theme/fontScale/lineHeight props dynamically
+    // Sync theme/fontScale/lineHeight/forwardKeys props dynamically
     useEffect(() => {
       postToFrame({ type: 'setTheme', theme });
     }, [theme, postToFrame]);
@@ -228,6 +291,10 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
       }
     }, [lineHeight, postToFrame]);
 
+    useEffect(() => {
+      postToFrame({ type: 'setForwardKeys', enabled: forwardKeys });
+    }, [forwardKeys, postToFrame]);
+
     useImperativeHandle(
       ref,
       () => ({
@@ -241,6 +308,7 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
             lineHeight: payload.lineHeight ?? defs.lineHeight,
             tapToFlip: payload.tapToFlip ?? defs.tapToFlip,
             hanjaEnabled: payload.hanjaEnabled ?? defs.hanjaEnabled,
+            forwardKeys: payload.forwardKeys ?? defs.forwardKeys,
           });
         },
         setTheme(nextTheme: ResolvedTheme) {
@@ -294,7 +362,7 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
           height: '100%',
           border: 'none',
           display: 'block',
-          background: theme === 'dark' ? '#141923' : '#FFFFFF',
+          background: 'var(--surface)',
           ...style,
         }}
       />
