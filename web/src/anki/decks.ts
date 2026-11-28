@@ -112,6 +112,44 @@ export async function getCurrentDeck(): Promise<Deck> {
   return rpc('getCurrentDeck', anki.generic.Empty, anki.decks.Deck, {});
 }
 
+/**
+ * Id of the session deck that `customStudy` just built: the backend selects the new
+ * filtered deck as the current deck. Returns null when the current deck is not filtered
+ * (e.g. the request only raised today's limits).
+ */
+export async function customStudySessionDeckId(): Promise<number | null> {
+  try {
+    const cur = await getCurrentDeck();
+    if (cur.filtered) return toNumber(cur.id);
+  } catch {
+    // Treat as unknown
+  }
+  return null;
+}
+
+/**
+ * Ids (of `deckIds`) whose own or subdecks' cards were answered today, from the per-deck
+ * "studied today" counters the scheduler keeps (`Deck.common`). Answering updates the
+ * home deck and its parents. The backend exposes no day index, so "today" is the latest
+ * `lastDayStudied` among decks with studied counts; call only when something was answered
+ * today (e.g. `graphs().today.answerCount > 0`), otherwise that is an earlier day.
+ */
+export async function decksStudiedToday(deckIds: number[]): Promise<Set<number>> {
+  const decks = await Promise.all(deckIds.map((id) => getDeck(id).catch(() => null)));
+  let today = -1;
+  const studied: Array<{ id: number; day: number }> = [];
+  decks.forEach((deck, i) => {
+    const c = deck?.common;
+    if (!c) return;
+    const count = (c.newStudied ?? 0) + (c.reviewStudied ?? 0) + (c.learningStudied ?? 0);
+    if (count <= 0) return;
+    const day = c.lastDayStudied ?? 0;
+    studied.push({ id: deckIds[i], day });
+    if (day > today) today = day;
+  });
+  return new Set(studied.filter((s) => s.day === today).map((s) => s.id));
+}
+
 export async function setCurrentDeck(did: number): Promise<AnkiTypes.collection.OpChanges> {
   return rpc('setCurrentDeck', anki.decks.DeckId, anki.collection.OpChanges, { did });
 }

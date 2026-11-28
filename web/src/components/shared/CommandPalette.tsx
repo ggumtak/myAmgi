@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as anki from '../../anki';
 import { useApp } from '../../context/AppContext';
 import {
@@ -20,6 +20,8 @@ export interface CommandPaletteProps {
   onOpenTags: () => void;
   onRunSync: () => void;
 }
+
+const MAX_DECKS_WITHOUT_QUERY = 8;
 
 interface PaletteEntry {
   id: string;
@@ -141,9 +143,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       };
     });
 
-    const all = [...deckEntries, ...actions];
     const q = query.trim().toLowerCase();
-    if (!q) return all.slice(0, 14);
+    // Empty query: every action, then a capped deck list (typing searches all decks).
+    if (!q) return [...actions, ...deckEntries.slice(0, MAX_DECKS_WITHOUT_QUERY)];
+    const all = [...deckEntries, ...actions];
     return all.filter(
       (item) =>
         item.label.toLowerCase().includes(q) ||
@@ -154,6 +157,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   useEffect(() => {
     setActiveIdx(0);
   }, [query]);
+
+  // Keep the keyboard selection visible in the scrolling list.
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const row = listRef.current?.querySelector<HTMLElement>(`[data-idx="${activeIdx}"]`);
+    row?.scrollIntoView?.({ block: 'nearest' });
+  }, [activeIdx]);
 
   const execute = (entry: PaletteEntry | undefined) => {
     if (!entry) return;
@@ -206,10 +216,16 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           <div>일치하는 덱이나 기능이 없습니다.</div>
         </div>
       ) : (
-        <div className="amgi-cmd-list" role="listbox" aria-label="빠른 이동 목록">
+        <div
+          ref={listRef}
+          className="amgi-cmd-list"
+          role="listbox"
+          aria-label="빠른 이동 목록"
+        >
           {items.map((item, idx) => (
             <button
               key={item.id}
+              data-idx={idx}
               type="button"
               role="option"
               aria-selected={idx === activeIdx}

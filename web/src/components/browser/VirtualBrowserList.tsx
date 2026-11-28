@@ -108,6 +108,8 @@ export interface VirtualBrowserListProps {
   sortReverse: boolean;
   cacheGeneration: number;
   loadingSearch: boolean;
+  /** Scroll returns to the top whenever this changes (new query, mode or sort). */
+  scrollResetKey?: string;
   onTapItem: (id: number, e: MouseEvent) => void;
   onToggleSelect: (id: number, shiftKey: boolean) => void;
   onEnterSelectionMode: (initialId: number) => void;
@@ -128,6 +130,7 @@ export function VirtualBrowserList({
   sortReverse,
   cacheGeneration,
   loadingSearch,
+  scrollResetKey,
   onTapItem,
   onToggleSelect,
   onEnterSelectionMode,
@@ -146,12 +149,15 @@ export function VirtualBrowserList({
   }, [isWide, activeColumns]);
 
   const columnSignature = useMemo(
-    () => `${isNotesMode ? 'N' : 'C'}:${effectiveColumns.join(',')}:${cacheGeneration}`,
-    [isNotesMode, effectiveColumns, cacheGeneration]
+    () => `${isNotesMode ? 'N' : 'C'}:${effectiveColumns.join(',')}`,
+    [isNotesMode, effectiveColumns]
   );
 
-  // LRU cache keyed by id -> BrowserRow for current columnSignature
-  const cacheRef = useRef<Map<number, anki.BrowserRow>>(new Map());
+  // LRU cache keyed by id -> BrowserRow for current columnSignature. Each entry remembers the
+  // cacheGeneration it was fetched in: entries from an older generation stay visible (no
+  // skeleton flash after an action) but are refetched.
+  const cacheRef = useRef<Map<number, { row: anki.BrowserRow; gen: number }>>(new Map());
+  const cacheGenRef = useRef<number>(cacheGeneration);
   const cacheSigRef = useRef<string>('');
   const activeColsReadySigRef = useRef<string>('');
   const pendingSetColsRef = useRef<Promise<void> | null>(null);
@@ -166,6 +172,12 @@ export function VirtualBrowserList({
     cacheSigRef.current = columnSignature;
     fetchTokenRef.current += 1;
   }
+  if (cacheGenRef.current !== cacheGeneration) {
+    cacheGenRef.current = cacheGeneration;
+    inflightRef.current.clear();
+    fetchTokenRef.current += 1;
+  }
+  const isFresh = (id: number) => cacheRef.current.get(id)?.gen === cacheGenRef.current;
 
   // Measure scroll viewport height
   useEffect(() => {
@@ -186,14 +198,22 @@ export function VirtualBrowserList({
     return () => window.removeEventListener('resize', measure);
   }, []);
 
-  // Reset scroll when result list changes drastically
+  // New query/mode/sort: start from the top.
   useEffect(() => {
     const el = scrollRef.current;
-    if (el && el.scrollTop > ids.length * rowHeight) {
-      el.scrollTop = 0;
-      setScrollTop(0);
-    }
-  }, [ids.length, rowHeight]);
+    if (el) el.scrollTop = 0;
+    setScrollTop(0);
+  }, [scrollResetKey]);
+
+  // Result list replaced (e.g. shrank after a delete): keep the rendered window in sync
+  // with the element's real (possibly clamped) scroll offset.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const maxTop = Math.max(0, ids.length * rowHeight - el.clientHeight);
+    if (el.scrollTop > maxTop) el.scrollTop = maxTop;
+    setScrollTop(el.scrollTop);
+  }, [ids, rowHeight]);
 
   const { startIdx, visibleIds } = useMemo(() => {
     if (ids.length === 0) {
@@ -231,12 +251,11 @@ export function VirtualBrowserList({
   // Fetch uncached visible rows through bounded concurrency queue
   useEffect(() => {
     if (visibleIds.length === 0) return;
-    const missing = visibleIds.filter(
-      (id) => !cacheRef.current.has(id) && !inflightRef.current.has(id)
-    );
+    const missing = visibleIds.filter((id) => !isFresh(id) && !inflightRef.current.has(id));
     if (missing.length === 0) return;
 
     const myToken = fetchTokenRef.current;
+    const myGen = cacheGenRef.current;
     let cancelled = false;
     const maxConcurrent = isEink ? 3 : 6;
     let cursor = 0;
@@ -266,18 +285,19 @@ export function VirtualBrowserList({
           const idx = cursor++;
           if (idx >= missing.length) break;
           const id = missing[idx];
-          if (cacheRef.current.has(id) || inflightRef.current.has(id)) continue;
+          if (isFresh(id) || inflightRef.current.has(id)) continue;
           inflightRef.current.add(id);
           try {
             const row = await anki.browserRowForId(id);
             if (!cancelled && fetchTokenRef.current === myToken) {
-              if (cacheRef.current.size >= LRU_CACHE_LIMIT) {
+              if (!cacheRef.current.has(id) && cacheRef.current.size >= LRU_CACHE_LIMIT) {
                 const oldestKey = cacheRef.current.keys().next().value;
                 if (oldestKey !== undefined) {
                   cacheRef.current.delete(oldestKey);
                 }
               }
-              cacheRef.current.set(id, row);
+              cacheRef.current.delete(id);
+              cacheRef.current.set(id, { row, gen: myGen });
               scheduleFlush();
             }
           } catch {
@@ -299,7 +319,8 @@ export function VirtualBrowserList({
     return () => {
       cancelled = true;
     };
-  }, [visibleIds, ensureColumnsSet, isEink, columnSignature]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleIds, ensureColumnsSet, isEink, columnSignature, cacheGeneration]);
 
   const colIndexMap = useMemo(() => {
     const map = new Map<string, number>();
@@ -330,19 +351,7 @@ export function VirtualBrowserList({
     }
   };
 
-  if (!loadingSearch && ids.length === 0) {
-    return (
-      <div className="amgi-browser-empty">
-        <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>
-          조건에 맞는 {isNotesMode ? '노트' : '카드'}가 없습니다
-        </div>
-        <div style={{ fontSize: 13 }}>
-          검색어나 필터 조건을 바꾸어 다시 찾아보세요.
-        </div>
-      </div>
-    );
-  }
-
+  const showEmpty = !loadingSearch && ids.length === 0;
   const totalHeight = ids.length * rowHeight;
 
   return (
@@ -391,6 +400,19 @@ export function VirtualBrowserList({
         </div>
       )}
 
+      {showEmpty && (
+        // Rendered inside the (still mounted) scroller so its ResizeObserver and scroll
+        // offset stay valid when results come back.
+        <div className="amgi-browser-empty">
+          <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>
+            조건에 맞는 {isNotesMode ? '노트' : '카드'}가 없습니다
+          </div>
+          <div style={{ fontSize: 13 }}>
+            검색어나 필터 조건을 바꾸어 다시 찾아보세요.
+          </div>
+        </div>
+      )}
+
       <div
         className="amgi-vlist-canvas"
         style={{ height: totalHeight }}
@@ -400,11 +422,12 @@ export function VirtualBrowserList({
           style={{ transform: `translateY(${startIdx * rowHeight}px)` }}
         >
           {visibleIds.map((id, localIdx) => {
-            const row = cacheRef.current.get(id);
+            const entry = cacheRef.current.get(id);
+            const row = entry?.row;
             // Touch LRU order gently on read
-            if (row) {
+            if (entry) {
               cacheRef.current.delete(id);
-              cacheRef.current.set(id, row);
+              cacheRef.current.set(id, entry);
             }
             const status = getRowStatusInfo(row?.color);
             const isSelected = selectedIds.has(id);

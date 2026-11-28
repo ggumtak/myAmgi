@@ -35,6 +35,56 @@ const WIDTH_PRESETS = [
   { id: 'thick', label: '굵게', px: 8 },
 ];
 
+function applyStrokeStyle(ctx: CanvasRenderingContext2D, s: Stroke, isEink: boolean) {
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  if (s.eraser) {
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.strokeStyle = 'rgba(0,0,0,1)';
+    ctx.fillStyle = 'rgba(0,0,0,1)';
+  } else {
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = isEink ? '#000000' : s.color;
+    ctx.fillStyle = isEink ? '#000000' : s.color;
+  }
+}
+
+/** Draws the segment ending at point `i` (i >= 1). */
+function drawSegment(ctx: CanvasRenderingContext2D, s: Stroke, i: number, isEink: boolean) {
+  if (i < 1 || i >= s.points.length) return;
+  const prev = s.points[i - 1];
+  const curr = s.points[i];
+  const pressure = (prev.pressure + curr.pressure) / 2;
+  ctx.save();
+  applyStrokeStyle(ctx, s, isEink);
+  ctx.lineWidth = s.eraser
+    ? s.width * 3.2
+    : Math.max(1.2, s.width * (0.65 + pressure * 0.75));
+  ctx.beginPath();
+  ctx.moveTo(prev.x, prev.y);
+  ctx.lineTo(curr.x, curr.y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawStroke(ctx: CanvasRenderingContext2D, s: Stroke, isEink: boolean) {
+  if (s.points.length === 0) return;
+  if (s.points.length === 1) {
+    const p = s.points[0];
+    const r = Math.max(1, (s.width * (0.65 + p.pressure * 0.7)) / 2);
+    ctx.save();
+    applyStrokeStyle(ctx, s, isEink);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
+  for (let i = 1; i < s.points.length; i++) {
+    drawSegment(ctx, s, i, isEink);
+  }
+}
+
 export const WhiteboardOverlay: React.FC<WhiteboardOverlayProps> = ({
   open,
   cardKey,
@@ -61,94 +111,77 @@ export const WhiteboardOverlay: React.FC<WhiteboardOverlayProps> = ({
   const currentColor = palette[Math.min(colorIdx, palette.length - 1)]?.hex ?? '#0F172A';
   const currentWidth = WIDTH_PRESETS[widthIdx]?.px ?? 4.5;
 
-  const redrawAll = useCallback(() => {
+  /** Sizes the canvas to its box and returns a context in CSS pixels. */
+  const getContext = useCallback((): { ctx: CanvasRenderingContext2D; rect: DOMRect } | null => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas) return null;
     const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
+    if (!ctx) return null;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const rect = canvas.getBoundingClientRect();
     const targetW = Math.max(1, Math.round(rect.width * dpr));
     const targetH = Math.max(1, Math.round(rect.height * dpr));
+    let resized = false;
     if (canvas.width !== targetW || canvas.height !== targetH) {
       canvas.width = targetW;
       canvas.height = targetH;
+      resized = true;
     }
-
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return resized ? null : { ctx, rect };
+  }, []);
+
+  const redrawAll = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    getContext();
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const rect = canvas.getBoundingClientRect();
     ctx.clearRect(0, 0, rect.width, rect.height);
-
-    const drawStroke = (s: Stroke) => {
-      if (s.points.length === 0) return;
-      ctx.save();
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      if (s.eraser) {
-        ctx.globalCompositeOperation = 'destination-out';
-        ctx.strokeStyle = 'rgba(0,0,0,1)';
-        ctx.fillStyle = 'rgba(0,0,0,1)';
-      } else {
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.strokeStyle = isEink ? '#000000' : s.color;
-        ctx.fillStyle = isEink ? '#000000' : s.color;
-      }
-
-      if (s.points.length === 1) {
-        const p = s.points[0];
-        const r = Math.max(1, (s.width * (0.65 + p.pressure * 0.7)) / 2);
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-        return;
-      }
-
-      for (let i = 1; i < s.points.length; i++) {
-        const prev = s.points[i - 1];
-        const curr = s.points[i];
-        const pressure = (prev.pressure + curr.pressure) / 2;
-        ctx.lineWidth = s.eraser
-          ? s.width * 3.2
-          : Math.max(1.2, s.width * (0.65 + pressure * 0.75));
-        ctx.beginPath();
-        ctx.moveTo(prev.x, prev.y);
-        ctx.lineTo(curr.x, curr.y);
-        ctx.stroke();
-      }
-      ctx.restore();
-    };
-
     for (const s of strokesRef.current) {
-      drawStroke(s);
+      drawStroke(ctx, s, isEink);
     }
     if (activeStrokeRef.current) {
-      drawStroke(activeStrokeRef.current);
+      drawStroke(ctx, activeStrokeRef.current, isEink);
     }
-  }, [isEink]);
+  }, [getContext, isEink]);
+
+  const resetActiveStroke = useCallback(() => {
+    activePointerIdRef.current = null;
+    activeStrokeRef.current = null;
+  }, []);
 
   // Auto-clear canvas whenever card changes (standard AnkiDroid behavior)
   useEffect(() => {
     strokesRef.current = [];
-    activeStrokeRef.current = null;
+    resetActiveStroke();
     setStrokeCount(0);
     redrawAll();
-  }, [cardKey, redrawAll]);
+  }, [cardKey, redrawAll, resetActiveStroke]);
 
-  // Resize canvas cleanly when opened or resized
+  // Resize canvas cleanly when opened or resized; a stroke never survives close/unmount.
   useEffect(() => {
     if (!open) return;
+    resetActiveStroke();
     redrawAll();
     const onResize = () => redrawAll();
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, [open, redrawAll]);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      resetActiveStroke();
+    };
+  }, [open, redrawAll, resetActiveStroke]);
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (activePointerIdRef.current !== null) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    canvas.setPointerCapture(e.pointerId);
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {
+      // Pointer already gone
+    }
     activePointerIdRef.current = e.pointerId;
     const rect = canvas.getBoundingClientRect();
     const pressure =
@@ -159,32 +192,43 @@ export const WhiteboardOverlay: React.FC<WhiteboardOverlayProps> = ({
       width: currentWidth,
       eraser: eraserMode,
     };
-    redrawAll();
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (activePointerIdRef.current !== e.pointerId || !activeStrokeRef.current) return;
+    const stroke = activeStrokeRef.current;
+    if (activePointerIdRef.current !== e.pointerId || !stroke) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const pressure =
       e.pointerType === 'pen' && e.pressure > 0 ? e.pressure : 0.5;
-    activeStrokeRef.current.points.push({
+    stroke.points.push({
       x: e.clientX - rect.left,
       y: e.clientY - rect.top,
       pressure,
     });
-    redrawAll();
+    // Draw only the new segment; a full redraw per move is too slow on long sessions.
+    const got = getContext();
+    if (got) {
+      drawSegment(got.ctx, stroke, stroke.points.length - 1, isEink);
+    } else {
+      redrawAll();
+    }
   };
 
   const finishStroke = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (activePointerIdRef.current !== e.pointerId) return;
     activePointerIdRef.current = null;
-    if (activeStrokeRef.current) {
-      strokesRef.current.push(activeStrokeRef.current);
-      activeStrokeRef.current = null;
+    const stroke = activeStrokeRef.current;
+    activeStrokeRef.current = null;
+    if (stroke) {
+      strokesRef.current.push(stroke);
       setStrokeCount(strokesRef.current.length);
-      redrawAll();
+      if (stroke.points.length === 1) {
+        const got = getContext();
+        if (got) drawStroke(got.ctx, stroke, isEink);
+        else redrawAll();
+      }
     }
   };
 
@@ -213,6 +257,7 @@ export const WhiteboardOverlay: React.FC<WhiteboardOverlayProps> = ({
         onPointerMove={handlePointerMove}
         onPointerUp={finishStroke}
         onPointerCancel={finishStroke}
+        onLostPointerCapture={finishStroke}
       />
 
       <div className="amgi-wb-toolbar" role="toolbar" aria-label="필기장 도구">

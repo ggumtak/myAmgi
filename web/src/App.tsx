@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as anki from './anki';
 import { AppProvider, useApp } from './context/AppContext';
-import { host } from './host';
+import { host, signalUiReady } from './host';
 import {
   ActionMenu,
   type ActionMenuItem,
@@ -40,6 +40,9 @@ import { FullSyncDialog } from './components/sync/FullSyncDialog';
 import { AnkiIframeView } from './components/shared/AnkiIframeView';
 import { TagManagerSheet } from './components/shared/TagManagerSheet';
 import { CommandPalette } from './components/shared/CommandPalette';
+import { EmptyCardsSummary } from './components/shared/EmptyCardsSummary';
+import { useStartupUpdateCheck } from './useStartupUpdateCheck';
+import { AppErrorBoundary, GlobalErrorToaster } from './ErrorBoundary';
 
 type RootTab = 'decks' | 'browse' | 'stats' | 'settings';
 
@@ -165,6 +168,7 @@ function AppShell() {
     syncProgress,
     mediaSyncProgress,
     resolvedTheme,
+    refreshSyncStatus,
     startBackgroundSync,
     abortMediaSync,
     openSyncSheet,
@@ -200,6 +204,11 @@ function AppShell() {
 
   const isCollectionSyncing = Boolean(syncStatus?.running);
   const isMediaSyncing = Boolean(syncStatus?.mediaRunning);
+
+  // Tell the native shell (watchdog) that the UI mounted. Once per page load.
+  useEffect(() => {
+    signalUiReady();
+  }, []);
 
   useEffect(() => {
     if (isMediaSyncing) {
@@ -322,6 +331,10 @@ function AppShell() {
     }
   }, [route.kind]);
 
+  // Automatic update check once per launch; a UI bundle update reloads only while the
+  // user is on a root tab (not studying or editing) with no sheet open.
+  useStartupUpdateCheck(() => activeTab !== null);
+
   const showTopBar = !isStudy && !hasOwnTopbar;
   const showNavChrome = activeTab !== null;
   const isDecksRoot =
@@ -342,32 +355,54 @@ function AppShell() {
         return { title: '통계', showBack: false };
       case 'settings':
         return { title: '설정', showBack: false };
-      case 'notetypes':
-        return { title: '노트 유형 관리', showBack: true };
       default:
         return { title: 'myAmgi', showBack: false };
     }
   }, [route.kind, isWideSplit]);
 
-  const handleSyncPress = useCallback(() => {
-    if (!syncStatus?.loggedIn) {
+  const handleSyncPress = useCallback(async () => {
+    let status = syncStatus;
+    if (!status) {
+      // Status not loaded yet (first call failed or still pending): fetch it before
+      // deciding, instead of treating "unknown" as "logged out".
+      try {
+        status = await refreshSyncStatus();
+      } catch (err) {
+        showToast(
+          err instanceof Error && err.message
+            ? `동기화 상태를 확인하지 못했습니다: ${err.message}`
+            : '동기화 상태를 확인하지 못했습니다.',
+          'error'
+        );
+        return;
+      }
+    }
+    const syncStatusNow = status;
+    if (!syncStatusNow.loggedIn) {
       openSyncSheet();
       return;
     }
-    if (syncStatus.running || syncStatus.mediaRunning) {
+    if (syncStatusNow.running || syncStatusNow.mediaRunning) {
       openSyncSheet();
       return;
     }
-    if (syncStatus.needsFullSync) {
+    if (syncStatusNow.needsFullSync) {
       openFullSyncDialog();
       return;
     }
-    if (syncStatus.lastError || syncStatus.mediaError) {
+    if (syncStatusNow.lastError || syncStatusNow.mediaError) {
       openSyncSheet();
       return;
     }
     startBackgroundSync('normal');
-  }, [syncStatus, openSyncSheet, openFullSyncDialog, startBackgroundSync]);
+  }, [
+    syncStatus,
+    refreshSyncStatus,
+    showToast,
+    openSyncSheet,
+    openFullSyncDialog,
+    startBackgroundSync,
+  ]);
 
   const handleCheckEmptyCards = useCallback(async () => {
     if (checkingEmpty) return;
@@ -387,19 +422,17 @@ function AppShell() {
 
   const handleDeleteEmptyCards = useCallback(async () => {
     if (!emptyCardsReport || cleaningEmpty) return;
-    const cids = (emptyCardsReport.notes ?? []).flatMap((n) =>
-      (n.cardIds ?? []).map((id) => anki.toNumber(id))
-    );
-    if (cids.length === 0) {
+    if (anki.planEmptyCardsRemoval(emptyCardsReport).cardIds.length === 0) {
       setEmptyCardsReport(null);
       return;
     }
     setCleaningEmpty(true);
     try {
-      await anki.removeCards(cids);
+      // Keeps the first card of notes whose cards are all empty (Anki "keep notes").
+      const plan = await anki.removeEmptyCards(emptyCardsReport);
       setEmptyCardsReport(null);
       bumpCollection();
-      showToast(`빈 카드 ${cids.length}장을 삭제했습니다.`, 'success');
+      showToast(`빈 카드 ${plan.cardIds.length}장을 삭제했습니다.`, 'success');
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : '빈 카드를 삭제하지 못했습니다.',
@@ -490,7 +523,13 @@ function AppShell() {
     ]
   );
 
-  const renderRouteContent = () => {
+  // Per-route boundary: a crashing screen shows an error card instead of a blank
+  // page, and navigating elsewhere clears it.
+  const renderRouteContent = () => (
+    <AppErrorBoundary resetOnHashChange>{renderRouteSwitch()}</AppErrorBoundary>
+  );
+
+  const renderRouteSwitch = () => {
     switch (route.kind) {
       case 'decks':
         return <DeckListView />;
@@ -573,10 +612,8 @@ function AppShell() {
     route.kind === 'deckOptions' ||
     route.kind === 'ankiIframe';
 
-  const emptyCardTotal = (emptyCardsReport?.notes ?? []).reduce(
-    (sum, n) => sum + (n.cardIds?.length ?? 0),
-    0
-  );
+  const emptyCardsPlan = anki.planEmptyCardsRemoval(emptyCardsReport);
+  const emptyCardTotal = emptyCardsPlan.cardIds.length;
 
   return (
     <div className="amgi-shell" data-theme={resolvedTheme}>
@@ -807,9 +844,8 @@ function AppShell() {
 
       <SheetOrDialog
         open={emptyCardsReport !== null}
-        onClose={() => {
-          if (!cleaningEmpty) setEmptyCardsReport(null);
-        }}
+        onClose={() => setEmptyCardsReport(null)}
+        dismissible={!cleaningEmpty}
         title="빈 카드 정리"
         footer={
           <>
@@ -836,21 +872,12 @@ function AppShell() {
           </>
         }
       >
-        {emptyCardTotal === 0 ? (
-          <p className="amgi-prose" style={{ margin: 0 }}>
-            정리할 빈 카드가 없습니다. 모든 카드가 정상입니다.
-          </p>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <p className="amgi-prose" style={{ margin: 0 }}>
-              앞면 내용이 비어 있는 카드 <strong>{emptyCardTotal}장</strong>을
-              찾았습니다. 삭제해도 노트의 원본 데이터는 유지됩니다.
-            </p>
-            {emptyCardsReport?.report && (
-              <pre className="amgi-error-detail">{emptyCardsReport.report}</pre>
-            )}
-          </div>
-        )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <EmptyCardsSummary plan={emptyCardsPlan} />
+          {emptyCardTotal > 0 && emptyCardsReport?.report && (
+            <pre className="amgi-error-detail">{emptyCardsReport.report}</pre>
+          )}
+        </div>
       </SheetOrDialog>
 
       <AddActionSheet
@@ -877,6 +904,7 @@ function AppShell() {
 export function App() {
   return (
     <ToastProvider>
+      <GlobalErrorToaster />
       <AppProvider>
         <AppShell />
       </AppProvider>

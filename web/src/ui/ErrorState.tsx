@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { buildErrorReport, copyText } from '../clipboard';
 import { IconCheck, IconCopy, IconRefresh, IconShield } from './Icons';
 
 export interface ErrorStateProps {
@@ -16,27 +17,19 @@ export function ErrorState({
   onRetry,
   retryLabel = '다시 시도',
 }: ErrorStateProps) {
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<'idle' | 'busy' | 'copied' | 'failed'>('idle');
 
   const handleCopy = async () => {
-    const payload = errorLog ? `${title}\n${message}\n\n${errorLog}` : `${title}\n${message}`;
+    if (copyState === 'busy') return;
+    setCopyState('busy');
     try {
-      await navigator.clipboard.writeText(payload);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
+      const payload = await buildErrorReport({ title, message, errorLog });
+      await copyText(payload);
+      setCopyState('copied');
     } catch {
-      // Fallback for restricted clipboard environments
-      const textarea = document.createElement('textarea');
-      textarea.value = payload;
-      textarea.style.position = 'fixed';
-      textarea.style.opacity = '0';
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
+      setCopyState('failed');
     }
+    window.setTimeout(() => setCopyState('idle'), 2000);
   };
 
   return (
@@ -61,10 +54,19 @@ export function ErrorState({
         <button
           type="button"
           className="amgi-btn amgi-btn-secondary amgi-btn-sm"
+          disabled={copyState === 'busy'}
           onClick={() => void handleCopy()}
         >
-          {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
-          <span>{copied ? '복사됨' : '오류 로그 복사'}</span>
+          {copyState === 'copied' ? <IconCheck size={16} /> : <IconCopy size={16} />}
+          <span>
+            {copyState === 'copied'
+              ? '복사됨'
+              : copyState === 'failed'
+                ? '복사하지 못했습니다'
+                : copyState === 'busy'
+                  ? '복사 중...'
+                  : '오류 로그 복사'}
+          </span>
         </button>
       </div>
     </div>

@@ -23,6 +23,7 @@ import {
 import { BatchActionBar } from './BatchActionBar';
 import { BrowserPreviewPane, BrowserPreviewSheet } from './BrowserPreviewPane';
 import { BrowserSidebar } from './BrowserSidebar';
+import { pruneSelection } from './browserLogic';
 import {
   composeQueryFromFilters,
   FilterBarAndSheet,
@@ -63,6 +64,7 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
   const {
     prefs,
     setPref,
+    setPrefs,
     resolvedTheme,
     collectionVersion,
     navigate,
@@ -74,11 +76,21 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
   const isSidebarWide = useIsWide(1100);
   const isEink = resolvedTheme === 'eink';
 
-  const [queryText, setQueryText] = useState(() => initialQuery ?? '');
-  const [debouncedQuery, setDebouncedQuery] = useState(() => initialQuery ?? '');
-  const [filters, setFilters] = useState<BrowserFilterState>(() =>
-    parseQueryToFilters(initialQuery ?? '')
+  // Chip state is the source of truth for the structured part of the search; the search box
+  // holds only the user's free text. They are combined in `effectiveQuery`.
+  const initialParsed = useMemo(
+    () => parseQueryToFilters(initialQuery ?? ''),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
   );
+  const [queryText, setQueryText] = useState(() => initialParsed.freeText);
+  const [debouncedQuery, setDebouncedQuery] = useState(() => initialParsed.freeText);
+  const [filters, setFilters] = useState<BrowserFilterState>(() => ({
+    ...initialParsed,
+    freeText: '',
+  }));
+  const [effectiveQuery, setEffectiveQuery] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
 
   const [isNotesMode, setIsNotesMode] = useState(false);
   const [allColumns, setAllColumns] = useState<anki.BrowserColumn[]>([]);
@@ -103,14 +115,42 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
   const [sortSheetOpen, setSortSheetOpen] = useState(false);
   const [columnsSheetOpen, setColumnsSheetOpen] = useState(false);
 
+  /** Applies a complete search from outside (URL, sidebar): exact chips + verbatim rest. */
+  const applyExternalQuery = useCallback((q: string) => {
+    const parsed = parseQueryToFilters(q);
+    setFilters({ ...parsed, freeText: '' });
+    setQueryText(parsed.freeText);
+    setDebouncedQuery(parsed.freeText);
+  }, []);
+
   // Sync external initialQuery prop changes (e.g., navigation from duplicate warning)
+  const lastInitialQueryRef = useRef(initialQuery);
   useEffect(() => {
-    if (initialQuery !== undefined) {
-      setQueryText(initialQuery);
-      setDebouncedQuery(initialQuery);
-      setFilters(parseQueryToFilters(initialQuery));
+    if (initialQuery !== undefined && initialQuery !== lastInitialQueryRef.current) {
+      applyExternalQuery(initialQuery);
     }
-  }, [initialQuery]);
+    lastInitialQueryRef.current = initialQuery;
+  }, [initialQuery, applyExternalQuery]);
+
+  // Combine chips + free text into the query actually searched.
+  useEffect(() => {
+    let cancelled = false;
+    composeQueryFromFilters({ ...filters, freeText: debouncedQuery })
+      .then((q) => {
+        if (!cancelled) setEffectiveQuery(q);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        showToast(
+          err instanceof Error ? err.message : '필터 조건을 조합하지 못했습니다.',
+          'error'
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters, debouncedQuery]);
 
   // Load initial browser mode, available columns, and saved prefs
   useEffect(() => {
@@ -122,31 +162,37 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
       if (cancelled) return;
       setIsNotesMode(notesMode);
       setAllColumns(cols);
+      setReady(true);
     });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Hydrate column & sort prefs when mode or prefs update
+  // Hydrate column & sort prefs when the mode or those specific prefs change
+  const colPrefKey = isNotesMode ? 'browser.columns.notes' : 'browser.columns.cards';
+  const savedColsSig = JSON.stringify(prefs[colPrefKey] ?? null);
+  const savedSortCol = prefs['browser.sortColumn'];
+  const savedSortRev = prefs['browser.sortReverse'];
   useEffect(() => {
-    const colKey = isNotesMode ? 'browser.columns.notes' : 'browser.columns.cards';
-    const savedCols = prefs[colKey];
-    if (Array.isArray(savedCols) && savedCols.length > 0) {
-      const valid = savedCols.filter((c): c is string => typeof c === 'string');
-      if (valid.length > 0) setWideColumns(valid);
-    } else {
-      setWideColumns(DEFAULT_WIDE_COLUMNS);
+    const savedCols: unknown = JSON.parse(savedColsSig);
+    const valid = Array.isArray(savedCols)
+      ? savedCols.filter((c): c is string => typeof c === 'string')
+      : [];
+    setWideColumns((prev) => {
+      const next = valid.length > 0 ? valid : DEFAULT_WIDE_COLUMNS;
+      return prev.join('\n') === next.join('\n') ? prev : next;
+    });
+  }, [savedColsSig]);
+  useEffect(() => {
+    // '' is the persisted "정렬 없음"; an absent pref keeps the default sort.
+    if (typeof savedSortCol === 'string') {
+      setSortColumn(savedSortCol.length > 0 ? savedSortCol : null);
     }
-
-    const savedSortCol = prefs['browser.sortColumn'];
-    if (typeof savedSortCol === 'string' && savedSortCol.length > 0) {
-      setSortColumn(savedSortCol);
+    if (typeof savedSortRev === 'boolean') {
+      setSortReverse(savedSortRev);
     }
-    if (typeof prefs['browser.sortReverse'] === 'boolean') {
-      setSortReverse(prefs['browser.sortReverse']);
-    }
-  }, [isNotesMode, prefs]);
+  }, [savedSortCol, savedSortRev]);
 
   // Debounce free-text query edits
   useEffect(() => {
@@ -198,7 +244,14 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
     return isWide ? wideColumns : MOBILE_ACTIVE_COLUMNS;
   }, [isWide, wideColumns]);
 
+  const isWideRef = useRef(isWide);
+  isWideRef.current = isWide;
+  const searchSeqRef = useRef(0);
+
   const runSearch = useCallback(async () => {
+    if (!ready || effectiveQuery === null) return;
+    // Only the newest search may publish results (older responses can arrive later).
+    const seq = ++searchSeqRef.current;
     setLoadingSearch(true);
     setSearchError(null);
     try {
@@ -217,32 +270,36 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
         }
       }
 
-      const trimmed = debouncedQuery.trim();
+      const trimmed = effectiveQuery.trim();
       const resultIds = isNotesMode
         ? await anki.searchNotes(trimmed, order)
         : await anki.searchCards(trimmed, order);
+      if (seq !== searchSeqRef.current) return;
 
       setIds(resultIds);
       setCacheGeneration((g) => g + 1);
+      // Never act on items that are no longer on screen.
+      setSelectedIds((prev) => pruneSelection(prev, resultIds));
       setActiveItemId((prev) => {
         if (prev !== null && resultIds.includes(prev)) return prev;
-        return isWide && resultIds.length > 0 ? resultIds[0] : null;
+        return isWideRef.current && resultIds.length > 0 ? resultIds[0] : null;
       });
     } catch (err) {
+      if (seq !== searchSeqRef.current) return;
       setSearchError(
         err instanceof Error ? err.message : '카드 검색에 실패했습니다.'
       );
     } finally {
-      setLoadingSearch(false);
+      if (seq === searchSeqRef.current) setLoadingSearch(false);
     }
   }, [
-    debouncedQuery,
+    ready,
+    effectiveQuery,
     isNotesMode,
     sortColumn,
     sortReverse,
     effectiveActiveColumns,
     allColumns,
-    isWide,
   ]);
 
   useEffect(() => {
@@ -265,23 +322,17 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [ids]);
 
-  const handleFiltersChange = async (next: BrowserFilterState) => {
-    setFilters(next);
-    try {
-      const composed = await composeQueryFromFilters(next);
-      setQueryText(composed);
-      setDebouncedQuery(composed);
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : '필터 조건을 조합하지 못했습니다.',
-        'error'
-      );
-    }
+  const handleFiltersChange = (next: BrowserFilterState) => {
+    setFilters({ ...next, freeText: '' });
   };
 
   const handleManualQueryChange = (val: string) => {
     setQueryText(val);
-    setFilters(parseQueryToFilters(val));
+  };
+
+  const handleClearText = () => {
+    setQueryText('');
+    setDebouncedQuery('');
   };
 
   const handleResetAll = () => {
@@ -320,8 +371,18 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
     }
     setSortColumn(colKey);
     setSortReverse(nextRev);
-    void setPref('browser.sortColumn', colKey).catch(() => undefined);
-    void setPref('browser.sortReverse', nextRev).catch(() => undefined);
+    // One atomic write, so the pref hydrate never sees a half-updated sort.
+    void setPrefs({ 'browser.sortColumn': colKey, 'browser.sortReverse': nextRev }).catch(
+      () => undefined
+    );
+  };
+
+  const handleClearSort = () => {
+    setSortColumn(null);
+    setSortReverse(false);
+    void setPrefs({ 'browser.sortColumn': '', 'browser.sortReverse': false }).catch(
+      () => undefined
+    );
   };
 
   const handleToggleSelect = (id: number, shiftKey: boolean) => {
@@ -395,6 +456,9 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
     filters.addedToday;
 
   const allSelected = ids.length > 0 && selectedIds.size === ids.length;
+  // Every mutation path calls bumpCollection(), whose collectionVersion change re-runs the
+  // search; refreshing here as well would search twice.
+  const noopMutated = useCallback(() => undefined, []);
 
   return (
     <div className="amgi-browser-root" data-testid="browser-view">
@@ -423,7 +487,7 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
                 type="button"
                 className="amgi-browser-search-clear"
                 aria-label="검색어 지우기"
-                onClick={handleResetAll}
+                onClick={handleClearText}
               >
                 <IconClose size={16} />
               </button>
@@ -512,7 +576,7 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
         {/* Row 2: 1-Tap Korean Filter Strip */}
         <FilterBarAndSheet
           filters={filters}
-          onChangeFilters={(next) => void handleFiltersChange(next)}
+          onChangeFilters={handleFiltersChange}
           onResetAll={handleResetAll}
           hasAnyActive={hasAnyActiveFilter}
         />
@@ -569,13 +633,9 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
         >
           {isSidebarWide && showSidebar && (
             <BrowserSidebar
-              currentQuery={queryText}
+              currentQuery={effectiveQuery ?? ''}
               collectionVersion={collectionVersion}
-              onSelectQuery={(nextQuery) => {
-                setQueryText(nextQuery);
-                setDebouncedQuery(nextQuery);
-                setFilters(parseQueryToFilters(nextQuery));
-              }}
+              onSelectQuery={applyExternalQuery}
             />
           )}
 
@@ -594,6 +654,7 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
               sortReverse={sortReverse}
               cacheGeneration={cacheGeneration}
               loadingSearch={loadingSearch}
+              scrollResetKey={`${effectiveQuery ?? ''}|${isNotesMode}|${sortColumn ?? ''}|${sortReverse}`}
               onTapItem={handleTapItem}
               onToggleSelect={handleToggleSelect}
               onEnterSelectionMode={handleEnterSelectionMode}
@@ -605,7 +666,7 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
             <BrowserPreviewPane
               activeItemId={activeItemId}
               isNotesMode={isNotesMode}
-              onMutated={() => void runSearch()}
+              onMutated={noopMutated}
               onHidePane={() => setShowWidePreview(false)}
             />
           )}
@@ -620,7 +681,7 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
           setSelectedIds(new Set());
           setSelectionMode(false);
         }}
-        onMutated={() => void runSearch()}
+        onMutated={noopMutated}
       />
 
       {/* Mobile Preview Sheet */}
@@ -632,7 +693,7 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
           activeItemId={activeItemId}
           isNotesMode={isNotesMode}
           onSelectId={(nextId) => setActiveItemId(nextId)}
-          onMutated={() => void runSearch()}
+          onMutated={noopMutated}
         />
       )}
 
@@ -647,8 +708,7 @@ export const BrowserView: React.FC<{ initialQuery?: string }> = ({ initialQuery 
             type="button"
             className={`amgi-filter-option ${sortColumn === null ? 'selected' : ''}`}
             onClick={() => {
-              setSortColumn(null);
-              setSortReverse(false);
+              handleClearSort();
               setSortSheetOpen(false);
             }}
           >

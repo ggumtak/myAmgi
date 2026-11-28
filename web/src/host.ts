@@ -105,14 +105,57 @@ export interface LogSnapshot {
   text: string;
 }
 
+/** Shape of `update.status` / `update.check` / `update.apply` (see AndroidHost.buildUpdatePayload). */
 export interface UpdateStatusResponse {
   supported?: boolean;
   checking?: boolean;
   available?: boolean;
+  /** Which update `update.apply` would install: APK first, then the UI bundle. */
+  kind?: 'apk' | 'ui' | 'none' | string;
   version?: string;
   currentVersion?: string;
+  uiVersion?: string | null;
+  remoteUiVersion?: string | null;
+  apkAvailable?: boolean;
+  uiAvailable?: boolean;
+  sizeBytes?: number;
+  isDeltaPatch?: boolean;
+  /** `update.apply`: an install/download was started. */
+  started?: boolean;
+  /** `update.apply`: the UI bundle was written to the OTA directory. */
+  applied?: boolean;
+  /** `update.apply`: the page must reload to use the applied UI bundle. */
+  reloadRequired?: boolean;
+  needsPermission?: boolean;
+  message?: string;
+  error?: string | null;
   notes?: string;
   [key: string]: unknown;
+}
+
+declare global {
+  interface Window {
+    /** Android WebView bridge (absent on desktop/browser). All members optional. */
+    AndroidShell?: {
+      setSystemBars?: (bg: string, light: boolean) => void;
+      setStudyState?: (inStudy: boolean, volumeKeyStudy: boolean, isInputFocused: boolean) => void;
+      /** Signals that the UI shell mounted (native watchdog). */
+      uiReady?: () => void;
+      [key: string]: unknown;
+    };
+  }
+}
+
+/** Calls `AndroidShell.uiReady()` at most once per page load. */
+let uiReadySignalled = false;
+export function signalUiReady(): void {
+  if (uiReadySignalled) return;
+  uiReadySignalled = true;
+  try {
+    window.AndroidShell?.uiReady?.();
+  } catch {
+    // Ignore shell bridge errors
+  }
 }
 
 export interface ProgressEvent {

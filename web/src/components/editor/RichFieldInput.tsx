@@ -93,6 +93,49 @@ export function sanitizePastedHtml(html: string, stripFormatting: boolean): stri
   return doc.body.innerHTML;
 }
 
+const BLOCKED_DISPLAY_TAGS =
+  'script, iframe, frame, frameset, object, embed, applet, base, link, meta, style, noscript, template, form';
+const URL_ATTRS = new Set(['href', 'src', 'xlink:href', 'action', 'formaction', 'data', 'poster', 'background']);
+
+function isDangerousUrl(raw: string): boolean {
+  // Browsers ignore embedded whitespace/control characters in the scheme.
+  // eslint-disable-next-line no-control-regex
+  const v = raw.replace(/[\u0000-\u0020]+/g, '').toLowerCase();
+  return (
+    v.startsWith('javascript:') ||
+    v.startsWith('vbscript:') ||
+    v.startsWith('data:text/html') ||
+    v.startsWith('data:image/svg')
+  );
+}
+
+/**
+ * Makes stored field HTML safe to place into the app-origin contentEditable.
+ * Removes script-capable elements, `on*` handlers and script URLs; keeps formatting,
+ * images, `[sound:...]` text, cloze and MathJax text untouched. Only what is displayed
+ * is sanitised: the stored field value changes only when the user edits the field.
+ */
+export function sanitizeFieldHtmlForDisplay(html: string): string {
+  if (!html) return '';
+  if (typeof DOMParser === 'undefined') return html;
+  // A DOMParser document is inert: nothing in it loads or runs while we clean it.
+  const doc = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html');
+  doc.body.querySelectorAll(BLOCKED_DISPLAY_TAGS).forEach((el) => el.remove());
+  doc.body.querySelectorAll('*').forEach((el) => {
+    for (const attr of Array.from(el.attributes)) {
+      const name = attr.name.toLowerCase();
+      if (name.startsWith('on') || name === 'srcdoc' || name === 'formaction') {
+        el.removeAttribute(attr.name);
+      } else if (URL_ATTRS.has(name) && isDangerousUrl(attr.value)) {
+        el.removeAttribute(attr.name);
+      } else if (name === 'srcset' && /javascript:|vbscript:/i.test(attr.value)) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  });
+  return doc.body.innerHTML;
+}
+
 export type RichFormatCmd =
   | 'bold'
   | 'italic'
@@ -156,6 +199,20 @@ export const RichFieldInput = forwardRef<RichFieldInputHandle, RichFieldInputPro
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
     const lastSerializedRef = useRef<string>(value);
     const savedRangeRef = useRef<Range | null>(null);
+    // The raw stored value last placed into the editable, and what the editable serialises
+    // to right after that (sanitised + browser-normalised). While the editable still
+    // serialises to the baseline, the field is untouched and the raw value is kept.
+    const sourceValueRef = useRef<string>(value);
+    const baselineRef = useRef<string | null>(null);
+
+    const hydrateEditable = useCallback((raw: string) => {
+      const el = editableRef.current;
+      if (!el) return;
+      el.innerHTML = hydrateMediaForDisplay(sanitizeFieldHtmlForDisplay(raw));
+      sourceValueRef.current = raw;
+      baselineRef.current = serializeMediaForSave(el.innerHTML);
+      lastSerializedRef.current = raw;
+    }, []);
 
     // Sync external value updates (e.g. clearing non-sticky fields or loading a note)
     useEffect(() => {
@@ -163,19 +220,16 @@ export const RichFieldInput = forwardRef<RichFieldInputHandle, RichFieldInputPro
         lastSerializedRef.current = value;
         return;
       }
-      const el = editableRef.current;
-      if (!el) return;
+      if (!editableRef.current) return;
       if (value !== lastSerializedRef.current) {
-        el.innerHTML = hydrateMediaForDisplay(value);
-        lastSerializedRef.current = value;
+        hydrateEditable(value);
       }
-    }, [value, htmlMode]);
+    }, [value, htmlMode, hydrateEditable]);
 
-    // Initialize innerHTML when switching back from HTML source mode
+    // Initialize innerHTML on mount and when switching back from HTML source mode
     useEffect(() => {
       if (!htmlMode && editableRef.current) {
-        editableRef.current.innerHTML = hydrateMediaForDisplay(value);
-        lastSerializedRef.current = value;
+        hydrateEditable(value);
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [htmlMode]);
@@ -202,13 +256,51 @@ export const RichFieldInput = forwardRef<RichFieldInputHandle, RichFieldInputPro
       }
     };
 
+    /** Reports the editable's content, but only when it actually changed. */
     const emitEditableChange = useCallback(() => {
       const el = editableRef.current;
       if (!el) return;
       const serialized = serializeMediaForSave(el.innerHTML);
-      lastSerializedRef.current = serialized;
-      onChange(serialized);
+      const next = serialized === baselineRef.current ? sourceValueRef.current : serialized;
+      if (next === lastSerializedRef.current) return;
+      lastSerializedRef.current = next;
+      onChange(next);
     }, [onChange]);
+
+    /**
+     * Wraps the current selection (keeping its markup) in `prefix`/`suffix` text through
+     * `insertHTML`, so formatting and images survive and the edit stays on the undo stack.
+     */
+    const wrapSelectionInEditable = useCallback(
+      (prefix: string, suffix: string) => {
+        const el = editableRef.current;
+        const sel = window.getSelection();
+        if (!el || !sel) return;
+        const inField =
+          sel.rangeCount > 0 && el.contains(sel.getRangeAt(0).commonAncestorContainer);
+        if (!inField) {
+          const r = document.createRange();
+          r.selectNodeContents(el);
+          r.collapse(false);
+          sel.removeAllRanges();
+          sel.addRange(r);
+        }
+        const range = sel.getRangeAt(0);
+        if (range.collapsed) {
+          document.execCommand('insertText', false, `${prefix}${suffix}`);
+          for (let i = 0; i < suffix.length; i++) {
+            sel.modify?.('move', 'backward', 'character');
+          }
+        } else {
+          const holder = document.createElement('div');
+          holder.appendChild(range.cloneContents());
+          document.execCommand('insertHTML', false, `${prefix}${holder.innerHTML}${suffix}`);
+        }
+        if (sel.rangeCount > 0) savedRangeRef.current = sel.getRangeAt(0).cloneRange();
+        emitEditableChange();
+      },
+      [emitEditableChange]
+    );
 
     useImperativeHandle(
       ref,
@@ -275,40 +367,7 @@ export const RichFieldInput = forwardRef<RichFieldInputHandle, RichFieldInputPro
           }
 
           restoreSelection();
-          const sel = window.getSelection();
-          const el = editableRef.current;
-          if (!el || !sel) return;
-
-          if (sel.rangeCount > 0 && el.contains(sel.getRangeAt(0).commonAncestorContainer)) {
-            const range = sel.getRangeAt(0);
-            const selectedText = range.toString();
-            const snippet = `${prefix}${selectedText}${suffix}`;
-            range.deleteContents();
-            const textNode = document.createTextNode(snippet);
-            range.insertNode(textNode);
-
-            const nextRange = document.createRange();
-            if (selectedText.length === 0) {
-              nextRange.setStart(textNode, prefix.length);
-              nextRange.setEnd(textNode, prefix.length);
-            } else {
-              nextRange.setStartAfter(textNode);
-              nextRange.setEndAfter(textNode);
-            }
-            sel.removeAllRanges();
-            sel.addRange(nextRange);
-            savedRangeRef.current = nextRange.cloneRange();
-          } else {
-            const textNode = document.createTextNode(`${prefix}${suffix}`);
-            el.appendChild(textNode);
-            const nextRange = document.createRange();
-            nextRange.setStart(textNode, prefix.length);
-            nextRange.setEnd(textNode, prefix.length);
-            sel.removeAllRanges();
-            sel.addRange(nextRange);
-            savedRangeRef.current = nextRange.cloneRange();
-          }
-          emitEditableChange();
+          wrapSelectionInEditable(prefix, suffix);
         },
         insertMathJax() {
           const prefix = '\\(';
@@ -332,40 +391,7 @@ export const RichFieldInput = forwardRef<RichFieldInputHandle, RichFieldInputPro
           }
 
           restoreSelection();
-          const sel = window.getSelection();
-          const el = editableRef.current;
-          if (!el || !sel) return;
-
-          if (sel.rangeCount > 0 && el.contains(sel.getRangeAt(0).commonAncestorContainer)) {
-            const range = sel.getRangeAt(0);
-            const selectedText = range.toString();
-            const snippet = `${prefix}${selectedText}${suffix}`;
-            range.deleteContents();
-            const textNode = document.createTextNode(snippet);
-            range.insertNode(textNode);
-
-            const nextRange = document.createRange();
-            if (selectedText.length === 0) {
-              nextRange.setStart(textNode, prefix.length);
-              nextRange.setEnd(textNode, prefix.length);
-            } else {
-              nextRange.setStartAfter(textNode);
-              nextRange.setEndAfter(textNode);
-            }
-            sel.removeAllRanges();
-            sel.addRange(nextRange);
-            savedRangeRef.current = nextRange.cloneRange();
-          } else {
-            const textNode = document.createTextNode(`${prefix}${suffix}`);
-            el.appendChild(textNode);
-            const nextRange = document.createRange();
-            nextRange.setStart(textNode, prefix.length);
-            nextRange.setEnd(textNode, prefix.length);
-            sel.removeAllRanges();
-            sel.addRange(nextRange);
-            savedRangeRef.current = nextRange.cloneRange();
-          }
-          emitEditableChange();
+          wrapSelectionInEditable(prefix, suffix);
         },
         insertMediaHtml(portableHtml: string) {
           if (htmlMode && textareaRef.current) {
@@ -384,7 +410,7 @@ export const RichFieldInput = forwardRef<RichFieldInputHandle, RichFieldInputPro
           emitEditableChange();
         },
       }),
-      [htmlMode, onChange, emitEditableChange]
+      [htmlMode, onChange, emitEditableChange, wrapSelectionInEditable]
     );
 
     const handlePaste = async (e: ClipboardEvent<HTMLDivElement>) => {

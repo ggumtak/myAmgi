@@ -3,7 +3,6 @@ import * as anki from '../../anki';
 import { useApp } from '../../context/AppContext';
 import {
   ActionMenu,
-  IconChevronDown,
   IconEdit,
   IconExternal,
   IconFlag,
@@ -577,4 +576,3 @@ export function BrowserPreviewSheet({
   );
 }
 
-export { IconChevronDown };

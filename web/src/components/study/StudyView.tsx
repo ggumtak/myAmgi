@@ -29,6 +29,7 @@ import {
   useToast,
 } from '../../ui';
 import { CelebrationBadge } from '../decks/DeckBadge';
+import { resolveTwoButtonMode } from '../../studyPrefs';
 import './study.css';
 
 export interface StudyViewProps {
@@ -61,8 +62,75 @@ const FLAG_OPTIONS = [
   { flag: 7, label: '보라', shortcut: 'Ctrl+7' },
 ] as const;
 
-const TYPEANS_REGEX = /\[\[type:(?:cloze:)?([^\]]+)\]\]/gi;
+// `[[type:Field]]`, `[[type:cloze:Field]]`, `[[type:nc:Field]]` (and both prefixes).
+// Group 1 = prefixes ("cloze:", "nc:"), group 2 = field name.
+const TYPEANS_REGEX = /\[\[type:((?:(?:cloze|nc):)*)([^\]]+)\]\]/gi;
+const HAS_TYPEANS_TAG = /\[\[type:[^\]]+\]\]/i;
+const HAS_TYPEANS_INPUT = /\bid\s*=\s*["']?typeans\b/i;
 const PLAY_TAG_REGEX = /\[anki:play:(q|a):(\d+)\]/g;
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** Whether the question side of this card has a type-in-answer box. */
+function frontHasTypeAnswer(data: { rawFront: string; qHtml: string }): boolean {
+  return HAS_TYPEANS_TAG.test(data.rawFront) || HAS_TYPEANS_INPUT.test(data.qHtml);
+}
+
+/**
+ * Key names arrive from the browser (`KeyboardEvent.key`), from the card iframe, and from
+ * the Android shell (`ArrowLeft`, `KeyQ`, `MediaPlayPause`, …; see MainActivity.canonicalKeyName),
+ * plus older spellings (`dpad_left`, `keycode_volume_down`). Map them to one vocabulary.
+ */
+function normalizeStudyKey(keyRaw: string): string {
+  const key = keyRaw.trim();
+  if (key === ' ' || key === 'Spacebar') return ' ';
+  let lower = key.toLowerCase();
+  if (lower.startsWith('keycode_')) lower = lower.slice('keycode_'.length);
+  switch (lower) {
+    case 'volumedown':
+    case 'volume_down':
+    case 'audiovolumedown':
+      return 'volumedown';
+    case 'volumeup':
+    case 'volume_up':
+    case 'audiovolumeup':
+      return 'volumeup';
+    case 'pagedown':
+    case 'page_down':
+      return 'pagedown';
+    case 'pageup':
+    case 'page_up':
+      return 'pageup';
+    case 'arrowright':
+    case 'dpad_right':
+    case 'mediatracknext':
+    case 'media_next':
+      return 'next';
+    case 'arrowleft':
+    case 'dpad_left':
+    case 'mediatrackprevious':
+    case 'media_previous':
+      return 'prev';
+    case 'dpad_center':
+    case 'mediaplaypause':
+    case 'media_play_pause':
+      return 'center';
+    case 'mediastop':
+    case 'media_stop':
+      return 'mediastop';
+    default:
+      break;
+  }
+  const letter = /^key([a-z])$/.exec(lower);
+  if (letter) return letter[1];
+  return key;
+}
 
 function stripBidiIsolates(str: string): string {
   return str.replace(/[\u2066-\u2069]/g, '').trim();
@@ -122,17 +190,7 @@ function formatWaitKo(secs: number): string {
   return remM > 0 ? `${h}시간 ${remM}분` : `${h}시간`;
 }
 
-function findCustomStudyDeckId(node: anki.DeckTreeNode): number | null {
-  const name = node.name ?? '';
-  if (node.level > 0 && node.filtered && (name.includes('맞춤') || name.includes('Custom'))) {
-    return anki.toNumber(node.deckId);
-  }
-  for (const child of node.children ?? []) {
-    const found = findCustomStudyDeckId(child as anki.DeckTreeNode);
-    if (found !== null) return found;
-  }
-  return null;
-}
+type LoadMode = 'reset' | 'quiet';
 
 export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
   const {
@@ -146,8 +204,17 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
     goBack,
     registerBackHandler,
     registerKeyHandler,
+    setCardInputFocused,
   } = useApp();
   const { showToast } = useToast();
+  // Latest load request; older in-flight loads must not touch state.
+  const loadGenRef = useRef(0);
+  // Synchronous mirrors of state that guard against two triggers in one tick
+  // (volume key + tap, Space + click).
+  const showAnswerRef = useRef(false);
+  const revealingRef = useRef(false);
+  const answeringRef = useRef(false);
+  const currentCardIdRef = useRef<number | null>(null);
 
   const cardFrameRef = useRef<CardFrameHandle | null>(null);
   const frameReadyRef = useRef(false);
@@ -202,17 +269,15 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
   const [customPreset, setCustomPreset] = useState<
     'newLimitDelta' | 'reviewLimitDelta' | 'forgotDays' | 'reviewAheadDays' | 'previewDays'
   >('newLimitDelta');
-  const [customVal, setCustomVal] = useState(10);
+  const [customVal, setCustomVal] = useState('10');
   const [busyModal, setBusyModal] = useState(false);
 
-  const twoButtonMode = useMemo(() => {
-    const raw = prefs['study.twoButton'];
-    if (typeof raw === 'boolean') return raw;
-    if (typeof prefs['study.twoButtonMode'] === 'boolean') {
-      return prefs['study.twoButtonMode'] as boolean;
-    }
-    return Boolean(info?.eink ?? true);
-  }, [prefs, info?.eink]);
+  const setShowAnswerSync = useCallback((value: boolean) => {
+    showAnswerRef.current = value;
+    setShowAnswer(value);
+  }, []);
+
+  const twoButtonMode = useMemo(() => resolveTwoButtonMode(prefs, info), [prefs, info]);
 
   const tapToFlip = prefs['study.tapToFlip'] === true;
   const leftHandedMode = prefs['study.leftHanded'] === true;
@@ -397,12 +462,21 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
     [resolvedTheme, fontScale, lineHeight, tapToFlip, hanjaEnabled]
   );
 
+  /**
+   * Loads the queue and shows its top card.
+   * - `reset`: after an action that changes scheduling (answer, undo, bury, …) or on entry;
+   *   the top card is always shown from its question side.
+   * - `quiet`: a background refresh (collection changed elsewhere). When the top card is the
+   *   one on screen, its side, the rendered frame and any typed text are kept.
+   * Only the most recent call may update state.
+   */
   const loadQueueAndActiveCard = useCallback(
-    async (preserveCurrentCache = false) => {
+    async (preserveCurrentCache = false, mode: LoadMode = 'reset') => {
+      const gen = ++loadGenRef.current;
+      const isStale = () => gen !== loadGenRef.current;
       if (!preserveCurrentCache) {
         preparedCacheRef.current.clear();
       }
-      setError(null);
       try {
         await anki.setCurrentDeck(deckId);
         const fetchLimit = info?.eink ? 2 : 3;
@@ -412,26 +486,34 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
           anki.getQueuedCards(fetchLimit, false),
           anki.undoStatus().catch(() => null),
         ]);
+        if (isStale()) return;
 
         const shortTitle = deckObj.name?.split('::').pop() || deckObj.name || '학습';
-        setDeckName(shortTitle);
-        setAnkiPrefs(prefsRes);
-        setQueued(qRes);
-        setCanUndo(Boolean(undoRes?.undo));
-        setCanRedo(Boolean(undoRes?.redo));
+        const applyCommon = () => {
+          setError(null);
+          setDeckName(shortTitle);
+          setAnkiPrefs(prefsRes);
+          setQueued(qRes);
+          setCanUndo(Boolean(undoRes?.undo));
+          setCanRedo(Boolean(undoRes?.redo));
+        };
 
         const cards = qRes.cards ?? [];
         if (cards.length === 0) {
-          setPrepared(null);
-          setShowAnswer(false);
-          setActiveFlag(0);
-          setIsMarked(false);
           const [cg, g] = await Promise.all([
             anki.congratsInfo().catch(() => null),
             anki
               .graphs(deckObj.name ? `deck:"${deckObj.name}"` : '', 1)
               .catch(() => null),
           ]);
+          if (isStale()) return;
+          applyCommon();
+          currentCardIdRef.current = null;
+          revealingRef.current = false;
+          setPrepared(null);
+          setShowAnswerSync(false);
+          setActiveFlag(0);
+          setIsMarked(false);
           setCongratsData(cg);
           setTodayStats({
             answerCount: g?.today?.answerCount ?? 0,
@@ -443,10 +525,27 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
 
         const hidePlayBtns = Boolean(prefsRes?.reviewing?.hideAudioPlayButtons);
         const firstCard = cards[0];
-        const firstPrepared = await prepareQueuedCard(firstCard, hidePlayBtns);
+        const firstId = anki.toNumber(firstCard.card?.id);
 
+        if (mode === 'quiet' && currentCardIdRef.current === firstId) {
+          // Same card still on top: keep side, frame, typed text and timer.
+          applyCommon();
+          setActiveFlag((firstCard.card?.flags ?? 0) & 0b111);
+          setLoading(false);
+          for (let i = 1; i < cards.length; i++) {
+            void prepareQueuedCard(cards[i], hidePlayBtns).catch(() => undefined);
+          }
+          return;
+        }
+
+        const firstPrepared = await prepareQueuedCard(firstCard, hidePlayBtns);
+        if (isStale()) return;
+
+        applyCommon();
+        currentCardIdRef.current = firstId;
+        revealingRef.current = false;
         setPrepared(firstPrepared);
-        setShowAnswer(false);
+        setShowAnswerSync(false);
         setActiveFlag((firstCard.card?.flags ?? 0) & 0b111);
         setIsMarked((firstPrepared.note.tags ?? []).includes('marked'));
         cardStartMsRef.current = Date.now();
@@ -469,9 +568,15 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
           void prepareQueuedCard(cards[i], hidePlayBtns).catch(() => undefined);
         }
       } catch (err) {
-        setError(
-          err instanceof Error ? err.message : '학습 카드를 불러오지 못했습니다.'
-        );
+        if (isStale()) return;
+        const message =
+          err instanceof Error ? err.message : '학습 카드를 불러오지 못했습니다.';
+        if (mode === 'quiet' && currentCardIdRef.current !== null) {
+          // Keep the card on screen; a background refresh failing is not fatal.
+          showToast(message, 'error');
+          return;
+        }
+        setError(message);
         setLoading(false);
       }
     },
@@ -482,31 +587,43 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
       sendFrontToFrame,
       autoPlayAudio,
       playAvTagList,
+      setShowAnswerSync,
+      showToast,
     ]
   );
 
+  // Entry / deck change: full load with the loading screen. A later collection change
+  // (sync finished, an official page saved) refreshes quietly without unmounting the card.
+  const loadedDeckIdRef = useRef<number | null>(null);
   useEffect(() => {
-    stopAudio();
     deckConfigCacheRef.current.clear();
-    setLoading(true);
-    void loadQueueAndActiveCard(false);
-    return () => {
+    if (loadedDeckIdRef.current !== deckId) {
+      loadedDeckIdRef.current = deckId;
       stopAudio();
-    };
+      currentCardIdRef.current = null;
+      setLoading(true);
+      void loadQueueAndActiveCard(false, 'reset');
+    } else {
+      void loadQueueAndActiveCard(false, 'quiet');
+    }
   }, [deckId, collectionVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Re-render current card cleanly on return from note edit or deck options
   useEffect(() => {
-    const onFocus = () => {
-      const currentCardId = queued?.cards?.[0]?.card?.id;
-      if (currentCardId !== undefined) {
-        preparedCacheRef.current.delete(anki.toNumber(currentCardId));
-        void loadQueueAndActiveCard(true);
-      }
+    return () => {
+      // Invalidate in-flight loads and release shell state on leave.
+      loadGenRef.current++;
+      loadedDeckIdRef.current = null;
+      stopAudio();
+      setCardInputFocused(false);
     };
-    window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
-  }, [queued, loadQueueAndActiveCard]);
+  }, [stopAudio, setCardInputFocused]);
+
+  // The type-answer box lives in the card iframe; the frame reports its focus. Clear the
+  // flag whenever no card frame is on screen.
+  const frameVisible = !loading && !error && prepared !== null;
+  useEffect(() => {
+    if (!frameVisible) setCardInputFocused(false);
+  }, [frameVisible, setCardInputFocused]);
 
   // Card timer when deck config showTimer is enabled
   const activeCard = queued?.cards?.[0] ?? null;
@@ -529,22 +646,21 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
 
   const resolveTypeAnswerHtml = useCallback(
     async (data: PreparedCardData, typedAnswer: string): Promise<string> => {
-      if (!TYPEANS_REGEX.test(data.aHtmlTemplate)) {
-        TYPEANS_REGEX.lastIndex = 0;
-        return data.aHtmlTemplate;
-      }
-      TYPEANS_REGEX.lastIndex = 0;
+      const rawMatches = Array.from(data.aHtmlTemplate.matchAll(TYPEANS_REGEX));
+      if (rawMatches.length === 0) return data.aHtmlTemplate;
 
       const card = activeCard?.card;
       const fields = data.notetype.fields ?? [];
       const noteFields = data.note.fields ?? [];
-      const rawMatches = Array.from(data.aHtmlTemplate.matchAll(TYPEANS_REGEX));
       let resultHtml = data.aHtmlTemplate;
 
       for (const m of rawMatches) {
         const fullMatch = m[0];
-        const fieldName = m[1];
-        const isCloze = fullMatch.toLowerCase().includes('[[type:cloze:');
+        const prefixes = (m[1] ?? '').toLowerCase();
+        const fieldName = (m[2] ?? '').trim();
+        const isCloze = prefixes.includes('cloze:');
+        // `nc:` = compare without combining characters, as in Anki.
+        const combining = !prefixes.includes('nc:');
         const fieldIdx = fields.findIndex(
           (f) => (f.name ?? '').toLowerCase() === fieldName.toLowerCase()
         );
@@ -564,11 +680,12 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
         const expectedPlain = stripHtmlTags(expectedSource);
         let diffHtml = '';
         try {
-          diffHtml = await anki.compareAnswer(expectedPlain, typedAnswer, true);
+          diffHtml = await anki.compareAnswer(expectedPlain, typedAnswer, combining);
         } catch {
-          diffHtml = `<code id="typeans">${expectedPlain}</code>`;
+          diffHtml = `<code id="typeans">${escapeHtml(expectedPlain)}</code>`;
         }
-        resultHtml = resultHtml.replace(fullMatch, diffHtml);
+        // Function replacer: `$&`, `$$` in the diff must stay literal.
+        resultHtml = resultHtml.replace(fullMatch, () => diffHtml);
       }
 
       return resultHtml;
@@ -578,55 +695,63 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
 
   const handleShowAnswer = useCallback(
     async (explicitTyped?: string) => {
-      if (!prepared || showAnswer) return;
-      if (ankiPrefs?.reviewing?.interruptAudioWhenAnswering !== false) {
-        stopAudio();
-      }
+      if (!prepared || showAnswerRef.current || revealingRef.current) return;
+      if (currentCardIdRef.current !== prepared.cardId) return;
+      revealingRef.current = true;
+      const cardId = prepared.cardId;
+      try {
+        if (ankiPrefs?.reviewing?.interruptAudioWhenAnswering !== false) {
+          stopAudio();
+        }
 
-      let typed = explicitTyped;
-      if (typed === undefined && TYPEANS_REGEX.test(prepared.qHtml || prepared.rawFront)) {
-        TYPEANS_REGEX.lastIndex = 0;
-        typed = (await cardFrameRef.current?.getTypedAnswer()) ?? '';
-      } else {
-        TYPEANS_REGEX.lastIndex = 0;
-      }
+        let typed = explicitTyped;
+        if (typed === undefined && frontHasTypeAnswer(prepared)) {
+          typed = (await cardFrameRef.current?.getTypedAnswer()) ?? '';
+        }
 
-      const answerHtml = await resolveTypeAnswerHtml(prepared, typed ?? '');
-      setShowAnswer(true);
+        const answerHtml = await resolveTypeAnswerHtml(prepared, typed ?? '');
+        // The card may have changed while we were waiting.
+        if (currentCardIdRef.current !== cardId || showAnswerRef.current) return;
+        setShowAnswerSync(true);
 
-      cardFrameRef.current?.render({
-        side: 'answer',
-        html: answerHtml,
-        css: prepared.css,
-        theme: resolvedTheme,
-        fontScale,
-        lineHeight,
-        tapToFlip: false,
-        hanjaEnabled,
-      });
+        cardFrameRef.current?.render({
+          side: 'answer',
+          html: answerHtml,
+          css: prepared.css,
+          theme: resolvedTheme,
+          fontScale,
+          lineHeight,
+          tapToFlip: false,
+          hanjaEnabled,
+        });
 
-      const deckDisableAutoplay = Boolean(prepared.deckConfig?.disableAutoplay);
-      if (autoPlayAudio && !deckDisableAutoplay && prepared.aAvTags.length > 0) {
-        const skipQ = Boolean(prepared.deckConfig?.skipQuestionWhenReplayingAnswer);
-        const tagsToPlay = skipQ
-          ? prepared.aAvTags.filter(
-              (t) =>
-                !prepared.qAvTags.some(
-                  (qt) => qt.soundOrVideo && qt.soundOrVideo === t.soundOrVideo
-                )
-            )
-          : prepared.aAvTags;
-        if (tagsToPlay.length > 0) {
-          void playAvTagList(tagsToPlay);
+        const deckDisableAutoplay = Boolean(prepared.deckConfig?.disableAutoplay);
+        if (autoPlayAudio && !deckDisableAutoplay && prepared.aAvTags.length > 0) {
+          const skipQ = Boolean(prepared.deckConfig?.skipQuestionWhenReplayingAnswer);
+          const tagsToPlay = skipQ
+            ? prepared.aAvTags.filter(
+                (t) =>
+                  !prepared.qAvTags.some(
+                    (qt) => qt.soundOrVideo && qt.soundOrVideo === t.soundOrVideo
+                  )
+              )
+            : prepared.aAvTags;
+          if (tagsToPlay.length > 0) {
+            void playAvTagList(tagsToPlay);
+          }
+        }
+      } finally {
+        if (currentCardIdRef.current === cardId) {
+          revealingRef.current = false;
         }
       }
     },
     [
       prepared,
-      showAnswer,
       ankiPrefs,
       stopAudio,
       resolveTypeAnswerHtml,
+      setShowAnswerSync,
       resolvedTheme,
       fontScale,
       lineHeight,
@@ -638,30 +763,46 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
 
   const handleRate = useCallback(
     async (rating: anki.Rating) => {
-      if (!activeCard || !activeCard.card || !activeCard.states || answering) return;
+      if (answeringRef.current || !showAnswerRef.current) return;
+      if (!activeCard || !activeCard.card || !activeCard.states) return;
+      const cid = activeCard.card.id!;
+      if (anki.toNumber(cid) !== currentCardIdRef.current) return;
+      answeringRef.current = true;
       setAnswering(true);
+      // Anything loading in the background now describes a stale queue.
+      loadGenRef.current++;
       stopAudio();
       try {
         const msTaken = Date.now() - cardStartMsRef.current;
-        const cid = activeCard.card.id!;
-        await anki.answerCard(cid, activeCard.states, rating, msTaken);
+        await anki.answerCard(
+          cid,
+          activeCard.states,
+          rating,
+          msTaken,
+          prepared?.deckConfig?.capAnswerTimeToSecs
+        );
+        // The answered card may come straight back (learning step); it is a new review.
+        currentCardIdRef.current = null;
         preparedCacheRef.current.delete(anki.toNumber(cid));
         setSessionDone((c) => c + 1);
-        await loadQueueAndActiveCard(true);
+        await loadQueueAndActiveCard(true, 'reset');
       } catch (err) {
         showToast(
           err instanceof Error ? err.message : '답변을 저장하지 못했습니다.',
           'error'
         );
       } finally {
+        answeringRef.current = false;
         setAnswering(false);
       }
     },
-    [activeCard, answering, stopAudio, loadQueueAndActiveCard, showToast]
+    [activeCard, prepared, stopAudio, loadQueueAndActiveCard, showToast]
   );
 
   const handleUndo = useCallback(async () => {
-    if (!canUndo || answering) return;
+    if (!canUndo || answeringRef.current) return;
+    answeringRef.current = true;
+    loadGenRef.current++;
     stopAudio();
     setAnswering(true);
     try {
@@ -676,12 +817,15 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
         'error'
       );
     } finally {
+      answeringRef.current = false;
       setAnswering(false);
     }
-  }, [canUndo, answering, stopAudio, loadQueueAndActiveCard, showToast]);
+  }, [canUndo, stopAudio, loadQueueAndActiveCard, showToast]);
 
   const handleRedo = useCallback(async () => {
-    if (!canRedo || answering) return;
+    if (!canRedo || answeringRef.current) return;
+    answeringRef.current = true;
+    loadGenRef.current++;
     stopAudio();
     setAnswering(true);
     try {
@@ -695,9 +839,10 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
         'error'
       );
     } finally {
+      answeringRef.current = false;
       setAnswering(false);
     }
-  }, [canRedo, answering, stopAudio, loadQueueAndActiveCard, showToast]);
+  }, [canRedo, stopAudio, loadQueueAndActiveCard, showToast]);
 
   const undoToastAction = useMemo(
     () => ({
@@ -937,107 +1082,71 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
     }
   };
 
-  // Back handler for open study modals
+  // Android back: open sheets/dialogs (flag picker, menu, shortcuts, forms, card info)
+  // are closed by SheetOrDialog itself before this runs. The whiteboard is an overlay,
+  // not a sheet, so close it here before leaving the session.
   useEffect(() => {
     return registerBackHandler(() => {
-      if (busyModal) return true;
-      if (cardInfoId !== null) {
-        setCardInfoId(null);
-        return true;
-      }
-      if (deleteConfirmOpen) {
-        setDeleteConfirmOpen(false);
-        return true;
-      }
-      if (dueDialogOpen) {
-        setDueDialogOpen(false);
-        return true;
-      }
-      if (forgetOpen) {
-        setForgetOpen(false);
-        return true;
-      }
-      if (customOpen) {
-        setCustomOpen(false);
-        return true;
-      }
-      if (overflowOpen) {
-        setOverflowOpen(false);
-        return true;
-      }
-      if (flagPickerOpen) {
-        setFlagPickerOpen(false);
+      if (whiteboardOpen) {
+        setWhiteboardOpen(false);
         return true;
       }
       stopAudio();
       return false;
     });
-  }, [
-    busyModal,
-    cardInfoId,
-    deleteConfirmOpen,
-    dueDialogOpen,
-    forgetOpen,
-    customOpen,
-    overflowOpen,
-    flagPickerOpen,
-    stopAudio,
-    registerBackHandler,
-  ]);
+  }, [whiteboardOpen, stopAudio, registerBackHandler]);
 
   // Unified action dispatcher for keyboard & Host SSE remote/volume keys
   const handleStudyKeyAction = useCallback(
-    (keyRaw: string, opts: { shift?: boolean; ctrl?: boolean; meta?: boolean }) => {
-      const key = keyRaw.trim();
+    (
+      keyRaw: string,
+      opts: {
+        shift?: boolean;
+        ctrl?: boolean;
+        meta?: boolean;
+        /** `keyboard` = a real keyboard (top window or card iframe); `shell` = Android key event. */
+        source?: 'keyboard' | 'shell';
+      }
+    ) => {
+      const rawKey = keyRaw.trim();
+      const key = normalizeStudyKey(keyRaw);
       const lower = key.toLowerCase();
       const hasCtrl = Boolean(opts.ctrl || opts.meta);
       const hasShift = Boolean(opts.shift);
+      // Read the side synchronously so two triggers in one tick agree.
+      const revealed = showAnswerRef.current;
 
-      // Volume / Page remote keys
-      if (
-        lower === 'volumedown' ||
-        lower === 'volume_down' ||
-        lower === 'keycode_volume_down' ||
-        lower === 'pagedown' ||
-        lower === 'page_down' ||
-        lower === 'keycode_page_down' ||
-        lower === 'dpad_right' ||
-        lower === 'keycode_dpad_right'
-      ) {
-        if (!volumeKeysEnabled && lower.includes('volume')) return false;
-        if (!showAnswer) {
+      // Arrow keys from a desktop keyboard keep their normal meaning (scrolling);
+      // only the shell's D-pad / remote arrows answer cards.
+      if (opts.source !== 'shell' && rawKey.startsWith('Arrow')) return false;
+
+      const revealOr = (rating: anki.Rating) => {
+        if (!revealed) {
           void handleShowAnswer();
         } else {
-          void handleRate(anki.Rating.GOOD);
+          void handleRate(rating);
         }
         return true;
+      };
+
+      // Volume / Page / remote "forward" keys
+      if (lower === 'volumedown' || lower === 'pagedown' || lower === 'next') {
+        if (!volumeKeysEnabled && lower === 'volumedown') return false;
+        return revealOr(anki.Rating.GOOD);
       }
 
-      if (
-        lower === 'volumeup' ||
-        lower === 'volume_up' ||
-        lower === 'keycode_volume_up' ||
-        lower === 'pageup' ||
-        lower === 'page_up' ||
-        lower === 'keycode_page_up' ||
-        lower === 'dpad_left' ||
-        lower === 'keycode_dpad_left'
-      ) {
-        if (!volumeKeysEnabled && lower.includes('volume')) return false;
-        if (!showAnswer) {
-          void handleShowAnswer();
-        } else {
-          void handleRate(anki.Rating.AGAIN);
-        }
-        return true;
+      // Volume / Page / remote "back" keys
+      if (lower === 'volumeup' || lower === 'pageup' || lower === 'prev') {
+        if (!volumeKeysEnabled && lower === 'volumeup') return false;
+        return revealOr(anki.Rating.AGAIN);
       }
 
-      if (lower === 'dpad_center' || lower === 'keycode_dpad_center') {
-        if (!showAnswer) {
-          void handleShowAnswer();
-        } else {
-          void handleRate(anki.Rating.GOOD);
-        }
+      if (lower === 'center') {
+        return revealOr(anki.Rating.GOOD);
+      }
+
+      if (lower === 'mediastop') {
+        stopAudio();
         return true;
       }
 
@@ -1061,34 +1170,29 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
         return true;
       }
 
-      if (key === ' ' || key === 'Spacebar' || key === 'Enter') {
-        if (!showAnswer) {
-          void handleShowAnswer();
-        } else {
-          void handleRate(anki.Rating.GOOD);
-        }
-        return true;
+      if (key === ' ' || key === 'Enter') {
+        return revealOr(anki.Rating.GOOD);
       }
 
       if (key === '1') {
-        if (showAnswer) void handleRate(anki.Rating.AGAIN);
-        return showAnswer;
+        if (revealed) void handleRate(anki.Rating.AGAIN);
+        return revealed;
       }
 
       if (key === '2') {
-        if (!showAnswer) return false;
+        if (!revealed) return false;
         void handleRate(twoButtonMode ? anki.Rating.GOOD : anki.Rating.HARD);
         return true;
       }
 
       if (key === '3') {
-        if (!showAnswer || twoButtonMode) return twoButtonMode;
+        if (!revealed || twoButtonMode) return twoButtonMode;
         void handleRate(anki.Rating.GOOD);
         return true;
       }
 
       if (key === '4') {
-        if (!showAnswer || twoButtonMode) return twoButtonMode;
+        if (!revealed || twoButtonMode) return twoButtonMode;
         void handleRate(anki.Rating.EASY);
         return true;
       }
@@ -1161,7 +1265,6 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
     },
     [
       volumeKeysEnabled,
-      showAnswer,
       twoButtonMode,
       activeCard,
       handleShowAnswer,
@@ -1180,6 +1283,22 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
     ]
   );
 
+  // Keyboard shortcuts from the top window and from the card iframe (which forwards
+  // keydowns outside its inputs) share this entry point.
+  const handleKeyboardShortcut = useCallback(
+    (ev: { key: string; shift?: boolean; ctrl?: boolean; meta?: boolean }): boolean => {
+      if (document.querySelector('[role="dialog"]')) return false;
+      if (!activeCard) return false;
+      return handleStudyKeyAction(ev.key, {
+        shift: ev.shift,
+        ctrl: ev.ctrl,
+        meta: ev.meta,
+        source: 'keyboard',
+      });
+    },
+    [activeCard, handleStudyKeyAction]
+  );
+
   // Window keyboard listener
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -1194,10 +1313,8 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
       ) {
         return;
       }
-      if (document.querySelector('[role="dialog"]')) return;
-      if (!activeCard) return;
-
-      const handled = handleStudyKeyAction(e.key, {
+      const handled = handleKeyboardShortcut({
+        key: e.key,
         shift: e.shiftKey,
         ctrl: e.ctrlKey,
         meta: e.metaKey,
@@ -1209,7 +1326,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeCard, handleStudyKeyAction]);
+  }, [handleKeyboardShortcut]);
 
   // Host SSE hardware key listener
   useEffect(() => {
@@ -1217,7 +1334,11 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
       if (document.querySelector('[role="dialog"]')) return false;
       const keyStr = ev.action || ev.key || '';
       if (!keyStr) return false;
-      return handleStudyKeyAction(keyStr, { shift: ev.shift, ctrl: ev.ctrl });
+      return handleStudyKeyAction(keyStr, {
+        shift: ev.shift,
+        ctrl: ev.ctrl,
+        source: 'shell',
+      });
     });
   }, [registerKeyHandler, handleStudyKeyAction]);
 
@@ -1272,7 +1393,8 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
           aria-label="뒤로 가기"
           onClick={() => {
             stopAudio();
-            goBack('#/decks');
+            // The on-screen back button always leaves; Android back closes overlays first.
+            goBack('#/decks', { force: true });
           }}
         >
           <IconArrowLeft size={20} />
@@ -1288,6 +1410,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                   activeQueue === 0 ? 'amgi-study-q-active' : ''
                 }`}
               >
+                <span className="amgi-study-q-label" aria-hidden="true">새</span>
                 {queued.newCount ?? 0}
               </span>
               <span
@@ -1296,6 +1419,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                   activeQueue === 1 ? 'amgi-study-q-active' : ''
                 }`}
               >
+                <span className="amgi-study-q-label" aria-hidden="true">학습</span>
                 {queued.learningCount ?? 0}
               </span>
               <span
@@ -1304,6 +1428,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                   activeQueue === 2 ? 'amgi-study-q-active' : ''
                 }`}
               >
+                <span className="amgi-study-q-label" aria-hidden="true">복습</span>
                 {queued.reviewCount ?? 0}
               </span>
             </div>
@@ -1524,18 +1649,18 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                   hanjaEnabled={hanjaEnabled}
                   onFrameReady={() => {
                     frameReadyRef.current = true;
-                    if (prepared && !showAnswer) {
+                    if (prepared && !showAnswerRef.current) {
                       sendFrontToFrame(prepared);
                     }
                   }}
                   onCardTap={() => {
-                    if (!showAnswer && tapToFlip) {
+                    if (!showAnswerRef.current && tapToFlip) {
                       void handleShowAnswer();
                     }
                   }}
                   onPlaySound={handlePlaySoundTag}
                   onTypeAnsSubmit={(val) => {
-                    if (!showAnswer) {
+                    if (!showAnswerRef.current) {
                       void handleShowAnswer(val);
                     }
                   }}
@@ -1545,6 +1670,8 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                       .catch(() => undefined);
                   }}
                   onBridgeCommand={handleBridgeCommand}
+                  onKey={handleKeyboardShortcut}
+                  onInputFocusChange={setCardInputFocused}
                 />
               </div>
 
@@ -2051,8 +2178,13 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
               className="amgi-btn amgi-btn-primary"
               disabled={busyModal}
               onClick={() => {
+                const parsed = Math.floor(Number(customVal.trim()));
+                if (!customVal.trim() || !Number.isFinite(parsed) || parsed < 1) {
+                  showToast('1 이상의 숫자를 입력해 주세요.', 'error');
+                  return;
+                }
+                const val = Math.min(9999, parsed);
                 setBusyModal(true);
-                const val = Math.max(1, customVal);
                 const req: Parameters<typeof anki.customStudy>[0] =
                   customPreset === 'newLimitDelta'
                     ? { deckId, newLimitDelta: val }
@@ -2075,9 +2207,8 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
                     ) {
                       await loadQueueAndActiveCard(false);
                     } else {
-                      const tree = await anki.deckTree();
-                      const filteredId = findCustomStudyDeckId(tree);
-                      if (filteredId) {
+                      const filteredId = await anki.customStudySessionDeckId();
+                      if (filteredId && filteredId !== deckId) {
                         navigate(`#/study/${filteredId}`);
                       } else {
                         await loadQueueAndActiveCard(false);
@@ -2104,7 +2235,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
             className={`amgi-radio-card ${customPreset === 'newLimitDelta' ? 'active' : ''}`}
             onClick={() => {
               setCustomPreset('newLimitDelta');
-              setCustomVal(10);
+              setCustomVal('10');
             }}
           >
             <span className="amgi-radio-card-title">오늘 새 카드 더 공부하기</span>
@@ -2114,7 +2245,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
             className={`amgi-radio-card ${customPreset === 'reviewLimitDelta' ? 'active' : ''}`}
             onClick={() => {
               setCustomPreset('reviewLimitDelta');
-              setCustomVal(20);
+              setCustomVal('20');
             }}
           >
             <span className="amgi-radio-card-title">오늘 복습 카드 더 공부하기</span>
@@ -2124,7 +2255,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
             className={`amgi-radio-card ${customPreset === 'forgotDays' ? 'active' : ''}`}
             onClick={() => {
               setCustomPreset('forgotDays');
-              setCustomVal(1);
+              setCustomVal('1');
             }}
           >
             <span className="amgi-radio-card-title">최근 틀린 카드 다시 보기</span>
@@ -2134,7 +2265,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
             className={`amgi-radio-card ${customPreset === 'reviewAheadDays' ? 'active' : ''}`}
             onClick={() => {
               setCustomPreset('reviewAheadDays');
-              setCustomVal(1);
+              setCustomVal('1');
             }}
           >
             <span className="amgi-radio-card-title">미리 복습하기</span>
@@ -2144,7 +2275,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
             className={`amgi-radio-card ${customPreset === 'previewDays' ? 'active' : ''}`}
             onClick={() => {
               setCustomPreset('previewDays');
-              setCustomVal(1);
+              setCustomVal('1');
             }}
           >
             <span className="amgi-radio-card-title">최근 새 카드 미리 보기</span>
@@ -2163,7 +2294,7 @@ export const StudyView: React.FC<StudyViewProps> = ({ deckId }) => {
               max={9999}
               className="amgi-input tabular"
               value={customVal}
-              onChange={(e) => setCustomVal(Number(e.target.value) || 1)}
+              onChange={(e) => setCustomVal(e.target.value)}
             />
           </div>
         </div>

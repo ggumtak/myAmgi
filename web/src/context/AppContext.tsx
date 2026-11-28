@@ -12,6 +12,7 @@ import {
   host,
   HostApiError,
   subscribeHostEvents,
+  type AnkiPageEvent,
   type HostInfo,
   type HostKeyEvent,
   type HostPrefs,
@@ -19,7 +20,7 @@ import {
   type ProgressEvent,
   type SyncStatus,
 } from '../host';
-import { SheetOrDialog, useToast } from '../ui';
+import { closeTopModal, SheetOrDialog, useToast } from '../ui';
 
 export type ResolvedTheme = 'light' | 'dark' | 'eink';
 export type PrefTheme = 'auto' | 'light' | 'dark' | 'eink';
@@ -35,7 +36,10 @@ export interface AppContextValue {
   syncStatus: SyncStatus | null;
   syncProgress: ProgressEvent | null;
   mediaSyncProgress: ProgressEvent | null;
-  refreshSyncStatus: () => Promise<void>;
+  /** Last `progress` event with `op: "update"` (APK download / UI bundle apply), or null. */
+  updateProgress: ProgressEvent | null;
+  /** Fetches `sync.status`, stores it and returns it. Rejects on failure. */
+  refreshSyncStatus: () => Promise<SyncStatus>;
   startBackgroundSync: (
     mode?: 'normal' | 'upload' | 'download',
     opts?: { silentStartToast?: boolean; forceMedia?: boolean }
@@ -54,10 +58,36 @@ export interface AppContextValue {
   collectionVersion: number;
   bumpCollection: () => void;
   navigate: (hash: string) => void;
-  goBack: (fallback?: string) => void;
+  /**
+   * Android/app back. Registered back handlers run first (top-most first) unless
+   * `opts.force` is set, which skips them and navigates immediately.
+   */
+  goBack: (fallback?: string, opts?: { force?: boolean }) => void;
   registerBackHandler: (fn: () => boolean) => () => void;
   registerKeyHandler: (fn: (ev: HostKeyEvent) => boolean) => () => void;
+  /**
+   * Report focus of an input that lives inside a card iframe (type-answer box).
+   * OR-ed into the `isInputFocused` flag sent to `AndroidShell.setStudyState`.
+   */
+  setCardInputFocused: (focused: boolean) => void;
+  /**
+   * Subscribe to `anki-page` events on the app's single host event stream
+   * (embedded official pages). Returns an unsubscribe function.
+   */
+  subscribeAnkiPage: (fn: (ev: AnkiPageEvent) => void) => () => void;
 }
+
+/** Network-level failure (host unreachable, AnkiWeb unreachable): not worth a toast for auto-sync. */
+function isNetworkError(err: unknown): boolean {
+  if (err instanceof HostApiError) {
+    return err.status === 502 || err.status === 503 || err.status === 504;
+  }
+  if (err instanceof DOMException && err.name === 'AbortError') return true;
+  return err instanceof TypeError;
+}
+
+const HIDDEN_SYNC_MIN_INTERVAL_MS = 10 * 60_000;
+const HIDDEN_SYNC_AFTER_ACTIVITY_MIN_INTERVAL_MS = 60_000;
 
 const AppContext = createContext<AppContextValue | null>(null);
 
@@ -110,20 +140,63 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [syncProgress, setSyncProgress] = useState<ProgressEvent | null>(null);
   const [mediaSyncProgress, setMediaSyncProgress] = useState<ProgressEvent | null>(null);
+  const [updateProgress, setUpdateProgress] = useState<ProgressEvent | null>(null);
   const [syncSheetOpen, setSyncSheetOpen] = useState(false);
   const [fullSyncOpen, setFullSyncOpen] = useState(false);
   const [addSheetOpen, setAddSheetOpen] = useState(false);
   const [collectionVersion, setCollectionVersion] = useState(0);
   const [pendingColpkg, setPendingColpkg] = useState<OpenFileEvent | null>(null);
   const [colpkgReplacing, setColpkgReplacing] = useState(false);
+  const [cardInputFocused, setCardInputFocusedState] = useState(false);
+  const setCardInputFocused = useCallback((focused: boolean) => {
+    setCardInputFocusedState(Boolean(focused));
+  }, []);
 
   const backHandlersRef = useRef<Set<() => boolean>>(new Set());
   const keyHandlersRef = useRef<Set<(ev: HostKeyEvent) => boolean>>(new Set());
   const autoSyncAttemptedRef = useRef(false);
+  const ankiPageSubscribersRef = useRef<Set<(ev: AnkiPageEvent) => void>>(new Set());
+  const prefsRef = useRef<HostPrefs>({});
+  prefsRef.current = prefs;
+  const syncStatusRef = useRef<SyncStatus | null>(null);
+  syncStatusRef.current = syncStatus;
+
+  /** Something was studied or edited since the last completed sync (cheap heuristic). */
+  const localActivityRef = useRef(false);
 
   const bumpCollection = useCallback(() => {
+    localActivityRef.current = true;
     setCollectionVersion((v) => v + 1);
   }, []);
+
+  /*
+   * One finished sync must refresh lists exactly once. The completion is observed
+   * through several channels (sync.run result, SSE progress/sync-state, status
+   * refreshes), so the bump is keyed on `lastSync`, which the host only advances
+   * after a successful collection sync.
+   */
+  const lastSyncSeenRef = useRef<number | null | undefined>(undefined);
+  const observeLastSync = useCallback((lastSync: number | null | undefined) => {
+    const cur = typeof lastSync === 'number' && lastSync > 0 ? lastSync : null;
+    const prev = lastSyncSeenRef.current;
+    if (prev === undefined) {
+      lastSyncSeenRef.current = cur; // baseline, no bump
+      return;
+    }
+    if (cur !== null && (prev === null || cur > prev)) {
+      lastSyncSeenRef.current = cur;
+      localActivityRef.current = false;
+      setCollectionVersion((v) => v + 1);
+    }
+  }, []);
+
+  const applySyncStatus = useCallback(
+    (st: SyncStatus) => {
+      setSyncStatus(st);
+      observeLastSync(st.lastSync);
+    },
+    [observeLastSync]
+  );
 
   const navigate = useCallback((hash: string) => {
     setAddSheetOpen(false);
@@ -134,15 +207,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const goBack = useCallback((fallback = '#/decks') => {
-    const handlers = Array.from(backHandlersRef.current);
-    for (let i = handlers.length - 1; i >= 0; i--) {
-      try {
-        if (handlers[i]()) {
-          return;
+  const goBack = useCallback((fallback = '#/decks', opts?: { force?: boolean }) => {
+    if (!opts?.force) {
+      // The top-most open sheet/dialog always takes the back press first.
+      if (closeTopModal()) return;
+      const handlers = Array.from(backHandlersRef.current);
+      for (let i = handlers.length - 1; i >= 0; i--) {
+        try {
+          if (handlers[i]()) {
+            return;
+          }
+        } catch {
+          // Ignore faulty handler and try next
         }
-      } catch {
-        // Ignore faulty handler and try next
       }
     }
 
@@ -176,21 +253,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const setPrefs = useCallback(async (patch: Record<string, unknown>) => {
-    setPrefsState((prev) => {
-      const next: HostPrefs = { ...prev };
-      for (const [k, v] of Object.entries(patch)) {
-        if (v === null) {
-          delete next[k];
-        } else {
-          next[k] = v;
+  // Each prefs write gets a sequence number; only the newest request's response
+  // (or recovery fetch) may replace the optimistic state.
+  const prefsSeqRef = useRef(0);
+  const setPrefs = useCallback(
+    async (patch: Record<string, unknown>) => {
+      const seq = ++prefsSeqRef.current;
+      setPrefsState((prev) => {
+        const next: HostPrefs = { ...prev };
+        for (const [k, v] of Object.entries(patch)) {
+          if (v === null) {
+            delete next[k];
+          } else {
+            next[k] = v;
+          }
+        }
+        return next;
+      });
+      try {
+        const updated = await host.prefsSet(patch);
+        if (seq === prefsSeqRef.current) setPrefsState(updated ?? {});
+      } catch (err) {
+        // Never reject: callers use `void setPref(...)`. Roll back to the host's state.
+        showToast(
+          err instanceof Error && err.message
+            ? `설정을 저장하지 못했습니다: ${err.message}`
+            : '설정을 저장하지 못했습니다.',
+          'error'
+        );
+        try {
+          const fresh = await host.prefsGet();
+          if (seq === prefsSeqRef.current) setPrefsState(fresh ?? {});
+        } catch {
+          // Host unreachable: keep the optimistic state until the next successful write
         }
       }
-      return next;
-    });
-    const updated = await host.prefsSet(patch);
-    setPrefsState(updated ?? {});
-  }, []);
+    },
+    [showToast]
+  );
 
   const setPref = useCallback(
     async (key: string, value: unknown) => {
@@ -201,8 +301,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const refreshSyncStatus = useCallback(async () => {
     const status = await host.syncStatus();
-    setSyncStatus(status);
-  }, []);
+    applySyncStatus(status);
+    return status;
+  }, [applySyncStatus]);
 
   const syncInFlightRef = useRef(false);
   const startBackgroundSync = useCallback(
@@ -246,7 +347,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             return;
           }
           if (res.ok) {
-            setCollectionVersion((v) => v + 1);
+            observeLastSync(res.lastSync);
             const doneMsg =
               mode === 'download'
                 ? res.mediaSyncStarted
@@ -283,7 +384,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           syncInFlightRef.current = false;
         });
     },
-    [refreshSyncStatus, showToast]
+    [refreshSyncStatus, observeLastSync, showToast]
   );
 
   const mediaSyncInFlightRef = useRef(false);
@@ -304,11 +405,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     void host
       .syncMediaRun()
       .then((st) => {
-        setSyncStatus(st);
-        if (!st.mediaRunning && st.mediaError) {
-          showToast(st.mediaError, 'error');
-        } else {
+        applySyncStatus(st);
+        if (st.mediaRunning) {
           showToast('백그라운드에서 미디어 확인을 시작했습니다.', 'info');
+        } else if (st.mediaError) {
+          showToast(st.mediaError, 'error');
+        } else if (st.mediaSkipped) {
+          showToast('미디어가 이미 최신 상태라 확인을 건너뛰었습니다.', 'info');
+        } else {
+          showToast('미디어 확인을 마쳤습니다.', 'success');
         }
       })
       .catch(async (err) => {
@@ -325,7 +430,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .finally(() => {
         mediaSyncInFlightRef.current = false;
       });
-  }, [refreshSyncStatus, showToast]);
+  }, [applySyncStatus, refreshSyncStatus, showToast]);
 
   const abortMediaSync = useCallback(async () => {
     try {
@@ -345,11 +450,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const wasRunningRef = useRef(false);
   const wasMediaRunningRef = useRef(false);
   const reconcileSyncTransition = useCallback((st: SyncStatus) => {
+    // Collection refresh after a finished sync is handled by observeLastSync.
     if (wasRunningRef.current && !st.running) {
       wasRunningRef.current = false;
-      if (!st.lastError && !st.needsFullSync) {
-        setCollectionVersion((v) => v + 1);
-      }
     } else if (st.running) {
       wasRunningRef.current = true;
     }
@@ -373,7 +476,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       void host
         .syncStatus()
         .then((st) => {
-          setSyncStatus(st);
+          applySyncStatus(st);
           reconcileSyncTransition(st);
         })
         .catch(() => undefined);
@@ -384,7 +487,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       document.removeEventListener('visibilitychange', onResume);
       window.removeEventListener('focus', onResume);
     };
-  }, [reconcileSyncTransition]);
+  }, [applySyncStatus, reconcileSyncTransition]);
 
   const openSyncSheet = useCallback(() => setSyncSheetOpen(true), []);
   const closeSyncSheet = useCallback(() => setSyncSheetOpen(false), []);
@@ -398,6 +501,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const onHashChange = () => {
       setAddSheetOpen(false);
       setSyncSheetOpen(false);
+      // A card iframe that unmounts may never report its blur.
+      setCardInputFocusedState(false);
     };
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
@@ -469,13 +574,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
           : Boolean(info?.eink);
       const active = document.activeElement;
       const tag = active?.tagName?.toLowerCase();
-      const isInputFocused = Boolean(
-        active &&
-          (tag === 'input' ||
-            tag === 'textarea' ||
-            tag === 'select' ||
-            (active as HTMLElement).isContentEditable)
-      );
+      const isInputFocused =
+        cardInputFocused ||
+        Boolean(
+          active &&
+            (tag === 'input' ||
+              tag === 'textarea' ||
+              tag === 'select' ||
+              (active as HTMLElement).isContentEditable)
+        );
       try {
         const shell = (
           window as unknown as {
@@ -503,12 +610,95 @@ export function AppProvider({ children }: { children: ReactNode }) {
       document.removeEventListener('focusin', pushStudyState);
       document.removeEventListener('focusout', pushStudyState);
     };
-  }, [prefs, info?.eink]);
+  }, [prefs, info?.eink, cardInputFocused]);
+
+  /*
+   * Automatic sync ("sync.auto"): once at startup and, best effort, when the page is
+   * hidden (app closed / switched away). Network failures stay silent; any other
+   * failure (e.g. expired login) shows one toast until a sync succeeds again.
+   */
+  const lastAutoSyncAtRef = useRef(0);
+  const autoSyncErrorShownRef = useRef(false);
+  const runAutoSync = useCallback(() => {
+    if (syncInFlightRef.current) return;
+    syncInFlightRef.current = true;
+    lastAutoSyncAtRef.current = Date.now();
+    host
+      .syncRun('normal')
+      .then(async (res) => {
+        if (res.needsFullSync) {
+          setFullSyncOpen(true);
+        } else if (res.ok) {
+          autoSyncErrorShownRef.current = false;
+          observeLastSync(res.lastSync);
+        }
+        await refreshSyncStatus().catch(() => undefined);
+      })
+      .catch(async (err) => {
+        await refreshSyncStatus().catch(() => undefined);
+        if (isNetworkError(err)) return;
+        if (err instanceof HostApiError && err.status === 409) return; // busy / aborted
+        if (autoSyncErrorShownRef.current) return;
+        autoSyncErrorShownRef.current = true;
+        showToast(
+          `자동 동기화를 하지 못했습니다: ${
+            err instanceof Error && err.message ? err.message : '알 수 없는 오류'
+          }`,
+          'error',
+          { label: '동기화 열기', onClick: () => setSyncSheetOpen(true) }
+        );
+      })
+      .finally(() => {
+        syncInFlightRef.current = false;
+      });
+  }, [observeLastSync, refreshSyncStatus, showToast]);
+
+  const maybeStartupAutoSync = useCallback(
+    (st: SyncStatus, loadedPrefs: HostPrefs) => {
+      if (autoSyncAttemptedRef.current) return;
+      autoSyncAttemptedRef.current = true;
+      if (
+        !syncInFlightRef.current &&
+        st.loggedIn &&
+        loadedPrefs['sync.auto'] === true &&
+        !st.running &&
+        !st.needsFullSync
+      ) {
+        runAutoSync();
+      }
+    },
+    [runAutoSync]
+  );
 
   // Initial load: info, prefs, syncStatus (+ conditional auto-sync)
   useEffect(() => {
     const controller = new AbortController();
     let cancelled = false;
+    let retryTimer: number | undefined;
+
+    // `syncStatus === null` means "not loaded yet": keep retrying with backoff so the
+    // sync button never treats a failed first call as "logged out".
+    const retrySyncStatus = (attempt: number) => {
+      const delay = Math.min(30_000, 1000 * 2 ** attempt);
+      retryTimer = window.setTimeout(() => {
+        if (cancelled) return;
+        if (syncStatusRef.current) {
+          // Loaded meanwhile (e.g. the user tapped sync, or an SSE sync-state arrived)
+          maybeStartupAutoSync(syncStatusRef.current, prefsRef.current);
+          return;
+        }
+        host
+          .syncStatus(controller.signal)
+          .then((st) => {
+            if (cancelled) return;
+            applySyncStatus(st);
+            maybeStartupAutoSync(st, prefsRef.current);
+          })
+          .catch(() => {
+            if (!cancelled) retrySyncStatus(attempt + 1);
+          });
+      }, delay);
+    };
 
     Promise.all([
       host.info(controller.signal).catch(() => null),
@@ -517,42 +707,62 @@ export function AppProvider({ children }: { children: ReactNode }) {
     ]).then(([loadedInfo, loadedPrefs, loadedSync]) => {
       if (cancelled) return;
       if (loadedInfo) setInfo(loadedInfo);
-      if (loadedPrefs) setPrefsState(loadedPrefs);
-      if (loadedSync) setSyncStatus(loadedSync);
-
-      if (
-        !autoSyncAttemptedRef.current &&
-        !syncInFlightRef.current &&
-        loadedSync &&
-        loadedSync.loggedIn &&
-        loadedPrefs['sync.auto'] === true &&
-        !loadedSync.running &&
-        !loadedSync.needsFullSync
-      ) {
-        autoSyncAttemptedRef.current = true;
-        syncInFlightRef.current = true;
-        host
-          .syncRun('normal')
-          .then((res) => {
-            if (cancelled) return;
-            if (res.needsFullSync) {
-              setFullSyncOpen(true);
-            } else if (res.ok) {
-              setCollectionVersion((v) => v + 1);
-            }
-          })
-          .catch(() => {
-            // Silently ignore startup auto-sync errors
-          })
-          .finally(() => {
-            syncInFlightRef.current = false;
-          });
+      if (loadedPrefs) {
+        setPrefsState(loadedPrefs);
+        prefsRef.current = loadedPrefs;
+      }
+      if (loadedSync) {
+        applySyncStatus(loadedSync);
+        maybeStartupAutoSync(loadedSync, loadedPrefs);
+      } else {
+        retrySyncStatus(0);
       }
     });
 
     return () => {
       cancelled = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
       controller.abort();
+    };
+  }, [applySyncStatus, maybeStartupAutoSync]);
+
+  // Studying counts as local activity for the hide-time auto-sync heuristic.
+  useEffect(() => {
+    const onHash = () => {
+      if ((window.location.hash || '').startsWith('#/study/')) {
+        localActivityRef.current = true;
+      }
+    };
+    onHash();
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+
+  // Best-effort auto-sync when the app is closed or sent to the background. The host
+  // runs the sync itself (foreground service on Android), so it continues while hidden.
+  useEffect(() => {
+    const onHidden = () => {
+      if (document.visibilityState !== 'hidden') return;
+      const st = syncStatusRef.current;
+      if (prefsRef.current['sync.auto'] !== true) return;
+      if (!st || !st.loggedIn || st.running || st.needsFullSync) return;
+      if (syncInFlightRef.current) return;
+      const lastAt = Math.max(lastAutoSyncAtRef.current, st.lastSync ?? 0);
+      const since = Date.now() - lastAt;
+      const due = localActivityRef.current
+        ? since >= HIDDEN_SYNC_AFTER_ACTIVITY_MIN_INTERVAL_MS
+        : since >= HIDDEN_SYNC_MIN_INTERVAL_MS;
+      if (!due) return;
+      runAutoSync();
+    };
+    document.addEventListener('visibilitychange', onHidden);
+    return () => document.removeEventListener('visibilitychange', onHidden);
+  }, [runAutoSync]);
+
+  const subscribeAnkiPage = useCallback((fn: (ev: AnkiPageEvent) => void) => {
+    ankiPageSubscribersRef.current.add(fn);
+    return () => {
+      ankiPageSubscribersRef.current.delete(fn);
     };
   }, []);
 
@@ -560,7 +770,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const unsubscribe = subscribeHostEvents({
       syncState: (ev) => {
-        setSyncStatus(ev);
+        applySyncStatus(ev);
         reconcileSyncTransition(ev);
         if (!ev.mediaRunning) {
           setMediaSyncProgress(null);
@@ -570,8 +780,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (ev.op === 'sync') {
           if (ev.phase === 'done' || ev.phase === 'error') {
             setSyncProgress(null);
+            // Collection refresh happens once via observeLastSync (lastSync advanced).
             if (ev.phase === 'done') {
-              setCollectionVersion((v) => v + 1);
+              void refreshSyncStatus().catch(() => undefined);
             }
           } else {
             setSyncProgress(ev);
@@ -579,10 +790,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         } else if (ev.op === 'media-sync') {
           if (ev.phase === 'done' || ev.phase === 'error') {
             setMediaSyncProgress(null);
-            void host
-              .syncStatus()
-              .then((st) => setSyncStatus(st))
-              .catch(() => undefined);
+            void refreshSyncStatus().catch(() => undefined);
           } else {
             setMediaSyncProgress(ev);
             setSyncStatus((prev) =>
@@ -597,6 +805,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 : prev
             );
           }
+        } else if (ev.op === 'update') {
+          setUpdateProgress(ev);
         } else if (ev.op === 'import' || ev.op === 'restore') {
           if (ev.phase === 'done') {
             setCollectionVersion((v) => v + 1);
@@ -617,6 +827,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (ev.close) {
           setCollectionVersion((v) => v + 1);
         }
+        for (const fn of Array.from(ankiPageSubscribersRef.current)) {
+          try {
+            fn(ev);
+          } catch {
+            // Ignore subscriber failure
+          }
+        }
       },
       key: (ev) => {
         const handlers = Array.from(keyHandlersRef.current);
@@ -633,7 +850,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
 
     return unsubscribe;
-  }, [goBack, navigate, reconcileSyncTransition]);
+  }, [applySyncStatus, goBack, navigate, reconcileSyncTransition, refreshSyncStatus]);
 
   const handleConfirmColpkg = async () => {
     if (!pendingColpkg || colpkgReplacing) return;
@@ -669,6 +886,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       syncStatus,
       syncProgress,
       mediaSyncProgress,
+      updateProgress,
       refreshSyncStatus,
       startBackgroundSync,
       startMediaSync,
@@ -688,6 +906,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       goBack,
       registerBackHandler,
       registerKeyHandler,
+      setCardInputFocused,
+      subscribeAnkiPage,
     }),
     [
       info,
@@ -699,6 +919,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       syncStatus,
       syncProgress,
       mediaSyncProgress,
+      updateProgress,
       refreshSyncStatus,
       startBackgroundSync,
       startMediaSync,
@@ -718,6 +939,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       goBack,
       registerBackHandler,
       registerKeyHandler,
+      setCardInputFocused,
+      subscribeAnkiPage,
     ]
   );
 

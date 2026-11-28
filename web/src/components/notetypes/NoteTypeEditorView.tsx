@@ -15,6 +15,16 @@ import {
 } from '../../ui';
 import { CardFrame, type CardFrameHandle } from '../shared/CardFrame';
 import { ChunkedCodeEditor, type ChunkedCodeEditorHandle } from './ChunkedCodeEditor';
+import {
+  adoptSavedOrds,
+  newFieldItem,
+  newTemplateItem,
+  toPayloadItems,
+  withKeys,
+  type FieldItem as BaseFieldItem,
+  type Keyed,
+  type TemplateItem as BaseTemplateItem,
+} from './notetypeItems';
 import './notetypes.css';
 
 type EditorTab = 'fields' | 'templates' | 'css';
@@ -50,8 +60,8 @@ function useIsWide(breakpoint = 900): boolean {
   return isWide;
 }
 
-type FieldItem = AnkiTypes.notetypes.Notetype.Field.$Properties;
-type TemplateItem = AnkiTypes.notetypes.Notetype.Template.$Properties;
+type FieldItem = Keyed<BaseFieldItem>;
+type TemplateItem = Keyed<BaseTemplateItem>;
 
 export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
   notetypeId,
@@ -63,7 +73,13 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [dirty, setDirty] = useState(false);
+  // Ref-backed so the back handler and save/discard paths never read a stale value.
+  const dirtyRef = useRef(false);
+  const [dirty, setDirtyState] = useState(false);
+  const setDirty = useCallback((next: boolean) => {
+    dirtyRef.current = next;
+    setDirtyState(next);
+  }, []);
 
   const [notetype, setNotetype] = useState<anki.Notetype | null>(null);
   const [fields, setFields] = useState<FieldItem[]>([]);
@@ -110,20 +126,24 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
       const nt = await anki.getNotetype(notetypeId);
       setNotetype(nt);
       setFields(
-        (nt.fields ?? []).map((f) => ({
-          ord: f.ord ? { val: f.ord.val } : undefined,
-          name: f.name,
-          config: f.config ? { ...f.config } : { fontName: 'Arial', fontSize: 20 },
-        }))
+        withKeys(
+          (nt.fields ?? []).map((f) => ({
+            ord: f.ord ? { val: f.ord.val } : undefined,
+            name: f.name,
+            config: f.config ? { ...f.config } : { fontName: 'Arial', fontSize: 20 },
+          }))
+        )
       );
       setTemplates(
-        (nt.templates ?? []).map((t) => ({
-          ord: t.ord ? { val: t.ord.val } : undefined,
-          name: t.name,
-          mtimeSecs: t.mtimeSecs,
-          usn: t.usn,
-          config: t.config ? { ...t.config } : { qFormat: '', aFormat: '' },
-        }))
+        withKeys(
+          (nt.templates ?? []).map((t) => ({
+            ord: t.ord ? { val: t.ord.val } : undefined,
+            name: t.name,
+            mtimeSecs: t.mtimeSecs,
+            usn: t.usn,
+            config: t.config ? { ...t.config } : { qFormat: '', aFormat: '' },
+          }))
+        )
       );
       setCssText(nt.config?.css ?? '');
       setSelectedTplIdx(0);
@@ -160,7 +180,7 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
     } finally {
       setLoading(false);
     }
-  }, [notetypeId]);
+  }, [notetypeId, setDirty]);
 
   useEffect(() => {
     void loadNotetype();
@@ -207,23 +227,16 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
     setCodeDocVersion((v) => v + 1);
   };
 
+  // Open sheets take Android back first via SheetOrDialog; this only guards unsaved edits.
   useEffect(() => {
     return registerBackHandler(() => {
-      if (showMobilePreview) {
-        setShowMobilePreview(false);
-        return true;
-      }
-      if (discardOpen) {
-        setDiscardOpen(false);
-        return true;
-      }
-      if (dirty) {
+      if (dirtyRef.current) {
         setDiscardOpen(true);
         return true;
       }
       return false;
     });
-  }, [registerBackHandler, showMobilePreview, discardOpen, dirty]);
+  }, [registerBackHandler]);
 
   const isCloze = notetype?.config?.kind === anki.NotetypeKind.KIND_CLOZE;
   const activeTemplate = templates[selectedTplIdx] ?? templates[0];
@@ -357,14 +370,25 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
           ...(notetype.config ?? {}),
           css: nextCss,
         },
-        fields,
-        templates: nextTemplates,
+        fields: toPayloadItems(fields),
+        templates: toPayloadItems(nextTemplates),
       };
       await anki.updateNotetype(payload);
       bumpCollection();
-      setDirty(false);
       showToast('노트 유형 변경 사항을 저장했습니다.', 'success');
-      await loadNotetype();
+      // Refresh mtime/usn and the engine-assigned ords quietly, keeping the selected
+      // template, the code editor's caret/scroll and the current tab.
+      const fresh = await anki.getNotetype(notetypeId);
+      const nextFields = adoptSavedOrds(fields, fresh.fields ?? []);
+      const savedTemplates = adoptSavedOrds(nextTemplates, fresh.templates ?? []);
+      if (nextFields && savedTemplates) {
+        setNotetype(fresh);
+        setFields(nextFields);
+        setTemplates(savedTemplates);
+        setDirty(false);
+      } else {
+        await loadNotetype();
+      }
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : '노트 유형을 저장하지 못했습니다.',
@@ -383,24 +407,8 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
       showToast('같은 이름의 필드가 이미 있습니다.', 'error');
       return;
     }
-    const maxOrd = fields.reduce(
-      (max, f, idx) => Math.max(max, f.ord?.val ?? idx),
-      -1
-    );
-    setFields((prev) => [
-      ...prev,
-      {
-        ord: { val: maxOrd + 1 },
-        name: clean,
-        config: {
-          fontName: 'Arial',
-          fontSize: 20,
-          sticky: false,
-          rtl: false,
-          plainText: false,
-        },
-      },
-    ]);
+    // New fields carry no ord (see newFieldItem).
+    setFields((prev) => [...prev, newFieldItem(clean)]);
     setNewFieldName('');
     setAddFieldOpen(false);
     setDirty(true);
@@ -452,21 +460,11 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
     const clean = newTplName.trim();
     if (!clean) return;
     flushActiveCodeEditor();
-    const maxOrd = templates.reduce(
-      (max, t, idx) => Math.max(max, t.ord?.val ?? idx),
-      -1
-    );
     const firstFieldName = fields[0]?.name || 'Front';
+    // New templates carry no ord (see newTemplateItem).
     setTemplates((prev) => [
       ...prev,
-      {
-        ord: { val: maxOrd + 1 },
-        name: clean,
-        config: {
-          qFormat: `{{${firstFieldName}}}`,
-          aFormat: `{{FrontSide}}\n\n<hr id=answer>\n\n`,
-        },
-      },
+      newTemplateItem(clean, `{{${firstFieldName}}}`, `{{FrontSide}}\n\n<hr id=answer>\n\n`),
     ]);
     setSelectedTplIdx(templates.length);
     setNewTplName('');
@@ -571,10 +569,7 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
             type="button"
             className="amgi-btn amgi-btn-ghost amgi-btn-icon"
             aria-label="뒤로 가기"
-            onClick={() => {
-              if (dirty) setDiscardOpen(true);
-              else goBack('#/notetypes');
-            }}
+            onClick={() => goBack('#/notetypes')}
           >
             <IconArrowLeft size={20} />
           </button>
@@ -660,7 +655,7 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
           </div>
 
           {fields.map((f, idx) => (
-            <div key={f.ord?.val ?? idx} className="amgi-nt-field-row">
+            <div key={f.clientKey} className="amgi-nt-field-row">
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ fontSize: 15, fontWeight: 700 }}>
                   {idx + 1}. {f.name}
@@ -736,7 +731,7 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
                     onChange={(e) => handleSelectTemplate(Number(e.target.value))}
                   >
                     {templates.map((t, idx) => (
-                      <option key={t.ord?.val ?? idx} value={idx}>
+                      <option key={t.clientKey} value={idx}>
                         {t.name || `카드 ${idx + 1}`}
                       </option>
                     ))}
@@ -800,9 +795,9 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
 
                 {/* Quick Field Insert Chips */}
                 <div className="amgi-nt-insert-chips" aria-label="필드 태그 빠른 삽입">
-                  {fields.map((f, idx) => (
+                  {fields.map((f) => (
                     <button
-                      key={f.ord?.val ?? idx}
+                      key={f.clientKey}
                       type="button"
                       className="amgi-chip"
                       onClick={() =>
@@ -1234,7 +1229,7 @@ export const NoteTypeEditorView: React.FC<{ notetypeId: number }> = ({
               onClick={() => {
                 setDiscardOpen(false);
                 setDirty(false);
-                goBack('#/notetypes');
+                goBack('#/notetypes', { force: true });
               }}
             >
               버리고 나가기

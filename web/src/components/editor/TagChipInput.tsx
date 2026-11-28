@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from 'react';
 import * as anki from '../../anki';
 import { IconClose } from '../../ui';
 
@@ -7,8 +15,41 @@ export interface TagChipInputProps {
   onChange: (nextTags: string[]) => void;
 }
 
-export function TagChipInput({ tags, onChange }: TagChipInputProps) {
+export interface TagChipInputHandle {
+  /**
+   * Commits any text still in the input box and returns the resulting tag list
+   * (call before saving, e.g. for a Ctrl+Enter save that never blurs the input).
+   */
+  flush: () => string[];
+}
+
+const TAG_SEPARATORS = /[\s,\u3000]+/;
+
+/** Splits typed text into tags; `rest` is the unfinished last piece (no trailing separator). */
+export function splitTagInput(raw: string): { complete: string[]; rest: string } {
+  const pieces = raw.split(TAG_SEPARATORS);
+  const rest = pieces.pop() ?? '';
+  return { complete: pieces.map((p) => p.trim()).filter(Boolean), rest };
+}
+
+export function mergeTags(existing: readonly string[], added: readonly string[]): string[] {
+  const next = [...existing];
+  for (const t of added) {
+    if (t && !next.includes(t)) next.push(t);
+  }
+  return next;
+}
+
+export const TagChipInput = forwardRef<TagChipInputHandle, TagChipInputProps>(function TagChipInput(
+  { tags, onChange },
+  ref
+) {
   const [input, setInput] = useState('');
+  // Latest values for flush() and IME-safe commits outside React's render cycle.
+  const inputRef = useRef('');
+  const tagsRef = useRef(tags);
+  tagsRef.current = tags;
+  const composingRef = useRef(false);
   const [allTags, setAllTags] = useState<string[]>([]);
   const [completed, setCompleted] = useState<string[]>([]);
   const [focused, setFocused] = useState(false);
@@ -55,25 +96,52 @@ export function TagChipInput({ tags, onChange }: TagChipInputProps) {
       .slice(0, 12);
   }, [input, completed, allTags, tags]);
 
-  const addTag = (raw: string) => {
-    const parts = raw
-      .split(/[\s,]+/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (parts.length === 0) return;
-    const next = [...tags];
-    for (const p of parts) {
-      if (!next.includes(p)) next.push(p);
-    }
-    onChange(next);
-    setInput('');
+  const updateInput = (text: string) => {
+    inputRef.current = text;
+    setInput(text);
   };
+
+  const commit = (added: string[]): string[] => {
+    const next = mergeTags(tagsRef.current, added);
+    if (next.length !== tagsRef.current.length) {
+      tagsRef.current = next;
+      onChange(next);
+    }
+    return next;
+  };
+
+  const addTag = (raw: string) => {
+    const parts = raw.split(TAG_SEPARATORS).map((s) => s.trim()).filter(Boolean);
+    updateInput('');
+    if (parts.length > 0) commit(parts);
+  };
+
+  /** Commits complete pieces as soon as a separator is typed (works for keyCode 229 keyboards). */
+  const handleInputText = (text: string) => {
+    if (composingRef.current) {
+      updateInput(text);
+      return;
+    }
+    const { complete, rest } = splitTagInput(text);
+    updateInput(rest);
+    if (complete.length > 0) commit(complete);
+  };
+
+  useImperativeHandle(ref, () => ({
+    flush() {
+      const pending = inputRef.current.trim();
+      if (!pending) return tagsRef.current;
+      updateInput('');
+      return commit(pending.split(TAG_SEPARATORS).filter(Boolean));
+    },
+  }));
 
   const removeTag = (tag: string) => {
     onChange(tags.filter((t) => t !== tag));
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.nativeEvent.isComposing || composingRef.current || e.keyCode === 229) return;
     if (e.key === 'Enter' || e.key === ' ' || e.key === ',') {
       if (input.trim()) {
         e.preventDefault();
@@ -118,9 +186,17 @@ export function TagChipInput({ tags, onChange }: TagChipInputProps) {
           value={input}
           onFocus={() => setFocused(true)}
           onBlur={() => {
+            if (!composingRef.current && inputRef.current.trim()) addTag(inputRef.current);
             window.setTimeout(() => setFocused(false), 160);
           }}
-          onChange={(e) => setInput(e.target.value)}
+          onCompositionStart={() => {
+            composingRef.current = true;
+          }}
+          onCompositionEnd={(e) => {
+            composingRef.current = false;
+            handleInputText(e.currentTarget.value);
+          }}
+          onChange={(e) => handleInputText(e.target.value)}
           onKeyDown={handleKeyDown}
           aria-label="태그 입력"
         />
@@ -148,4 +224,4 @@ export function TagChipInput({ tags, onChange }: TagChipInputProps) {
       )}
     </div>
   );
-}
+});

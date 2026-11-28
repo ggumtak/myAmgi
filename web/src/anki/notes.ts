@@ -72,29 +72,6 @@ export async function defaultsForAdding(
   );
 }
 
-/**
- * Finds duplicate note IDs matching the given `notetypeId` and `firstField` value
- * using Anki's `SearchNode.dupe` query builder (`buildSearchString` + `searchNotes`).
- */
-export async function findDuplicates(
-  notetypeId: number | Long,
-  firstField: string
-): Promise<number[]> {
-  const query = await rpc(
-    'buildSearchString',
-    anki.search.SearchNode,
-    anki.generic.String,
-    { dupe: { notetypeId, firstField } }
-  );
-  const res = await rpc(
-    'searchNotes',
-    anki.search.SearchRequest,
-    anki.search.SearchResponse,
-    { search: query.val ?? '', order: { none: {} } }
-  );
-  return (res.ids ?? []).map((id) => toNumber(id));
-}
-
 export async function cardsOfNote(nid: number | Long): Promise<number[]> {
   const res = await rpc('cardsOfNote', anki.notes.NoteId, anki.cards.CardIds, { nid });
   return (res.cids ?? []).map((id) => toNumber(id));

@@ -101,6 +101,11 @@ export const ChunkedCodeEditor = forwardRef<
   const forceFullViewRef = useRef<boolean>(false);
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // Latest callbacks, so the imperative handle (insertAtCaret) never runs first-render closures.
+  const onUserEditRef = useRef(onUserEdit);
+  onUserEditRef.current = onUserEdit;
+  const onPreviewTextRef = useRef(onPreviewText);
+  onPreviewTextRef.current = onPreviewText;
   const previewTimerRef = useRef<number | null>(null);
   const searchTimerRef = useRef<number | null>(null);
   const lastDocKeyRef = useRef<string>('');
@@ -216,16 +221,16 @@ export const ChunkedCodeEditor = forwardRef<
   }, []);
 
   const schedulePreview = useCallback(() => {
-    if (!onPreviewText) return;
+    if (!onPreviewTextRef.current) return;
     if (previewTimerRef.current !== null) window.clearTimeout(previewTimerRef.current);
     previewTimerRef.current = window.setTimeout(() => {
-      onPreviewText(getFullText());
+      onPreviewTextRef.current?.(getFullText());
     }, 350);
-  }, [onPreviewText, getFullText]);
+  }, [getFullText]);
 
   const handleTextareaChange = (nextVal: string) => {
     setTextareaValue(nextVal);
-    onUserEdit?.();
+    onUserEditRef.current?.();
 
     if (forceFullViewRef.current) {
       // Direct mode (< 50k chars) or temporary full view (<= 120k chars)
@@ -437,6 +442,7 @@ export const ChunkedCodeEditor = forwardRef<
         });
       },
     }),
+    // handleTextareaChange only reads refs and stable callbacks, so this handle stays valid.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [getFullText]
   );

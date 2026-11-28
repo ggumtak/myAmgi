@@ -1,7 +1,6 @@
 import type React from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as anki from '../../anki';
-import { toNumber } from '../../anki';
 import { useApp, type PrefTheme } from '../../context/AppContext';
 import {
   host,
@@ -26,6 +25,10 @@ import {
   useToast,
 } from '../../ui';
 import { TagManagerSheet } from '../shared/TagManagerSheet';
+import { EmptyCardsSummary } from '../shared/EmptyCardsSummary';
+import { resolveTwoButtonMode } from '../../studyPrefs';
+import { copyText } from '../../clipboard';
+import { SETTINGS_UPDATE_HASH } from '../../useStartupUpdateCheck';
 import { formatSyncTime, SyncCard } from '../sync/SyncCard';
 import './settings.css';
 
@@ -123,6 +126,7 @@ export const SettingsView: React.FC = () => {
     resolvedTheme,
     syncStatus,
     bumpCollection,
+    updateProgress,
   } = useApp();
   const { showToast } = useToast();
 
@@ -182,8 +186,13 @@ export const SettingsView: React.FC = () => {
   const [copyingLog, setCopyingLog] = useState(false);
   const [infoSheetOpen, setInfoSheetOpen] = useState(false);
 
+  // Loads Anki preferences, backups and collection status. The full-page loader is
+  // shown only until the first successful load; later refreshes keep the page (and
+  // its scroll position / SyncCard) mounted.
+  const hasLoadedRef = useRef(false);
   const loadAll = useCallback(async () => {
-    setLoading(true);
+    const firstLoad = !hasLoadedRef.current;
+    if (firstLoad) setLoading(true);
     setLoadError(null);
     setLoadErrorLog(undefined);
     try {
@@ -194,13 +203,19 @@ export const SettingsView: React.FC = () => {
       ]);
       setAnkiPrefs(loadedAnkiPrefs);
       setBackups(backupRes.backups ?? []);
-      setBackupKeep(
-        typeof prefs['backup.keep'] === 'number'
-          ? (prefs['backup.keep'] as number)
-          : backupRes.keep ?? 20
-      );
+      // A `backup.keep` pref still wins at render time (effectiveBackupKeep).
+      setBackupKeep(backupRes.keep ?? 20);
       if (colRes) setCollectionStatus(colRes);
+      hasLoadedRef.current = true;
     } catch (err) {
+      if (!firstLoad) {
+        // Keep the loaded page; report the failed refresh only.
+        showToast(
+          err instanceof Error ? err.message : '설정을 다시 불러오지 못했습니다.',
+          'error'
+        );
+        return;
+      }
       setLoadError(
         err instanceof Error ? err.message : '설정을 불러오는 중 문제가 발생했습니다.'
       );
@@ -208,7 +223,7 @@ export const SettingsView: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [prefs]);
+  }, [showToast]);
 
   useEffect(() => {
     void loadAll();
@@ -407,10 +422,7 @@ export const SettingsView: React.FC = () => {
   };
 
   // Pref values with defaults matching spec
-  const twoButtonMode =
-    typeof prefs['study.twoButton'] === 'boolean'
-      ? (prefs['study.twoButton'] as boolean)
-      : true;
+  const twoButtonMode = resolveTwoButtonMode(prefs, info);
   const leftHandedMode = prefs['study.leftHanded'] === true;
   const tapToFlip = prefs['study.tapToFlip'] === true;
   const volumeKeys =
@@ -599,17 +611,17 @@ export const SettingsView: React.FC = () => {
     void runEmptyCardsCheck();
   };
 
-  const emptyCardIds = (emptyReport?.notes ?? []).flatMap((n) =>
-    (n.cardIds ?? []).map((id) => toNumber(id))
-  );
+  const emptyPlan = anki.planEmptyCardsRemoval(emptyReport);
+  const emptyCardIds = emptyPlan.cardIds;
 
   const handleDeleteEmptyCards = async () => {
     if (emptyCardIds.length === 0 || emptyRemoving) return;
     setEmptyRemoving(true);
     try {
-      await anki.removeCards(emptyCardIds);
+      // Keeps the first card of notes whose cards are all empty (Anki "keep notes").
+      const plan = await anki.removeEmptyCards(emptyReport);
       bumpCollection();
-      showToast(`빈 카드 ${emptyCardIds.length}장을 삭제했습니다.`, 'success');
+      showToast(`빈 카드 ${plan.cardIds.length}장을 삭제했습니다.`, 'success');
       await runEmptyCardsCheck();
     } catch (err) {
       showToast(
@@ -660,14 +672,64 @@ export const SettingsView: React.FC = () => {
     }
   };
 
+  // APK download started by update.apply keeps running on the host; its progress
+  // arrives as `progress` events with op "update".
+  const [apkDownloading, setApkDownloading] = useState(false);
+  useEffect(() => {
+    if (!updateProgress) return;
+    if (updateProgress.phase === 'error') {
+      setApkDownloading(false);
+      setUpdateMessage(updateProgress.error || '업데이트를 내려받지 못했습니다.');
+    } else if (updateProgress.phase === 'done') {
+      setApkDownloading(false);
+    } else if (updateProgress.kind === 'apk' && updateProgress.phase === 'running') {
+      const total = updateProgress.total ?? 100;
+      const current = updateProgress.current ?? 0;
+      if (total > 0 && current >= total) {
+        setApkDownloading(false);
+        setUpdateMessage('다운로드를 마쳤습니다. 설치 화면에서 설치를 진행해 주세요.');
+      } else {
+        setApkDownloading(true);
+        const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+        setUpdateMessage(`새 앱을 내려받는 중… ${pct}%`);
+      }
+    }
+  }, [updateProgress]);
+
   const handleApplyUpdate = async () => {
-    if (updateApplying || info?.platform !== 'android') return;
+    if (updateApplying || apkDownloading || info?.platform !== 'android') return;
     setUpdateApplying(true);
     setUpdateMessage('업데이트를 받는 중…');
+    let reloading = false;
     try {
-      await host.updateApply();
-      setUpdateMessage('업데이트를 마쳤습니다. 앱을 다시 불러옵니다.');
-      window.setTimeout(() => window.location.reload(), 1200);
+      const res = await host.updateApply();
+      setUpdateStatus(res);
+      if (res?.applied && res.reloadRequired) {
+        // UI bundle written to the OTA directory: reload to use it.
+        reloading = true;
+        setUpdateMessage('화면 업데이트를 적용했습니다. 앱을 다시 불러옵니다.');
+        window.setTimeout(() => window.location.reload(), 1200);
+        return;
+      }
+      if (res?.needsPermission) {
+        setUpdateMessage(
+          res.message || "'출처를 알 수 없는 앱 설치' 권한을 허용한 뒤 다시 눌러 주세요."
+        );
+      } else if (res?.started && res.kind === 'apk') {
+        setApkDownloading(true);
+        setUpdateMessage(
+          res.message ||
+            '새 앱을 내려받는 중입니다. 다운로드가 끝나면 설치 화면이 열립니다.'
+        );
+      } else if (res?.error) {
+        setUpdateMessage(res.error);
+      } else if (res?.message) {
+        setUpdateMessage(res.message);
+      } else if (!res?.available) {
+        setUpdateMessage('이미 최신 버전을 사용 중입니다.');
+      } else {
+        setUpdateMessage('업데이트를 시작하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+      }
     } catch (err) {
       if (err instanceof HostApiError && err.status === 501) {
         setUpdateUnsupported(true);
@@ -678,9 +740,23 @@ export const SettingsView: React.FC = () => {
         );
       }
     } finally {
-      setUpdateApplying(false);
+      // Keep the button disabled while the page is about to reload.
+      if (!reloading) setUpdateApplying(false);
     }
   };
+
+  // `#/settings/update` (e.g. from the startup update toast) opens the update sheet.
+  const openedFromHashRef = useRef(false);
+  useEffect(() => {
+    if (openedFromHashRef.current) return;
+    if (window.location.hash !== SETTINGS_UPDATE_HASH) return;
+    if (!updateStatus) return;
+    openedFromHashRef.current = true;
+    if (updateStatus.available) {
+      setUpdateMessage(`새 버전(${updateStatus.version || '최신'})이 준비되었습니다.`);
+    }
+    setUpdateSheetOpen(true);
+  }, [updateStatus]);
 
   const handleCopyErrorLog = async () => {
     if (copyingLog) return;
@@ -688,11 +764,7 @@ export const SettingsView: React.FC = () => {
     try {
       const snap = await host.logGet();
       const text = snap.text || snap.lines?.join('\n') || '기록된 로그가 없습니다.';
-      try {
-        await host.platformClipboardWrite(text);
-      } catch {
-        await navigator.clipboard.writeText(text);
-      }
+      await copyText(text);
       showToast('최근 오류 기록을 클립보드에 복사했습니다.', 'success');
     } catch (err) {
       showToast(
@@ -729,7 +801,8 @@ export const SettingsView: React.FC = () => {
   }
 
   const flavorLabel = getFlavorLabel(info?.flavor, info?.platform);
-  const appVersionLabel = info?.appVersion || '0.1.0';
+  const appVersionLabel = info?.appVersion || '—';
+  const engineVersionLabel = info?.backendVersion || '—';
   const uiVersionLabel = info?.uiVersion || '내장 버전';
 
   return (
@@ -1171,7 +1244,7 @@ export const SettingsView: React.FC = () => {
         />
         <SettingRow
           label="기기 및 앱 정보"
-          description={`${flavorLabel} · UI ${uiVersionLabel} · Anki 엔진 26.09`}
+          description={`${flavorLabel} · UI ${uiVersionLabel} · 학습 엔진 ${engineVersionLabel}`}
           onClick={() => setInfoSheetOpen(true)}
           control={<IconChevronRight size={18} />}
         />
@@ -1547,9 +1620,8 @@ export const SettingsView: React.FC = () => {
       {/* Empty Cards Sheet */}
       <SheetOrDialog
         open={emptySheetOpen}
-        onClose={() => {
-          if (!emptyRemoving) setEmptySheetOpen(false);
-        }}
+        onClose={() => setEmptySheetOpen(false)}
+        dismissible={!emptyRemoving}
         title="빈 카드 정리"
         footer={
           <button
@@ -1566,15 +1638,9 @@ export const SettingsView: React.FC = () => {
           <p className="amgi-sheet-note">비어 있는 카드가 있는지 찾는 중...</p>
         ) : emptyReport ? (
           <div className="amgi-sheet-stack">
-            {emptyCardIds.length === 0 ? (
-              <p className="amgi-prose" style={{ margin: 0 }}>
-                비어 있는 카드가 없습니다.
-              </p>
-            ) : (
+            <EmptyCardsSummary plan={emptyPlan} />
+            {emptyCardIds.length > 0 && (
               <>
-                <p className="amgi-prose" style={{ margin: 0 }}>
-                  내용이 없는 카드 <strong>{emptyCardIds.length}장</strong>을 찾았습니다.
-                </p>
                 <button
                   type="button"
                   className="amgi-btn amgi-btn-danger"
@@ -1594,9 +1660,8 @@ export const SettingsView: React.FC = () => {
       {/* Update Sheet */}
       <SheetOrDialog
         open={updateSheetOpen}
-        onClose={() => {
-          if (!updateApplying) setUpdateSheetOpen(false);
-        }}
+        onClose={() => setUpdateSheetOpen(false)}
+        dismissible={!updateApplying}
         title="업데이트 확인"
         footer={
           <>
@@ -1612,10 +1677,10 @@ export const SettingsView: React.FC = () => {
               <button
                 type="button"
                 className="amgi-btn amgi-btn-primary"
-                disabled={updateApplying || updateChecking}
+                disabled={updateApplying || updateChecking || apkDownloading}
                 onClick={() => void handleApplyUpdate()}
               >
-                {updateApplying ? '업데이트 중...' : '지금 업데이트'}
+                {updateApplying || apkDownloading ? '업데이트 중...' : '지금 업데이트'}
               </button>
             )}
           </>
@@ -1664,7 +1729,7 @@ export const SettingsView: React.FC = () => {
           </div>
           <div className="amgi-info-kv-row">
             <span className="amgi-info-kv-key">학습 엔진</span>
-            <span className="amgi-info-kv-val">{info?.backendVersion || 'Anki 26.09'}</span>
+            <span className="amgi-info-kv-val">{engineVersionLabel}</span>
           </div>
           <div className="amgi-info-kv-row">
             <span className="amgi-info-kv-key">기기</span>

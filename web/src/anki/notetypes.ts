@@ -106,17 +106,6 @@ export async function getStockNotetype<T = Record<string, unknown>>(
 
 export const getStockNotetypeLegacy = getStockNotetype;
 
-export async function getAddCardDefaults(
-  homeDeckOfCurrentReviewCard = 0
-): Promise<AnkiTypes.notes.DeckAndNotetype> {
-  return rpc(
-    'defaultsForAdding',
-    anki.notes.DefaultsForAddingRequest,
-    anki.notes.DeckAndNotetype,
-    { homeDeckOfCurrentReviewCard }
-  );
-}
-
 export async function getChangeNotetypeInfo(
   oldNotetypeId: number | Long,
   newNotetypeId: number | Long

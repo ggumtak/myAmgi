@@ -34,6 +34,7 @@ import {
   resolveDeckTheme,
 } from './DeckBadge';
 import { DeckOverviewPane } from './DeckOverviewPane';
+import { ImportProgressSheet, importErrorMessage, useFileImport } from './ImportProgressSheet';
 import './decks.css';
 
 export interface DeckListViewProps {
@@ -125,6 +126,44 @@ function pickInitialSelectedDeck(rows: FlatDeckRow[], preferredId?: number): num
   return rows[0]?.deckId ?? null;
 }
 
+/** Days of review history fetched for the streak; a longer streak shows as "N일+". */
+const STREAK_WINDOW_DAYS = 60;
+
+type DeckLoadMode = 'initial' | 'quiet' | 'user';
+
+/** Whether the scroll container under `el` (or the page) is scrolled to the top. */
+function isScrolledToTop(el: EventTarget | null): boolean {
+  let node = el instanceof Element ? el : null;
+  while (node && node !== document.body && node !== document.documentElement) {
+    const style = window.getComputedStyle(node);
+    const scrollable =
+      /(auto|scroll|overlay)/.test(style.overflowY) && node.scrollHeight > node.clientHeight;
+    if (scrollable) return node.scrollTop <= 0;
+    node = node.parentElement;
+  }
+  const pageTop = document.scrollingElement?.scrollTop ?? window.scrollY;
+  return pageTop <= 0 && window.scrollY <= 0;
+}
+
+function setCollapsedInTree(
+  node: anki.DeckTreeNode,
+  deckId: number,
+  collapsed: boolean
+): anki.DeckTreeNode {
+  const children = (node.children ?? []) as anki.DeckTreeNode[];
+  let changed = false;
+  const nextChildren = children.map((child) => {
+    if (anki.toNumber(child.deckId) === deckId) {
+      changed = true;
+      return { ...child, collapsed } as anki.DeckTreeNode;
+    }
+    const next = setCollapsedInTree(child, deckId, collapsed);
+    if (next !== child) changed = true;
+    return next;
+  });
+  return changed ? ({ ...node, children: nextChildren } as anki.DeckTreeNode) : node;
+}
+
 function formatDurationKo(millis: number): string {
   const totalSecs = Math.max(0, Math.round(millis / 1000));
   if (totalSecs < 60) return `${totalSecs}초`;
@@ -156,11 +195,16 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
     answerCount: number;
     answerMillis: number;
     streakDays: number;
+    /** The streak reaches the end of the fetched window, so it may be longer. */
+    streakCapped: boolean;
   }>({
     answerCount: 0,
     answerMillis: 0,
     streakDays: 0,
+    streakCapped: false,
   });
+  // Decks answered in today (for the "완료" badge); null until known.
+  const [studiedTodayIds, setStudiedTodayIds] = useState<Set<number> | null>(null);
   const [deckFilterQuery, setDeckFilterQuery] = useState('');
   const [selectedDeckId, setSelectedDeckId] = useState<number | null>(
     initialSelectedDeckId ?? null
@@ -194,7 +238,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
   const [customPreset, setCustomPreset] = useState<
     'newLimitDelta' | 'reviewLimitDelta' | 'forgotDays' | 'reviewAheadDays' | 'previewDays'
   >('newLimitDelta');
-  const [customValue, setCustomValue] = useState(10);
+  const [customValue, setCustomValue] = useState('10');
 
   // Export modal (triggered from Deck ActionMenu)
   const [exportDeck, setExportDeck] = useState<FlatDeckRow | null>(null);
@@ -213,6 +257,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
 
   // File input for empty-state import
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const fileImport = useFileImport();
   const [colpkgConfirm, setColpkgConfirm] = useState<{ path: string; name: string } | null>(
     null
   );
@@ -236,68 +281,109 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
     }
   }, [initialSelectedDeckId]);
 
-  const loadDecks = useCallback(async (quiet = false) => {
-    if (!quiet) {
-      setLoading((prev) => (treeRoot === null ? true : prev));
-    } else {
-      setRefreshing(true);
-    }
-    setError(null);
-    try {
-      const [tree, g] = await Promise.all([
-        anki.deckTree(),
-        anki.graphs('', 60).catch(() => null),
-      ]);
-      setTreeRoot(tree);
-      const countMap = g?.reviews?.count ?? {};
-      const dayTotal = (offset: number) => {
-        const entry = countMap[String(offset)];
-        if (!entry) return 0;
-        return (
-          (entry.learn ?? 0) +
-          (entry.relearn ?? 0) +
-          (entry.young ?? 0) +
-          (entry.mature ?? 0) +
-          (entry.filtered ?? 0)
-        );
-      };
-      let streak = 0;
-      let cursor = dayTotal(0) > 0 ? 0 : -1;
-      while (cursor >= -59 && dayTotal(cursor) > 0) {
-        streak++;
-        cursor--;
+  const loadGenRef = useRef(0);
+  const statsVersionRef = useRef<number | null>(null);
+  const treeRootRef = useRef<anki.DeckTreeNode | null>(null);
+  treeRootRef.current = treeRoot;
+  const toastedErrorRef = useRef<string | null>(null);
+
+  /**
+   * - `initial`: first load / collection changed; shows the loading card only when empty.
+   * - `quiet`: focus/visibility/collapse; deck tree only, no banner.
+   * - `user`: pull-to-refresh, F5 or the refresh button; shows the refresh banner.
+   * Review statistics (graphs over the whole collection) are fetched once per
+   * collectionVersion, or on a user refresh.
+   */
+  const loadDecks = useCallback(
+    async (mode: DeckLoadMode = 'initial') => {
+      const gen = ++loadGenRef.current;
+      if (mode === 'initial' && treeRootRef.current === null) setLoading(true);
+      if (mode === 'user') setRefreshing(true);
+      const wantStats = mode === 'user' || statsVersionRef.current !== collectionVersion;
+      try {
+        const [tree, g] = await Promise.all([
+          anki.deckTree(),
+          wantStats ? anki.graphs('', STREAK_WINDOW_DAYS).catch(() => null) : Promise.resolve(null),
+        ]);
+        if (gen !== loadGenRef.current) return;
+        setTreeRoot(tree);
+        setError(null);
+        toastedErrorRef.current = null;
+        if (wantStats && g) {
+          statsVersionRef.current = collectionVersion;
+          const countMap = g.reviews?.count ?? {};
+          const dayTotal = (offset: number) => {
+            const entry = countMap[String(offset)];
+            if (!entry) return 0;
+            return (
+              (entry.learn ?? 0) +
+              (entry.relearn ?? 0) +
+              (entry.young ?? 0) +
+              (entry.mature ?? 0) +
+              (entry.filtered ?? 0)
+            );
+          };
+          let streak = 0;
+          let cursor = dayTotal(0) > 0 ? 0 : -1;
+          const oldest = -(STREAK_WINDOW_DAYS - 1);
+          while (cursor >= oldest && dayTotal(cursor) > 0) {
+            streak++;
+            cursor--;
+          }
+          const answerCount = g.today?.answerCount ?? 0;
+          setTodayStats({
+            answerCount,
+            answerMillis: g.today?.answerMillis ?? 0,
+            streakDays: streak,
+            streakCapped: cursor < oldest,
+          });
+          if (answerCount > 0) {
+            const ids = flattenDeckTree(tree, 0, '', [], true).map((r) => r.deckId);
+            void anki
+              .decksStudiedToday(ids)
+              .then((set) => setStudiedTodayIds(set))
+              .catch(() => setStudiedTodayIds(null));
+          } else {
+            setStudiedTodayIds(new Set());
+          }
+        }
+      } catch (err) {
+        if (gen !== loadGenRef.current) return;
+        const message = err instanceof Error ? err.message : '덱 목록을 불러오지 못했습니다.';
+        setError(message);
+        // With rows on screen the error card is not shown; tell the owner once.
+        if (treeRootRef.current !== null && toastedErrorRef.current !== message) {
+          toastedErrorRef.current = message;
+          showToast(`덱 목록을 새로 고치지 못했습니다: ${message}`, 'error');
+        }
+      } finally {
+        if (gen === loadGenRef.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
-      setTodayStats({
-        answerCount: g?.today?.answerCount ?? 0,
-        answerMillis: g?.today?.answerMillis ?? 0,
-        streakDays: streak,
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '덱 목록을 불러오지 못했습니다.');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [treeRoot]);
+    },
+    [collectionVersion, showToast]
+  );
 
   useEffect(() => {
-    void loadDecks(false);
+    void loadDecks('initial');
   }, [collectionVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Refresh when tab/window regains focus
+  // Refresh counts when tab/window regains focus (deck tree only)
   useEffect(() => {
     const onFocus = () => {
-      void loadDecks(true);
+      void loadDecks('quiet');
     };
     const onVis = () => {
       if (document.visibilityState === 'visible') {
-        void loadDecks(true);
+        void loadDecks('quiet');
       }
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'F5') {
         e.preventDefault();
-        void loadDecks(true);
+        void loadDecks('user');
       }
     };
     window.addEventListener('focus', onFocus);
@@ -436,18 +522,17 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
 
   const handleToggleCollapse = async (e: React.MouseEvent, row: FlatDeckRow) => {
     e.stopPropagation();
+    const nextCollapsed = !row.collapsed;
+    // Optimistic: flip the row now so the list does not jump under the finger.
+    setTreeRoot((prev) => (prev ? setCollapsedInTree(prev, row.deckId, nextCollapsed) : prev));
     try {
-      await anki.setDeckCollapsed(
-        row.deckId,
-        !row.collapsed,
-        anki.SetDeckCollapsedScope.REVIEWER
-      );
-      await loadDecks(true);
+      await anki.setDeckCollapsed(row.deckId, nextCollapsed, anki.SetDeckCollapsedScope.REVIEWER);
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : '덱 접기 상태를 바꾸지 못했습니다.',
         'error'
       );
+      void loadDecks('quiet');
     }
   };
 
@@ -582,7 +667,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
   const openQuickCustomStudy = async (row: FlatDeckRow) => {
     setCustomDeck(row);
     setCustomPreset('newLimitDelta');
-    setCustomValue(10);
+    setCustomValue('10');
     setCustomLoading(true);
     try {
       const defaults = await anki.customStudyDefaults(row.deckId);
@@ -590,7 +675,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
         newAvail: defaults.availableNew ?? 0,
         revAvail: defaults.availableReview ?? 0,
       });
-      setCustomValue(Math.max(1, defaults.extendNew || 10));
+      setCustomValue(String(Math.max(1, defaults.extendNew || 10)));
     } catch {
       setCustomAvail({ newAvail: 0, revAvail: 0 });
     } finally {
@@ -600,9 +685,14 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
 
   const handleSubmitQuickCustom = async () => {
     if (!customDeck) return;
+    const parsed = Math.floor(Number(customValue.trim()));
+    if (!customValue.trim() || !Number.isFinite(parsed) || parsed < 1) {
+      showToast('1 이상의 숫자를 입력해 주세요.', 'error');
+      return;
+    }
     setBusyModal(true);
     try {
-      const val = Math.max(1, customValue);
+      const val = Math.min(9999, parsed);
       const req: Parameters<typeof anki.customStudy>[0] =
         customPreset === 'newLimitDelta'
           ? { deckId: customDeck.deckId, newLimitDelta: val }
@@ -685,18 +775,14 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
     e.target.value = '';
     if (!file) return;
     try {
-      const uploaded = await host.uploadHostFile(file, file.name);
-      const res = await host.host.importFile({ path: uploaded.path, name: file.name });
-      if (res.kind === 'colpkg' && res.needsConfirm) {
-        setColpkgConfirm({ path: res.path, name: file.name });
-      } else if (res.route) {
-        navigate(`#${res.route}`);
+      const outcome = await fileImport.run(file);
+      if (outcome.kind === 'colpkgConfirm') {
+        setColpkgConfirm({ path: outcome.path, name: outcome.name });
+      } else if (outcome.kind === 'route') {
+        navigate(`#${outcome.route}`);
       }
     } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : '파일을 가져오지 못했습니다.',
-        'error'
-      );
+      showToast(importErrorMessage(err), 'error');
     }
   };
 
@@ -865,10 +951,11 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
   // Compact, Serene Today Focus Header Card
   const renderSummaryCard = () => {
     const todayTotalGoal = todayStats.answerCount + totalDue;
+    // Nothing due and nothing studied: there is no goal, so no "100%".
     const progressPct =
       todayTotalGoal > 0
         ? Math.min(100, Math.round((todayStats.answerCount / todayTotalGoal) * 100))
-        : 100;
+        : null;
     const allDone = totalDue === 0 && todayStats.answerCount > 0;
     const greeting = getPersonalGreeting(totalDue, todayStats.answerCount);
 
@@ -895,10 +982,16 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
               {todayStats.streakDays > 0 && (
                 <span
                   className="amgi-streak-pill"
-                  title={`${todayStats.streakDays}일 연속 학습`}
+                  title={
+                    todayStats.streakCapped
+                      ? `${todayStats.streakDays}일 이상 연속 학습`
+                      : `${todayStats.streakDays}일 연속 학습`
+                  }
                 >
                   <IconFlame size={11} />
-                  <span>{todayStats.streakDays}일</span>
+                  <span>
+                    {todayStats.streakDays}일{todayStats.streakCapped ? '+' : ''}
+                  </span>
                 </span>
               )}
             </div>
@@ -933,7 +1026,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
           <button
             type="button"
             className="amgi-summary-refresh-btn"
-            onClick={() => void loadDecks(true)}
+            onClick={() => void loadDecks('user')}
             aria-label="카운트 새로고침"
             title="카운트 새로고침"
           >
@@ -970,10 +1063,18 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
             : 'amgi-deck-row--child amgi-deck-row--deep';
     }
 
+    // "완료" only for a deck with cards that was actually studied today; an empty deck or
+    // one with nothing scheduled today gets a muted dash.
+    const doneToday =
+      rowDue === 0 && row.totalIncludingChildren > 0 && Boolean(studiedTodayIds?.has(row.deckId));
     const countsAria =
-      rowDue === 0
-        ? '오늘 학습 완료'
-        : `새 카드 ${row.newCount}장, 학습 중 ${row.learnCount}장, 복습 ${row.reviewCount}장`;
+      rowDue > 0
+        ? `새 카드 ${row.newCount}장, 학습 중 ${row.learnCount}장, 복습 ${row.reviewCount}장`
+        : doneToday
+          ? '오늘 학습 완료'
+          : row.totalIncludingChildren === 0
+            ? '카드 없음'
+            : '오늘 학습할 카드 없음';
 
     return (
       <div
@@ -1046,10 +1147,16 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
         <div className="amgi-deck-row-right">
           <div className="amgi-deck-counts tabular" aria-label={countsAria}>
             {rowDue === 0 ? (
-              <span className="amgi-deck-done-badge">
-                <IconCheck size={11} />
-                <span>완료</span>
-              </span>
+              doneToday ? (
+                <span className="amgi-deck-done-badge">
+                  <IconCheck size={11} />
+                  <span>완료</span>
+                </span>
+              ) : (
+                <span className="amgi-deck-none-dash" aria-hidden="true">
+                  –
+                </span>
+              )
             ) : (
               <>
                 <span
@@ -1127,7 +1234,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
         <ErrorState
           title="덱 목록을 불러오지 못했습니다"
           message={error}
-          onRetry={() => void loadDecks(false)}
+          onRetry={() => void loadDecks('initial')}
         />
       );
     }
@@ -1304,14 +1411,15 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
     <div
       className="amgi-decks-page"
       onTouchStart={(e) => {
-        if (window.scrollY <= 0 && e.touches.length === 1) {
+        // In the split layout the list scrolls inside .amgi-deck-split-left, not the page.
+        if (e.touches.length === 1 && isScrolledToTop(e.target)) {
           touchStartYRef.current = e.touches[0].clientY;
         } else {
           touchStartYRef.current = null;
         }
       }}
       onTouchMove={(e) => {
-        if (touchStartYRef.current === null || window.scrollY > 0) {
+        if (touchStartYRef.current === null || !isScrolledToTop(e.target)) {
           touchStartYRef.current = null;
           if (pullDistance !== 0) setPullDistance(0);
           return;
@@ -1326,7 +1434,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
       }}
       onTouchEnd={() => {
         if (pullDistance >= 64) {
-          void loadDecks(true);
+          void loadDecks('user');
         }
         touchStartYRef.current = null;
         setPullDistance(0);
@@ -1380,6 +1488,8 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
           {renderDeckTreeCard()}
         </>
       )}
+
+      <ImportProgressSheet state={fileImport.progress} />
 
       {/* Deck Row ActionMenu */}
       <ActionMenu
@@ -1590,13 +1700,23 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
           </>
         }
       >
-        <p className="amgi-prose" style={{ margin: 0 }}>
-          &apos;{deleteTarget?.fullName}&apos; 덱과 포함된 카드{' '}
-          <strong className="tabular">
-            {(deleteTarget?.totalIncludingChildren ?? 0).toLocaleString()}장
-          </strong>
-          을 삭제합니다. 되돌리기(Ctrl+Z)로 복구할 수 있습니다.
-        </p>
+        {deleteTarget?.filtered ? (
+          <p className="amgi-prose" style={{ margin: 0 }}>
+            &apos;{deleteTarget.fullName}&apos; 맞춤 학습 덱을 삭제합니다. 이 덱의 카드{' '}
+            <strong className="tabular">
+              {deleteTarget.totalIncludingChildren.toLocaleString()}장
+            </strong>
+            은 삭제되지 않고 원래 덱으로 돌아갑니다.
+          </p>
+        ) : (
+          <p className="amgi-prose" style={{ margin: 0 }}>
+            &apos;{deleteTarget?.fullName}&apos; 덱과 포함된 카드{' '}
+            <strong className="tabular">
+              {(deleteTarget?.totalIncludingChildren ?? 0).toLocaleString()}장
+            </strong>
+            을 삭제합니다. 되돌리기(Ctrl+Z)로 복구할 수 있습니다.
+          </p>
+        )}
       </SheetOrDialog>
 
       {/* Quick Custom Study Modal (from Deck ActionMenu) */}
@@ -1639,7 +1759,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
               className={`amgi-radio-card ${customPreset === 'newLimitDelta' ? 'active' : ''}`}
               onClick={() => {
                 setCustomPreset('newLimitDelta');
-                setCustomValue(10);
+                setCustomValue('10');
               }}
             >
               <span className="amgi-radio-card-title">오늘 새 카드 더 공부하기</span>
@@ -1652,7 +1772,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
               className={`amgi-radio-card ${customPreset === 'reviewLimitDelta' ? 'active' : ''}`}
               onClick={() => {
                 setCustomPreset('reviewLimitDelta');
-                setCustomValue(20);
+                setCustomValue('20');
               }}
             >
               <span className="amgi-radio-card-title">오늘 복습 카드 더 공부하기</span>
@@ -1665,7 +1785,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
               className={`amgi-radio-card ${customPreset === 'forgotDays' ? 'active' : ''}`}
               onClick={() => {
                 setCustomPreset('forgotDays');
-                setCustomValue(1);
+                setCustomValue('1');
               }}
             >
               <span className="amgi-radio-card-title">최근 틀린 카드 다시 보기</span>
@@ -1676,7 +1796,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
               className={`amgi-radio-card ${customPreset === 'reviewAheadDays' ? 'active' : ''}`}
               onClick={() => {
                 setCustomPreset('reviewAheadDays');
-                setCustomValue(1);
+                setCustomValue('1');
               }}
             >
               <span className="amgi-radio-card-title">미리 복습하기</span>
@@ -1687,7 +1807,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
               className={`amgi-radio-card ${customPreset === 'previewDays' ? 'active' : ''}`}
               onClick={() => {
                 setCustomPreset('previewDays');
-                setCustomValue(1);
+                setCustomValue('1');
               }}
             >
               <span className="amgi-radio-card-title">최근 새 카드 미리 보기</span>
@@ -1707,7 +1827,7 @@ export const DeckListView: React.FC<DeckListViewProps> = ({ initialSelectedDeckI
                 max={9999}
                 className="amgi-input tabular"
                 value={customValue}
-                onChange={(e) => setCustomValue(Number(e.target.value) || 1)}
+                onChange={(e) => setCustomValue(e.target.value)}
               />
             </div>
           </div>

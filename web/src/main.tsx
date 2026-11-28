@@ -2,18 +2,15 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles/main.css';
 import App from './App';
+import { AppErrorBoundary, installGlobalErrorHandlers } from './ErrorBoundary';
 
-if ('serviceWorker' in navigator && window.location.protocol === 'https:') {
-  window.addEventListener('load', () => {
-    const swUrl = `${import.meta.env.BASE_URL}sw.js`;
-    navigator.serviceWorker.register(swUrl).catch(() => {
-      // Ignore SW registration failure in dev/unsupported contexts
-    });
-  });
-}
+const rootEl = document.getElementById('root')!;
+installGlobalErrorHandlers(rootEl);
 
-createRoot(document.getElementById('root')!).render(
+createRoot(rootEl).render(
   <StrictMode>
-    <App />
+    <AppErrorBoundary title="앱 화면을 불러오지 못했습니다" reloadOnRetry>
+      <App />
+    </AppErrorBoundary>
   </StrictMode>
 );

@@ -97,16 +97,13 @@ function findDeckInTree(
   return null;
 }
 
-function findCustomStudyDeckId(node: anki.DeckTreeNode): number | null {
-  const name = node.name ?? '';
-  if (node.level > 0 && node.filtered && (name.includes('맞춤') || name.includes('Custom'))) {
-    return anki.toNumber(node.deckId);
-  }
-  for (const child of node.children ?? []) {
-    const found = findCustomStudyDeckId(child as anki.DeckTreeNode);
-    if (found !== null) return found;
-  }
-  return null;
+/** Parses a numeric text field on submit: an integer in [1, max], or null. */
+function parsePositiveInt(raw: string, max = 9999): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const n = Math.floor(Number(trimmed));
+  if (!Number.isFinite(n) || n < 1) return null;
+  return Math.min(max, n);
 }
 
 function sanitizeDeckHtml(rawHtml: string): string {
@@ -173,13 +170,13 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
     tags: Array<{ name: string; include: boolean; exclude: boolean }>;
   } | null>(null);
   const [preset, setPreset] = useState<CustomStudyPreset>('newLimitDelta');
-  const [newDelta, setNewDelta] = useState(10);
-  const [reviewDelta, setReviewDelta] = useState(20);
-  const [forgotDays, setForgotDays] = useState(1);
-  const [aheadDays, setAheadDays] = useState(1);
-  const [previewDays, setPreviewDays] = useState(1);
+  const [newDelta, setNewDelta] = useState('10');
+  const [reviewDelta, setReviewDelta] = useState('20');
+  const [forgotDays, setForgotDays] = useState('1');
+  const [aheadDays, setAheadDays] = useState('1');
+  const [previewDays, setPreviewDays] = useState('1');
   const [cramKind, setCramKind] = useState<number>(0);
-  const [cramLimit, setCramLimit] = useState(100);
+  const [cramLimit, setCramLimit] = useState('100');
   const [includeTags, setIncludeTags] = useState<string[]>([]);
   const [excludeTags, setExcludeTags] = useState<string[]>([]);
 
@@ -187,7 +184,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
   const [filterEditOpen, setFilterEditOpen] = useState(false);
   const [filterName, setFilterName] = useState('');
   const [filterSearch, setFilterSearch] = useState('');
-  const [filterLimit, setFilterLimit] = useState(100);
+  const [filterLimit, setFilterLimit] = useState('100');
   const [filterOrder, setFilterOrder] = useState<number>(
     anki.FilteredSearchOrder.OLDEST_REVIEWED_FIRST
   );
@@ -212,11 +209,20 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
   } | null>(null);
 
   const [refreshTick, setRefreshTick] = useState(0);
+  const shownDeckIdRef = React.useRef<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    if (shownDeckIdRef.current !== deckId) {
+      // Another deck: never show the previous deck's numbers under the new title.
+      shownDeckIdRef.current = deckId;
+      setDeckInfo(null);
+      setDeckObj(null);
+      setMaturity(null);
+      setCongrats(null);
+    }
 
     Promise.all([anki.deckTree(), anki.getDeck(deckId)])
       .then(async ([tree, deck]) => {
@@ -226,6 +232,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
         setDeckObj(deck);
 
         const searchName = found?.fullName || deck?.name || '';
+        if (!searchName) setMaturity(null);
         if (searchName) {
           anki
             .graphs(`deck:"${searchName}"`, 1)
@@ -387,8 +394,8 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
           exclude: Boolean(t.exclude),
         })),
       });
-      setNewDelta(Math.max(1, defaults.extendNew || 10));
-      setReviewDelta(Math.max(1, defaults.extendReview || 20));
+      setNewDelta(String(Math.max(1, defaults.extendNew || 10)));
+      setReviewDelta(String(Math.max(1, defaults.extendReview || 20)));
       setIncludeTags(
         (defaults.tags ?? []).filter((t) => t.include && t.name).map((t) => t.name!)
       );
@@ -406,31 +413,48 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
   };
 
   const submitCustomStudy = async () => {
+    const rawValue =
+      preset === 'newLimitDelta'
+        ? newDelta
+        : preset === 'reviewLimitDelta'
+          ? reviewDelta
+          : preset === 'forgotDays'
+            ? forgotDays
+            : preset === 'reviewAheadDays'
+              ? aheadDays
+              : preset === 'previewDays'
+                ? previewDays
+                : cramLimit;
+    const val = parsePositiveInt(rawValue);
+    if (val === null) {
+      showToast('1 이상의 숫자를 입력해 주세요.', 'error');
+      return;
+    }
     setBusyAction('custom');
     try {
       let req: Parameters<typeof anki.customStudy>[0];
       switch (preset) {
         case 'newLimitDelta':
-          req = { deckId, newLimitDelta: Math.max(1, newDelta) };
+          req = { deckId, newLimitDelta: val };
           break;
         case 'reviewLimitDelta':
-          req = { deckId, reviewLimitDelta: Math.max(1, reviewDelta) };
+          req = { deckId, reviewLimitDelta: val };
           break;
         case 'forgotDays':
-          req = { deckId, forgotDays: Math.max(1, forgotDays) };
+          req = { deckId, forgotDays: val };
           break;
         case 'reviewAheadDays':
-          req = { deckId, reviewAheadDays: Math.max(1, aheadDays) };
+          req = { deckId, reviewAheadDays: val };
           break;
         case 'previewDays':
-          req = { deckId, previewDays: Math.max(1, previewDays) };
+          req = { deckId, previewDays: val };
           break;
         case 'cram':
           req = {
             deckId,
             cram: {
               kind: cramKind,
-              cardLimit: Math.max(1, cramLimit),
+              cardLimit: val,
               tagsToInclude: includeTags,
               tagsToExclude: excludeTags,
             },
@@ -447,10 +471,10 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
         showToast('오늘 학습 한도를 늘렸습니다.', 'success');
         navigate(`#/study/${deckId}`);
       } else {
-        const tree = await anki.deckTree();
-        const filteredId = findCustomStudyDeckId(tree);
+        // The backend selects the session deck it just built as the current deck.
+        const filteredId = await anki.customStudySessionDeckId();
         showToast('맞춤 학습 세션을 준비했습니다.', 'success');
-        if (filteredId) {
+        if (filteredId && filteredId !== deckId) {
           await anki.setCurrentDeck(filteredId);
           navigate(`#/study/${filteredId}`);
         } else {
@@ -473,7 +497,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
       const firstTerm = f.config?.searchTerms?.[0];
       setFilterName(f.name ?? deckInfo?.fullName ?? '맞춤 학습 덱');
       setFilterSearch(firstTerm?.search ?? '');
-      setFilterLimit(firstTerm?.limit ?? 100);
+      setFilterLimit(String(firstTerm?.limit ?? 100));
       setFilterOrder(
         firstTerm?.order ?? anki.FilteredSearchOrder.OLDEST_REVIEWED_FIRST
       );
@@ -493,6 +517,11 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
       showToast('덱 이름을 입력해 주세요.', 'error');
       return;
     }
+    const limit = parsePositiveInt(filterLimit);
+    if (limit === null) {
+      showToast('최대 카드 수는 1 이상의 숫자로 입력해 주세요.', 'error');
+      return;
+    }
     setBusyAction('filterSave');
     try {
       const existing = await anki.getOrCreateFilteredDeck(deckId);
@@ -506,7 +535,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
           searchTerms: [
             {
               search: filterSearch.trim(),
-              limit: Math.max(1, filterLimit),
+              limit,
               order: filterOrder,
             },
           ],
@@ -1003,7 +1032,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
                   max={9999}
                   className="amgi-input tabular"
                   value={newDelta}
-                  onChange={(e) => setNewDelta(Number(e.target.value) || 1)}
+                  onChange={(e) => setNewDelta(e.target.value)}
                 />
               </div>
             )}
@@ -1030,7 +1059,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
                   max={9999}
                   className="amgi-input tabular"
                   value={reviewDelta}
-                  onChange={(e) => setReviewDelta(Number(e.target.value) || 1)}
+                  onChange={(e) => setReviewDelta(e.target.value)}
                 />
               </div>
             )}
@@ -1057,7 +1086,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
                   max={365}
                   className="amgi-input tabular"
                   value={forgotDays}
-                  onChange={(e) => setForgotDays(Number(e.target.value) || 1)}
+                  onChange={(e) => setForgotDays(e.target.value)}
                 />
               </div>
             )}
@@ -1084,7 +1113,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
                   max={365}
                   className="amgi-input tabular"
                   value={aheadDays}
-                  onChange={(e) => setAheadDays(Number(e.target.value) || 1)}
+                  onChange={(e) => setAheadDays(e.target.value)}
                 />
               </div>
             )}
@@ -1111,7 +1140,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
                   max={365}
                   className="amgi-input tabular"
                   value={previewDays}
-                  onChange={(e) => setPreviewDays(Number(e.target.value) || 1)}
+                  onChange={(e) => setPreviewDays(e.target.value)}
                 />
               </div>
             )}
@@ -1155,7 +1184,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
                     max={9999}
                     className="amgi-input tabular"
                     value={cramLimit}
-                    onChange={(e) => setCramLimit(Number(e.target.value) || 100)}
+                    onChange={(e) => setCramLimit(e.target.value)}
                   />
                 </div>
                 {customDefaultsData && customDefaultsData.tags.length > 0 && (
@@ -1253,7 +1282,7 @@ export const DeckOverviewPane: React.FC<DeckOverviewPaneProps> = ({
               max={9999}
               className="amgi-input tabular"
               value={filterLimit}
-              onChange={(e) => setFilterLimit(Number(e.target.value) || 100)}
+              onChange={(e) => setFilterLimit(e.target.value)}
             />
           </div>
           <div className="amgi-field-group">

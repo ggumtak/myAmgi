@@ -36,87 +36,152 @@ export const FLAG_OPTIONS: Array<{
   { searchFlag: anki.SearchFlag.FLAG_PURPLE, cardFlag: 7, label: '7 보라', cssVar: 'var(--flag-7)' },
 ];
 
-function stripOuterQuotes(raw: string): string {
-  if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
-    return raw.slice(1, -1).replace(/\\"/g, '"');
-  }
-  return raw;
-}
-
-export function parseQueryToFilters(query: string): BrowserFilterState {
+/** Splits a search string into top-level tokens, keeping quotes and escapes verbatim. */
+export function tokenizeQuery(query: string): { tokens: string[]; hasGrouping: boolean } {
   const tokens: string[] = [];
   let cur = '';
   let inQuotes = false;
+  let depth = 0;
+  let hasGrouping = false;
   for (let i = 0; i < query.length; i++) {
     const ch = query[i];
-    if (ch === '"' && query[i - 1] !== '\\') {
+    if (ch === '\\' && i + 1 < query.length) {
+      cur += ch + query[i + 1];
+      i++;
+      continue;
+    }
+    if (ch === '"') {
       inQuotes = !inQuotes;
       cur += ch;
-    } else if (!inQuotes && /\s/.test(ch)) {
-      if (cur) {
-        tokens.push(cur);
-        cur = '';
-      }
-    } else {
-      cur += ch;
+      continue;
     }
+    if (!inQuotes && (ch === '(' || ch === ')')) {
+      hasGrouping = true;
+      depth += ch === '(' ? 1 : -1;
+      cur += ch;
+      continue;
+    }
+    if (!inQuotes && depth <= 0 && /\s/.test(ch)) {
+      if (cur) tokens.push(cur);
+      cur = '';
+      continue;
+    }
+    cur += ch;
   }
   if (cur) tokens.push(cur);
+  if (tokens.some((t) => t.toLowerCase() === 'or')) hasGrouping = true;
+  return { tokens, hasGrouping };
+}
 
-  let deck: string | undefined;
-  const states: number[] = [];
-  let flag: number | undefined;
-  const tags: string[] = [];
-  let addedToday = false;
+/**
+ * Unescapes a search value (`JLPT\_N5` -> `JLPT_N5`). Returns null when the value
+ * contains an unescaped wildcard (`*`, `_`), i.e. it is a pattern rather than one exact name.
+ */
+export function unescapeExactValue(raw: string): string | null {
+  let out = '';
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (ch === '\\') {
+      if (i + 1 >= raw.length) return null;
+      out += raw[i + 1];
+      i++;
+    } else if (ch === '*' || ch === '_') {
+      return null;
+    } else if (ch === '"') {
+      return null;
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+/** `deck:x`, `deck:"x y"` or `"deck:x y"` -> exact value after `prefix`, or null. */
+function exactValueFor(tok: string, prefix: string): string | null {
+  let body = tok;
+  if (body.length >= 2 && body.startsWith('"') && body.endsWith('"')) {
+    body = body.slice(1, -1);
+  }
+  if (!body.toLowerCase().startsWith(prefix)) return null;
+  let val = body.slice(prefix.length);
+  if (val.length >= 2 && val.startsWith('"') && val.endsWith('"')) {
+    val = val.slice(1, -1);
+  }
+  if (!val) return null;
+  return unescapeExactValue(val);
+}
+
+const EMPTY_FILTERS: BrowserFilterState = {
+  states: [],
+  tags: [],
+  addedToday: false,
+  freeText: '',
+};
+
+/**
+ * Splits an incoming search (URL, sidebar) into chip state and free text. Only exact,
+ * unambiguous forms become chips; everything else stays verbatim in `freeText`, so
+ * `compose(parse(q))` always searches for the same thing as `q`:
+ * - queries with `OR` or parentheses are left entirely as free text;
+ * - a chip is extracted only when its kind appears exactly once (two `tag:` terms are an
+ *   AND, which the multi-select chips — an OR — cannot represent);
+ * - wildcard values and negated terms stay free text.
+ */
+export function parseQueryToFilters(query: string): BrowserFilterState {
+  const trimmed = query.trim();
+  if (!trimmed) return { ...EMPTY_FILTERS, states: [], tags: [] };
+  const { tokens, hasGrouping } = tokenizeQuery(trimmed);
+  if (hasGrouping) return { ...EMPTY_FILTERS, states: [], tags: [], freeText: trimmed };
+
+  const lowerOf = (t: string) => t.toLowerCase().replace(/^"/, '');
+  const countKind = (prefix: string) => tokens.filter((t) => lowerOf(t).startsWith(prefix)).length;
+
+  const result: BrowserFilterState = { states: [], tags: [], addedToday: false, freeText: '' };
   const leftover: string[] = [];
+  const singleDeck = countKind('deck:') === 1;
+  const singleTag = countKind('tag:') === 1;
+  const singleState = countKind('is:') === 1;
+  const singleFlag = countKind('flag:') === 1;
 
   for (const tok of tokens) {
     const lower = tok.toLowerCase();
-    if (lower.startsWith('deck:')) {
-      const val = stripOuterQuotes(tok.slice(5));
-      if (val && val !== '*') deck = val;
-    } else if (lower.startsWith('is:')) {
-      const st = STATE_OPTIONS.find((s) => s.token === lower);
+    if (singleDeck && lowerOf(tok).startsWith('deck:')) {
+      const val = exactValueFor(tok, 'deck:');
+      if (val) {
+        result.deck = val;
+        continue;
+      }
+    } else if (singleTag && lowerOf(tok).startsWith('tag:')) {
+      const val = exactValueFor(tok, 'tag:');
+      if (val && val.toLowerCase() !== 'none') {
+        result.tags = [val];
+        continue;
+      }
+    } else if (singleState && lower.startsWith('is:')) {
+      const st = STATE_OPTIONS.find((o) => o.token === lower);
       if (st) {
-        if (!states.includes(st.value)) states.push(st.value);
-      } else {
-        leftover.push(tok);
+        result.states = [st.value];
+        continue;
       }
-    } else if (lower.startsWith('flag:')) {
+    } else if (singleFlag && lower.startsWith('flag:')) {
       const num = Number(lower.slice(5));
-      if (Number.isInteger(num) && num >= 1 && num <= 7) {
-        const found = FLAG_OPTIONS.find((f) => f.cardFlag === num);
-        if (found) flag = found.searchFlag;
-      } else if (lower === 'flag:any') {
-        flag = anki.SearchFlag.FLAG_ANY;
-      } else {
-        leftover.push(tok);
+      const found = FLAG_OPTIONS.find((f) => f.cardFlag === num && num >= 1);
+      if (found) {
+        result.flag = found.searchFlag;
+        continue;
       }
-    } else if (lower.startsWith('tag:')) {
-      const val = stripOuterQuotes(tok.slice(4));
-      if (val && val !== 'none') {
-        if (!tags.includes(val)) tags.push(val);
-      } else {
-        leftover.push(tok);
-      }
-    } else if (lower === 'added:1') {
-      addedToday = true;
-    } else {
-      leftover.push(tok);
+    } else if (lower === 'added:1' && !result.addedToday) {
+      result.addedToday = true;
+      continue;
     }
+    leftover.push(tok);
   }
-
-  return {
-    deck,
-    states,
-    flag,
-    tags,
-    addedToday,
-    freeText: leftover.join(' '),
-  };
+  result.freeText = leftover.join(' ');
+  return result;
 }
 
-export async function composeQueryFromFilters(filters: BrowserFilterState): Promise<string> {
+/** The structured (chip) part of the filters as one SearchNode, or null when no chip is set. */
+export function buildFilterNode(filters: BrowserFilterState): anki.SearchNode | null {
   const nodes: anki.SearchNode[] = [];
 
   if (filters.deck) {
@@ -149,20 +214,29 @@ export async function composeQueryFromFilters(filters: BrowserFilterState): Prom
     nodes.push({ addedInDays: 1 });
   }
 
-  let structured = '';
-  if (nodes.length === 1) {
-    structured = await anki.buildSearchString(nodes[0]);
-  } else if (nodes.length > 1) {
-    structured = await anki.buildSearchString({
-      group: {
-        joiner: anki.SearchNodeJoiner.AND,
-        nodes,
-      },
-    });
-  }
+  if (nodes.length === 0) return null;
+  if (nodes.length === 1) return nodes[0];
+  return { group: { joiner: anki.SearchNodeJoiner.AND, nodes } };
+}
 
-  const parts = [structured.trim(), filters.freeText.trim()].filter(Boolean);
-  return parts.join(' ');
+/**
+ * ANDs the structured part with the user's free text. Free text with a top-level OR is
+ * parenthesised, because implicit AND binds tighter than OR in Anki searches.
+ */
+export function joinStructuredAndFree(structured: string, freeText: string): string {
+  const s = structured.trim();
+  const f = freeText.trim();
+  if (!s) return f;
+  if (!f) return s;
+  const { tokens } = tokenizeQuery(f);
+  const needsParens = tokens.some((t) => t.toLowerCase() === 'or');
+  return `${s} ${needsParens ? `(${f})` : f}`;
+}
+
+export async function composeQueryFromFilters(filters: BrowserFilterState): Promise<string> {
+  const node = buildFilterNode(filters);
+  const structured = node ? await anki.buildSearchString(node) : '';
+  return joinStructuredAndFree(structured, filters.freeText);
 }
 
 export interface FilterBarAndSheetProps {

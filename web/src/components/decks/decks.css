@@ -405,8 +405,14 @@
   color: #000000;
 }
 
-/* Pull-to-refresh indicator */
+/* Pull-to-refresh indicator: an overlay, so it never shifts the list under the finger */
 .amgi-ptr-banner {
+  position: fixed;
+  top: calc(var(--topbar-h) + var(--safe-top) + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  pointer-events: none;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1132,6 +1138,20 @@
   color: var(--text-3);
   font-weight: 500;
   opacity: 0.42;
+}
+
+/* Nothing to study today (empty deck, or nothing scheduled) */
+.amgi-deck-none-dash {
+  grid-column: 1 / -1;
+  justify-self: end;
+  padding: 2px 8px;
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+:root[data-theme="eink"] .amgi-deck-none-dash {
+  color: #000000;
 }
 
 .amgi-deck-done-badge {
@@ -1925,4 +1945,62 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+/* Import progress sheet */
+.amgi-import-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.amgi-import-progress-bar {
+  position: relative;
+  display: block;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.amgi-import-progress-bar-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 35%;
+  border-radius: inherit;
+  background: var(--primary);
+  animation: amgi-import-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes amgi-import-indeterminate {
+  from {
+    left: -35%;
+  }
+  to {
+    left: 100%;
+  }
+}
+
+/* E-ink: no animation; a static full bar */
+:root[data-theme="eink"] .amgi-import-progress-bar {
+  border: 1.5px solid #000000;
+  background: #FFFFFF;
+  height: 8px;
+}
+
+:root[data-theme="eink"] .amgi-import-progress-bar-fill {
+  animation: none;
+  left: 0;
+  width: 100%;
+  background: repeating-linear-gradient(90deg, #000000 0 6px, #FFFFFF 6px 12px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .amgi-import-progress-bar-fill {
+    animation: none;
+    left: 0;
+    width: 100%;
+    opacity: 0.5;
+  }
 }

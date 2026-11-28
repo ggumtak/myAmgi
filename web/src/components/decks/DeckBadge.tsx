@@ -225,14 +225,15 @@ export const DeckCategoryIcon: React.FC<{ deckName: string; size?: number }> = (
 };
 
 export const DailyProgressRing: React.FC<{
-  pct: number;
+  /** null = no goal today (nothing due, nothing studied): shows a dash, not 100%. */
+  pct: number | null;
   done: boolean;
   size?: number;
 }> = ({ pct, done, size = 48 }) => {
   const stroke = size <= 48 ? 4 : 5;
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
-  const clamped = Math.max(0, Math.min(100, pct));
+  const clamped = pct === null ? 0 : Math.max(0, Math.min(100, pct));
   const offset = circumference - (clamped / 100) * circumference;
 
   return (
@@ -264,7 +265,7 @@ export const DailyProgressRing: React.FC<{
         />
       </svg>
       <span className="amgi-ring-label tabular">
-        {done ? '완료' : `${clamped}%`}
+        {done ? '완료' : pct === null ? '–' : `${clamped}%`}
       </span>
     </div>
   );

@@ -14,6 +14,7 @@ import {
   IconStats,
 } from '../../ui';
 import { AnkiIframeView } from '../shared/AnkiIframeView';
+import { ankiToday } from './statsDates';
 import './stats.css';
 
 type ReviewsEntry = AnkiTypes.stats.GraphsResponse.ReviewCountsAndTimes.Reviews.$Properties;
@@ -110,7 +111,7 @@ export const StatsView: React.FC = () => {
 
   const heatScrollRef = useRef<HTMLDivElement | null>(null);
 
-  const searchQuery = selectedDeck ? `deck:"${selectedDeck}"` : '';
+  const searchQuery = selectedDeck ? anki.buildSearchTerm('deck', selectedDeck) : '';
 
   const loadStats = useCallback(async () => {
     setLoading(true);
@@ -160,7 +161,7 @@ export const StatsView: React.FC = () => {
   // Build 365-day calendar heatmap + streaks
   const heatmapInfo = useMemo(() => {
     const countMap = graphsData?.reviews?.count ?? {};
-    const today = new Date();
+    const today = ankiToday(new Date(), graphsData?.rolloverHour ?? 0);
     const dayCounts = new Map<number, number>();
     let totalYearReviews = 0;
     let activeDays = 0;
@@ -254,7 +255,7 @@ export const StatsView: React.FC = () => {
   // Past 30-day Review Trend (offsets -29..0 stacked: learning / young / mature)
   const past30Reviews = useMemo(() => {
     const countMap = graphsData?.reviews?.count ?? {};
-    const today = new Date();
+    const today = ankiToday(new Date(), graphsData?.rolloverHour ?? 0);
     const days = Array.from({ length: 30 }, (_, i) => {
       const offset = i - 29;
       const entry = countMap[String(offset)];
@@ -347,7 +348,7 @@ export const StatsView: React.FC = () => {
     const days = Array.from({ length: 30 }, (_, day) => ({
       day,
       count: dueMap[String(day)] ?? 0,
-      date: addDaysToDate(new Date(), day),
+      date: addDaysToDate(ankiToday(new Date(), graphsData?.rolloverHour ?? 0), day),
     }));
     const tomorrowCount = days[1]?.count ?? 0;
     const sum30Days = days.reduce((acc, d) => acc + d.count, 0);

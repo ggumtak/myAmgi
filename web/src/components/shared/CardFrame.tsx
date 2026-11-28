@@ -37,6 +37,19 @@ export interface CardFrameProps {
   onTypeAnsSubmit?: (value: string) => void;
   onHanjaLookup?: (text: string, sentence?: string) => void;
   onBridgeCommand?: (cmd: string) => void;
+  /** A keydown inside the card outside its inputs (the frame forwards it). */
+  onKey?: (ev: CardFrameKeyEvent) => void;
+  /** An input / textarea / contenteditable inside the card gained or lost focus. */
+  onInputFocusChange?: (focused: boolean) => void;
+}
+
+export interface CardFrameKeyEvent {
+  key: string;
+  code: string;
+  shift: boolean;
+  ctrl: boolean;
+  meta: boolean;
+  alt: boolean;
 }
 
 export interface CardFrameHandle {
@@ -74,6 +87,8 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
       onTypeAnsSubmit,
       onHanjaLookup,
       onBridgeCommand,
+      onKey,
+      onInputFocusChange,
     },
     ref
   ) {
@@ -91,6 +106,8 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
       onTypeAnsSubmit,
       onHanjaLookup,
       onBridgeCommand,
+      onKey,
+      onInputFocusChange,
     });
     callbacksRef.current = {
       onFrameReady,
@@ -100,6 +117,8 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
       onTypeAnsSubmit,
       onHanjaLookup,
       onBridgeCommand,
+      onKey,
+      onInputFocusChange,
     };
 
     const defaultsRef = useRef({
@@ -124,7 +143,7 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
       if (queued.length === 0) return;
       queueRef.current = [];
       for (const msg of queued) {
-        win.postMessage(msg, '*');
+        win.postMessage(msg, window.location.origin);
       }
     }, []);
 
@@ -133,7 +152,7 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
         const win = iframeRef.current?.contentWindow;
         if (win && (loadedRef.current || readyRef.current)) {
           flushQueue();
-          win.postMessage(msg, '*');
+          win.postMessage(msg, window.location.origin);
         } else {
           queueRef.current.push(msg);
         }
@@ -146,6 +165,8 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
       const onMessage = (event: MessageEvent) => {
         const win = iframeRef.current?.contentWindow;
         if (!win || event.source !== win) return;
+        // The frame is served by the same host (/media/__amgi_frame.html).
+        if (event.origin !== window.location.origin) return;
         const data = event.data as Record<string, unknown> | null;
         if (!data || typeof data !== 'object') return;
 
@@ -196,6 +217,21 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
               callbacksRef.current.onBridgeCommand?.(data.cmd);
             }
             break;
+          case 'key':
+            if (typeof data.key === 'string' && data.key.length > 0) {
+              callbacksRef.current.onKey?.({
+                key: data.key,
+                code: typeof data.code === 'string' ? data.code : '',
+                shift: data.shift === true,
+                ctrl: data.ctrl === true,
+                meta: data.meta === true,
+                alt: data.alt === true,
+              });
+            }
+            break;
+          case 'inputFocus':
+            callbacksRef.current.onInputFocusChange?.(data.focused === true);
+            break;
           default:
             break;
         }
@@ -204,6 +240,8 @@ export const CardFrame = forwardRef<CardFrameHandle, CardFrameProps>(
       window.addEventListener('message', onMessage);
       return () => {
         window.removeEventListener('message', onMessage);
+        // The frame is going away with whatever had focus inside it.
+        callbacksRef.current.onInputFocusChange?.(false);
         const pending = typedAnswerResolversRef.current.splice(0);
         for (const resolve of pending) {
           resolve('');

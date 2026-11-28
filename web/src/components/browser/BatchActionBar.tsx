@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as anki from '../../anki';
 import { useApp } from '../../context/AppContext';
+import { ChangeNotetypeDialog } from '../notetypes/ChangeNotetypeDialog';
 import {
   ActionMenu,
-  IconCheck,
   IconClose,
   IconFlag,
   IconFolder,
@@ -48,26 +48,6 @@ const FLAG_LIST = [
   { flag: 7, label: '7 보라' },
 ];
 
-async function runPooled<T, R>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let cursor = 0;
-  const worker = async () => {
-    while (true) {
-      const idx = cursor++;
-      if (idx >= items.length) break;
-      results[idx] = await fn(items[idx]);
-    }
-  };
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, items.length) }, () => worker())
-  );
-  return results;
-}
-
 export function BatchActionBar({
   selectedIds,
   isNotesMode,
@@ -111,12 +91,7 @@ export function BatchActionBar({
   const [frRegex, setFrRegex] = useState(false);
 
   // Change notetype
-  const [ntList, setNtList] = useState<anki.NotetypeNameIdUseCount[]>([]);
   const [oldNtId, setOldNtId] = useState<number>(0);
-  const [newNtId, setNewNtId] = useState<number>(0);
-  const [changeNtInfo, setChangeNtInfo] = useState<anki.ChangeNotetypeInfo | null>(null);
-  const [fieldMap, setFieldMap] = useState<number[]>([]);
-  const [templateMap, setTemplateMap] = useState<number[]>([]);
   const [resolvedNtNoteIds, setResolvedNtNoteIds] = useState<number[]>([]);
 
   // Delete counts
@@ -128,25 +103,48 @@ export function BatchActionBar({
   const selectedArray = useMemo(() => Array.from(selectedIds), [selectedIds]);
   const count = selectedArray.length;
 
-  const resolveCardIds = async (): Promise<number[]> => {
-    if (!isNotesMode) return selectedArray;
-    const perNote = await runPooled(selectedArray, 6, (nid) => anki.cardsOfNote(nid));
-    const set = new Set<number>();
-    for (const cids of perNote) {
-      for (const cid of cids) set.add(cid);
+  // Card<->note resolution is one search per 1000 ids, cached per selection (a dialog's
+  // count and its action reuse the same result).
+  const resolvedRef = useRef<{
+    key: Set<number> | null;
+    mode: boolean;
+    notes?: Promise<number[]>;
+    cards?: Promise<number[]>;
+  }>({ key: null, mode: false });
+  const resolvedFor = () => {
+    const r = resolvedRef.current;
+    if (r.key !== selectedIds || r.mode !== isNotesMode) {
+      resolvedRef.current = { key: selectedIds, mode: isNotesMode };
     }
-    return Array.from(set);
+    return resolvedRef.current;
+  };
+  const dropResolved = () => {
+    resolvedRef.current = { key: null, mode: false };
   };
 
-  const resolveNoteIds = async (): Promise<number[]> => {
-    if (isNotesMode) return selectedArray;
-    const cards = await runPooled(selectedArray, 6, (cid) => anki.getCard(cid));
-    const set = new Set<number>();
-    for (const c of cards) {
-      const nid = anki.toNumber(c.noteId);
-      if (nid) set.add(nid);
-    }
-    return Array.from(set);
+  const resolveCardIds = (): Promise<number[]> => {
+    if (!isNotesMode) return Promise.resolve(selectedArray);
+    const r = resolvedFor();
+    r.cards ??= anki.cardIdsOfNotes(selectedArray);
+    r.cards.catch(dropResolved);
+    return r.cards;
+  };
+
+  const resolveNoteIds = (): Promise<number[]> => {
+    if (isNotesMode) return Promise.resolve(selectedArray);
+    const r = resolvedFor();
+    r.notes ??= anki.noteIdsOfCards(selectedArray);
+    r.notes.catch(dropResolved);
+    return r.notes;
+  };
+
+  /** Every card of the selected notes (what deleting the notes removes). */
+  const resolveAllCardsOfNotes = async (): Promise<number[]> => {
+    if (isNotesMode) return resolveCardIds();
+    const r = resolvedFor();
+    r.cards ??= resolveNoteIds().then((nids) => anki.cardIdsOfNotes(nids));
+    r.cards.catch(dropResolved);
+    return r.cards;
   };
 
   useEffect(() => {
@@ -181,29 +179,18 @@ export function BatchActionBar({
         .then(setFrFields)
         .catch(() => setFrFields([]));
     } else if (modal === 'delete') {
-      if (isNotesMode) {
-        runPooled(selectedArray, 6, (nid) => anki.cardsOfNote(nid))
-          .then((lists) => {
-            const totalCards = lists.reduce((acc, c) => acc + c.length, 0);
-            setDeleteCounts({ notes: selectedArray.length, cards: totalCards });
-          })
-          .catch(() =>
-            setDeleteCounts({ notes: selectedArray.length, cards: selectedArray.length })
-          );
-      } else {
-        resolveNoteIds()
-          .then((nids) =>
-            setDeleteCounts({ notes: nids.length, cards: selectedArray.length })
-          )
-          .catch(() =>
-            setDeleteCounts({ notes: selectedArray.length, cards: selectedArray.length })
-          );
-      }
+      setDeleteCounts({ notes: 0, cards: 0 });
+      Promise.all([resolveNoteIds(), resolveAllCardsOfNotes()])
+        .then(([nids, cids]) => setDeleteCounts({ notes: nids.length, cards: cids.length }))
+        .catch(() =>
+          setDeleteCounts({ notes: selectedArray.length, cards: selectedArray.length })
+        );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modal]);
 
   const finishSuccess = (message: string) => {
+    dropResolved();
     setModal(null);
     bumpCollection();
     onMutated();
@@ -376,64 +363,14 @@ export function BatchActionBar({
         );
         return;
       }
-      const list = await anki.getNotetypeNamesAndCounts();
-      const candidates = list.filter((item) => anki.toNumber(item.id) !== singleNt);
-      const targetId =
-        candidates.length > 0 ? anki.toNumber(candidates[0].id) : singleNt;
-      const info = await anki.getChangeNotetypeInfo(singleNt, targetId);
       setResolvedNtNoteIds(nids);
-      setNtList(list);
       setOldNtId(singleNt);
-      setNewNtId(targetId);
-      setChangeNtInfo(info);
-      setFieldMap(info.input?.newFields ?? []);
-      setTemplateMap(info.input?.newTemplates ?? []);
       setModal('changeNotetype');
     } catch (err) {
       showToast(
         err instanceof Error
           ? err.message
           : '노트 유형 변경은 같은 노트 유형을 선택한 경우에만 사용할 수 있습니다.',
-        'error'
-      );
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleSelectTargetNotetype = async (targetId: number) => {
-    setNewNtId(targetId);
-    try {
-      const info = await anki.getChangeNotetypeInfo(oldNtId, targetId);
-      setChangeNtInfo(info);
-      setFieldMap(info.input?.newFields ?? []);
-      setTemplateMap(info.input?.newTemplates ?? []);
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : '유형 매핑 정보를 불러오지 못했습니다.',
-        'error'
-      );
-    }
-  };
-
-  const handleConfirmChangeNotetype = async () => {
-    if (!changeNtInfo?.input || busy) return;
-    setBusy(true);
-    try {
-      await anki.changeNotetype({
-        noteIds: resolvedNtNoteIds,
-        newFields: fieldMap,
-        newTemplates: templateMap,
-        oldNotetypeId: oldNtId,
-        newNotetypeId: newNtId,
-        currentSchema: changeNtInfo.input.currentSchema,
-        oldNotetypeName: changeNtInfo.oldNotetypeName,
-        isCloze: changeNtInfo.input.isCloze,
-      });
-      finishSuccess(`노트 ${resolvedNtNoteIds.length}개의 노트 유형을 변경했습니다.`);
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : '노트 유형 변경에 실패했습니다.',
         'error'
       );
     } finally {
@@ -1009,107 +946,18 @@ export function BatchActionBar({
       </SheetOrDialog>
 
       {/* Change Notetype */}
-      <SheetOrDialog
+      <ChangeNotetypeDialog
         open={modal === 'changeNotetype'}
         onClose={() => setModal(null)}
-        title="노트 유형 변경"
-        subtitle={`${resolvedNtNoteIds.length}개 노트 변경 (${changeNtInfo?.oldNotetypeName ?? ''})`}
-        footer={
-          <>
-            <button
-              type="button"
-              className="amgi-btn amgi-btn-secondary"
-              onClick={() => setModal(null)}
-            >
-              취소
-            </button>
-            <button
-              type="button"
-              disabled={busy || !changeNtInfo}
-              className="amgi-btn amgi-btn-primary"
-              onClick={() => void handleConfirmChangeNotetype()}
-            >
-              변경 적용
-            </button>
-          </>
-        }
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <label className="form-field">
-            <span>새 노트 유형</span>
-            <select
-              className="amgi-select"
-              value={newNtId}
-              onChange={(e) => void handleSelectTargetNotetype(Number(e.target.value))}
-            >
-              {ntList.map((nt) => {
-                const id = anki.toNumber(nt.id);
-                return (
-                  <option key={id} value={id}>
-                    {nt.name}
-                  </option>
-                );
-              })}
-            </select>
-          </label>
-
-          {changeNtInfo && (
-            <>
-              <div style={{ fontSize: 13, fontWeight: 700 }}>필드 연결</div>
-              {changeNtInfo.oldFieldNames.map((oldName, idx) => (
-                <label key={`${oldName}-${idx}`} className="form-field">
-                  <span>{oldName} →</span>
-                  <select
-                    className="amgi-select"
-                    value={fieldMap[idx] ?? -1}
-                    onChange={(e) => {
-                      const next = [...fieldMap];
-                      next[idx] = Number(e.target.value);
-                      setFieldMap(next);
-                    }}
-                  >
-                    <option value={-1}>(버리기)</option>
-                    {changeNtInfo.newFieldNames.map((newName, nIdx) => (
-                      <option key={nIdx} value={nIdx}>
-                        {newName}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ))}
-
-              {changeNtInfo.oldTemplateNames.length > 0 && (
-                <>
-                  <div style={{ fontSize: 13, fontWeight: 700, marginTop: 4 }}>
-                    카드 기록 연결
-                  </div>
-                  {changeNtInfo.oldTemplateNames.map((oldT, idx) => (
-                    <label key={`${oldT}-${idx}`} className="form-field">
-                      <span>{oldT} →</span>
-                      <select
-                        className="amgi-select"
-                        value={templateMap[idx] ?? -1}
-                        onChange={(e) => {
-                          const next = [...templateMap];
-                          next[idx] = Number(e.target.value);
-                          setTemplateMap(next);
-                        }}
-                      >
-                        <option value={-1}>(카드 삭제)</option>
-                        {changeNtInfo.newTemplateNames.map((newT, nIdx) => (
-                          <option key={nIdx} value={nIdx}>
-                            {newT}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ))}
-                </>
-              )}
-            </>
-          )}
-        </div>
-      </SheetOrDialog>
+        noteIds={resolvedNtNoteIds}
+        oldNotetypeId={oldNtId}
+        onChanged={() => {
+          dropResolved();
+          setModal(null);
+          bumpCollection();
+          onMutated();
+        }}
+      />
 
       {/* Delete Confirm */}
       <SheetOrDialog
@@ -1137,8 +985,9 @@ export function BatchActionBar({
         }
       >
         <p className="amgi-prose" style={{ margin: 0 }}>
-          선택한 카드 <strong className="tabular">{deleteCounts.cards}장</strong>
-          (노트 <strong className="tabular">{deleteCounts.notes}개</strong>)를 삭제합니다.
+          노트 <strong className="tabular">{deleteCounts.notes.toLocaleString()}개</strong>와
+          그 노트의 카드 <strong className="tabular">{deleteCounts.cards.toLocaleString()}장</strong>
+          (선택하지 않은 형제 카드 포함)을 삭제합니다.
           삭제 후 되돌리기(Ctrl+Z)로 복구할 수 있습니다.
         </p>
       </SheetOrDialog>
@@ -1246,4 +1095,3 @@ export function BatchActionBar({
   );
 }
 
-export { IconCheck };

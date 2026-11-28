@@ -1,6 +1,5 @@
-import { useEffect, useMemo } from 'react';
-import { useApp } from '../../context/AppContext';
-import { subscribeHostEvents } from '../../host';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useApp, type ResolvedTheme } from '../../context/AppContext';
 import { IconArrowLeft } from '../../ui';
 
 export interface AnkiIframeViewProps {
@@ -24,6 +23,29 @@ function appendThemeQuery(rawPath: string, theme: string): string {
   return `${base}${sep}theme=${encodeURIComponent(theme)}${hash}`;
 }
 
+/**
+ * Applies a theme to an already loaded official page, mirroring the bootstrap script the
+ * host injects into SvelteKit pages (HostServer.injectSvelteHead). Anki's pages observe the
+ * `night-mode` class, so this switches theme without reloading (and losing input).
+ */
+function applyThemeToFrame(frame: HTMLIFrameElement | null, theme: ResolvedTheme) {
+  let doc: Document | null = null;
+  try {
+    doc = frame?.contentDocument ?? null;
+  } catch {
+    doc = null; // cross-origin (should not happen): leave the page as is
+  }
+  if (!doc?.documentElement) return;
+  const root = doc.documentElement;
+  root.classList.toggle('night-mode', theme === 'dark');
+  root.classList.toggle('eink-mode', theme === 'eink');
+  root.setAttribute('data-bs-theme', theme === 'dark' ? 'dark' : 'light');
+  if (doc.body) {
+    doc.body.classList.toggle('night-mode', theme === 'dark');
+    doc.body.classList.toggle('eink-mode', theme === 'eink');
+  }
+}
+
 export function AnkiIframeView({
   path,
   title,
@@ -31,16 +53,30 @@ export function AnkiIframeView({
   showTopBar = true,
   className,
 }: AnkiIframeViewProps) {
-  const { resolvedTheme, goBack, bumpCollection, registerBackHandler } = useApp();
+  const { resolvedTheme, goBack, registerBackHandler, subscribeAnkiPage } = useApp();
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const themeRef = useRef(resolvedTheme);
+  themeRef.current = resolvedTheme;
 
-  const src = useMemo(() => appendThemeQuery(path, resolvedTheme), [path, resolvedTheme]);
+  // The theme only seeds the first load; later theme changes are applied in place
+  // (below) so that `src` stays stable and a half-filled page is not reloaded.
+  const src = useMemo(() => appendThemeQuery(path, themeRef.current), [path]);
+
+  useEffect(() => {
+    applyThemeToFrame(frameRef.current, resolvedTheme);
+  }, [resolvedTheme]);
+
+  const handleFrameLoad = useCallback(() => {
+    applyThemeToFrame(frameRef.current, themeRef.current);
+  }, []);
 
   const handleClose = useMemo(
     () => () => {
       if (onClose) {
         onClose();
       } else {
-        goBack('#/decks');
+        // Leave this page itself; do not let an open sheet or handler swallow it.
+        goBack('#/decks', { force: true });
       }
     },
     [onClose, goBack]
@@ -55,17 +91,15 @@ export function AnkiIframeView({
     });
   }, [onClose, registerBackHandler]);
 
-  // Listen for `anki-page` SSE close signal (e.g. deckOptionsRequireClose / importDialogRequireClose)
+  // Listen for the `anki-page` close signal (e.g. deckOptionsRequireClose / importDialogRequireClose)
+  // on the app's single event stream. AppContext already bumps the collection for it.
   useEffect(() => {
-    return subscribeHostEvents({
-      ankiPage: (ev) => {
-        if (ev.close) {
-          bumpCollection();
-          handleClose();
-        }
-      },
+    return subscribeAnkiPage((ev) => {
+      if (ev.close) {
+        handleClose();
+      }
     });
-  }, [bumpCollection, handleClose]);
+  }, [subscribeAnkiPage, handleClose]);
 
   return (
     <div
@@ -95,9 +129,11 @@ export function AnkiIframeView({
         </header>
       )}
       <iframe
+        ref={frameRef}
         key={src}
         src={src}
         title={title}
+        onLoad={handleFrameLoad}
         style={{
           flex: 1,
           width: '100%',

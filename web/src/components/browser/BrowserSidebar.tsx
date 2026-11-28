@@ -28,6 +28,8 @@ const QUICK_VIEWS = [
   { id: 'buried', label: '숨김', query: 'is:buried' },
 ];
 
+const TAG_PAGE = 60;
+
 const SIDEBAR_FLAGS = [
   { flag: 1, label: '빨강' },
   { flag: 2, label: '주황' },
@@ -46,6 +48,7 @@ export const BrowserSidebar: React.FC<BrowserSidebarProps> = ({
   const [decks, setDecks] = useState<anki.DeckNameId[]>([]);
   const [notetypes, setNotetypes] = useState<anki.NotetypeNameId[]>([]);
   const [tags, setTags] = useState<string[]>([]);
+  const [tagLimit, setTagLimit] = useState(TAG_PAGE);
 
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     quick: true,
@@ -124,7 +127,7 @@ export const BrowserSidebar: React.FC<BrowserSidebarProps> = ({
           <div className="amgi-bs-items">
             {decks.map((d) => {
               const name = d.name ?? '';
-              const q = `deck:"${name}"`;
+              const q = anki.buildSearchTerm('deck', name);
               const depth = Math.min(3, name.split('::').length - 1);
               const short = name.split('::').pop() || name;
               return (
@@ -226,8 +229,8 @@ export const BrowserSidebar: React.FC<BrowserSidebarProps> = ({
           </button>
           {openSections.tags && (
             <div className="amgi-bs-items">
-              {tags.slice(0, 60).map((t) => {
-                const q = `tag:"${t}"`;
+              {tags.slice(0, tagLimit).map((t) => {
+                const q = anki.buildSearchTerm('tag', t);
                 return (
                   <button
                     key={t}
@@ -240,6 +243,18 @@ export const BrowserSidebar: React.FC<BrowserSidebarProps> = ({
                   </button>
                 );
               })}
+              {tags.length > tagLimit && (
+                <button
+                  type="button"
+                  className="amgi-bs-item compact"
+                  data-compact="true"
+                  onClick={() => setTagLimit((n) => n + 200)}
+                >
+                  <span className="amgi-bs-item-label">
+                    더 보기 ({(tags.length - tagLimit).toLocaleString()}개 더)
+                  </span>
+                </button>
+              )}
             </div>
           )}
         </div>

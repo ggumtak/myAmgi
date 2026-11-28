@@ -12,7 +12,8 @@
   background: var(--bg);
 }
 
-@media (max-width: 767px) {
+/* Must match the shell: the bottom nav is shown below 840px (styles/main.css). */
+@media (max-width: 839.98px) {
   .amgi-browser-root {
     height: calc(100dvh - var(--topbar-h) - var(--safe-top) - var(--bottomnav-h) - var(--safe-bottom));
   }

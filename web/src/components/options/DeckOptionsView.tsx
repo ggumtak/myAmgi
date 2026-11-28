@@ -1,5 +1,5 @@
 import type React from 'react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as anki from '../../anki';
 import { toNumber, UpdateDeckConfigsMode } from '../../anki';
 import { useApp } from '../../context/AppContext';
@@ -10,10 +10,12 @@ import {
   IconSpark,
   SectionCard,
   SettingRow,
+  SheetOrDialog,
   Switch,
   useToast,
 } from '../../ui';
 import { AnkiIframeView } from '../shared/AnkiIframeView';
+import { applyTouchedDraft, orderConfigsForSave, type DraftKey } from './deckOptionsLogic';
 import './options.css';
 
 interface QuickPreset {
@@ -168,17 +170,27 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
 
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [discardOpen, setDiscardOpen] = useState(false);
   const [showOfficialIframe, setShowOfficialIframe] = useState(false);
+  // Inner-config keys the user edited since the draft was last hydrated. Only these are
+  // written back on save, so display normalisation never changes untouched settings.
+  const touchedRef = useRef<Set<DraftKey>>(new Set());
+
+  const touch = useCallback((...keys: DraftKey[]) => {
+    for (const k of keys) touchedRef.current.add(k);
+    setDirty(true);
+  }, []);
 
   const hydrateDraftFromConfig = useCallback(
     (
       cfg: anki.DeckConfig['config'] | undefined,
       fallbackLimits?: anki.DeckConfigsForUpdate['currentDeck']
     ) => {
+      touchedRef.current = new Set();
       setNewPerDay(cfg?.newPerDay ?? 20);
       setReviewsPerDay(cfg?.reviewsPerDay ?? 200);
-      setLearnStepsText(formatStepsToText(cfg?.learnSteps) || '1m 10m');
-      setRelearnStepsText(formatStepsToText(cfg?.relearnSteps) || '10m');
+      setLearnStepsText(formatStepsToText(cfg?.learnSteps));
+      setRelearnStepsText(formatStepsToText(cfg?.relearnSteps));
 
       const rawRet = cfg?.desiredRetention ?? fallbackLimits?.limits?.desiredRetention ?? 0.9;
       const pct = Math.min(97, Math.max(70, Math.round(rawRet * 100)));
@@ -254,6 +266,14 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
     });
   }, [showOfficialIframe, registerBackHandler, loadOptions]);
 
+  useEffect(() => {
+    if (showOfficialIframe || !dirty) return;
+    return registerBackHandler(() => {
+      setDiscardOpen(true);
+      return true;
+    });
+  }, [showOfficialIframe, dirty, registerBackHandler]);
+
   const activeEntry = useMemo(() => {
     if (!data?.allConfig?.length) return null;
     return (
@@ -286,7 +306,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
     setLearnStepsText(formatStepsToText(preset.learnSteps));
     setRelearnStepsText(formatStepsToText(preset.relearnSteps));
     setDesiredRetentionPct(Math.round(preset.desiredRetention * 100));
-    setDirty(true);
+    touch('newPerDay', 'reviewsPerDay', 'learnSteps', 'relearnSteps', 'desiredRetention');
     showToast("추천 값을 채웠습니다. 오른쪽 위 '저장'을 눌러 주세요.", 'info');
   };
 
@@ -381,7 +401,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
       });
       const pct = Math.min(97, Math.max(70, Math.round(optimal * 100)));
       setDesiredRetentionPct(pct);
-      setDirty(true);
+      touch('desiredRetention');
       setOptimizeStatusMsg(
         `최소 시간으로 최대 암기 효율을 내는 추천 목표 기억률은 ${pct}%입니다.`
       );
@@ -414,29 +434,32 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
           return cfg;
         }
         const inner = cfg.config ?? {};
-        const nextInner: typeof inner = {
-          ...inner,
-          newPerDay: Math.max(0, Math.min(9999, Math.round(newPerDay))),
-          reviewsPerDay: Math.max(0, Math.min(9999, Math.round(reviewsPerDay))),
-          learnSteps: learnStepsParsed.steps,
-          relearnSteps: relearnStepsParsed.steps,
-          desiredRetention: retentionDecimal,
-          maximumReviewInterval: Math.max(1, Math.min(36500, Math.round(maxReviewInterval))),
-          newCardGatherPriority: newGatherPriority,
-          newCardSortOrder: newSortOrder,
-          newMix,
-          reviewOrder,
-          leechThreshold: Math.max(2, Math.min(99, Math.round(leechThreshold))),
-          leechAction,
-          buryNew,
-          buryReviews,
-          buryInterdayLearning,
-          disableAutoplay,
-          skipQuestionWhenReplayingAnswer: skipQuestionAudio,
-          showTimer,
-          stopTimerOnAnswer,
-          capAnswerTimeToSecs: Math.max(10, Math.min(600, Math.round(capAnswerSecs))),
-        };
+        const nextInner = applyTouchedDraft(
+          inner,
+          {
+            newPerDay: Math.max(0, Math.min(9999, Math.round(newPerDay))),
+            reviewsPerDay: Math.max(0, Math.min(9999, Math.round(reviewsPerDay))),
+            learnSteps: learnStepsParsed.steps,
+            relearnSteps: relearnStepsParsed.steps,
+            desiredRetention: retentionDecimal,
+            maximumReviewInterval: Math.max(1, Math.min(36500, Math.round(maxReviewInterval))),
+            newCardGatherPriority: newGatherPriority,
+            newCardSortOrder: newSortOrder,
+            newMix,
+            reviewOrder,
+            leechThreshold: Math.max(2, Math.min(99, Math.round(leechThreshold))),
+            leechAction,
+            buryNew,
+            buryReviews,
+            buryInterdayLearning,
+            disableAutoplay,
+            skipQuestionWhenReplayingAnswer: skipQuestionAudio,
+            showTimer,
+            stopTimerOnAnswer,
+            capAnswerTimeToSecs: Math.max(10, Math.min(600, Math.round(capAnswerSecs))),
+          },
+          touchedRef.current
+        );
 
         if (optimizedParams && optimizedParams.length > 0) {
           if (optimizedParams.length >= 21 || (inner.fsrsParams_6?.length ?? 0) > 0) {
@@ -452,18 +475,11 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
         };
       });
 
-      // Anki assigns configs[0] to targetDeckId (and children when APPLY_TO_CHILDREN).
-      const selectedIdx = updatedList.findIndex(
+      // Anki assigns the LAST config to targetDeckId (and children when APPLY_TO_CHILDREN).
+      const orderedConfigs = orderConfigsForSave(
+        updatedList,
         (c) => toNumber((c as anki.DeckConfig).id) === targetConfigId
       );
-      const orderedConfigs =
-        selectedIdx > 0
-          ? [
-              updatedList[selectedIdx],
-              ...updatedList.slice(0, selectedIdx),
-              ...updatedList.slice(selectedIdx + 1),
-            ]
-          : updatedList;
 
       await anki.updateDeckConfigs({
         targetDeckId: deckId,
@@ -488,7 +504,8 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
           : '학습 옵션을 저장했습니다.',
         'success'
       );
-      goBack(`#/deck/${deckId}`);
+      setDirty(false);
+      goBack(`#/deck/${deckId}`, { force: true });
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : '학습 옵션을 저장하지 못했습니다.',
@@ -660,7 +677,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                       aria-label="하루 새 카드 줄이기"
                       onClick={() => {
                         setNewPerDay((v) => Math.max(0, v - 5));
-                        setDirty(true);
+                        touch('newPerDay');
                       }}
                       data-compact="true"
                     >
@@ -679,7 +696,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                         setNewPerDay(
                           Number.isFinite(val) ? Math.max(0, Math.min(9999, val)) : 0
                         );
-                        setDirty(true);
+                        touch('newPerDay');
                       }}
                     />
                     <button
@@ -688,7 +705,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                       aria-label="하루 새 카드 늘리기"
                       onClick={() => {
                         setNewPerDay((v) => Math.min(9999, v + 5));
-                        setDirty(true);
+                        touch('newPerDay');
                       }}
                       data-compact="true"
                     >
@@ -720,7 +737,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                       aria-label="하루 최대 복습 줄이기"
                       onClick={() => {
                         setReviewsPerDay((v) => Math.max(0, v - 20));
-                        setDirty(true);
+                        touch('reviewsPerDay');
                       }}
                       data-compact="true"
                     >
@@ -739,7 +756,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                         setReviewsPerDay(
                           Number.isFinite(val) ? Math.max(0, Math.min(9999, val)) : 0
                         );
-                        setDirty(true);
+                        touch('reviewsPerDay');
                       }}
                     />
                     <button
@@ -748,7 +765,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                       aria-label="하루 최대 복습 늘리기"
                       onClick={() => {
                         setReviewsPerDay((v) => Math.min(9999, v + 20));
-                        setDirty(true);
+                        touch('reviewsPerDay');
                       }}
                       data-compact="true"
                     >
@@ -785,7 +802,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                   value={learnStepsText}
                   onChange={(e) => {
                     setLearnStepsText(e.target.value);
-                    setDirty(true);
+                    touch('learnSteps');
                   }}
                   placeholder="1m 10m"
                   autoCapitalize="none"
@@ -812,7 +829,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                   value={relearnStepsText}
                   onChange={(e) => {
                     setRelearnStepsText(e.target.value);
-                    setDirty(true);
+                    touch('relearnSteps');
                   }}
                   placeholder="10m"
                   autoCapitalize="none"
@@ -876,7 +893,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                       value={desiredRetentionPct}
                       onChange={(e) => {
                         setDesiredRetentionPct(Number(e.target.value));
-                        setDirty(true);
+                        touch('desiredRetention');
                       }}
                     />
                     <span className="amgi-options-subrow-desc">
@@ -903,7 +920,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                           setMaxReviewInterval(
                             Number.isFinite(val) ? Math.max(1, Math.min(36500, val)) : 36500
                           );
-                          setDirty(true);
+                          touch('maximumReviewInterval');
                         }}
                       />
                     </div>
@@ -964,7 +981,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                   value={newGatherPriority}
                   onChange={(e) => {
                     setNewGatherPriority(Number(e.target.value));
-                    setDirty(true);
+                    touch('newCardGatherPriority');
                   }}
                 >
                   <option value={0}>덱 순서대로</option>
@@ -986,7 +1003,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                   value={newSortOrder}
                   onChange={(e) => {
                     setNewSortOrder(Number(e.target.value));
-                    setDirty(true);
+                    touch('newCardSortOrder');
                   }}
                 >
                   <option value={0}>카드 템플릿 순서대로</option>
@@ -1007,7 +1024,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                   value={newMix}
                   onChange={(e) => {
                     setNewMix(Number(e.target.value));
-                    setDirty(true);
+                    touch('newMix');
                   }}
                 >
                   <option value={0}>복습 카드와 섞어서 표시</option>
@@ -1026,7 +1043,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                   value={reviewOrder}
                   onChange={(e) => {
                     setReviewOrder(Number(e.target.value));
-                    setDirty(true);
+                    touch('reviewOrder');
                   }}
                 >
                   <option value={0}>예정일 순 + 무작위</option>
@@ -1056,7 +1073,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                       aria-label="거머리 기준 횟수 줄이기"
                       onClick={() => {
                         setLeechThreshold((v) => Math.max(2, v - 1));
-                        setDirty(true);
+                        touch('leechThreshold');
                       }}
                       data-compact="true"
                     >
@@ -1075,7 +1092,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                         setLeechThreshold(
                           Number.isFinite(val) ? Math.max(2, Math.min(99, val)) : 8
                         );
-                        setDirty(true);
+                        touch('leechThreshold');
                       }}
                     />
                     <button
@@ -1084,7 +1101,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                       aria-label="거머리 기준 횟수 늘리기"
                       onClick={() => {
                         setLeechThreshold((v) => Math.min(99, v + 1));
-                        setDirty(true);
+                        touch('leechThreshold');
                       }}
                       data-compact="true"
                     >
@@ -1107,7 +1124,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                   value={leechAction}
                   onChange={(e) => {
                     setLeechAction(Number(e.target.value));
-                    setDirty(true);
+                    touch('leechAction');
                   }}
                 >
                   <option value={1}>태그만 붙이고 계속 학습 (leech)</option>
@@ -1128,7 +1145,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                     checked={buryNew}
                     onChange={(next) => {
                       setBuryNew(next);
-                      setDirty(true);
+                      touch('buryNew');
                     }}
                   />
                 }
@@ -1143,7 +1160,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                     checked={buryReviews}
                     onChange={(next) => {
                       setBuryReviews(next);
-                      setDirty(true);
+                      touch('buryReviews');
                     }}
                   />
                 }
@@ -1158,7 +1175,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                     checked={buryInterdayLearning}
                     onChange={(next) => {
                       setBuryInterdayLearning(next);
-                      setDirty(true);
+                      touch('buryInterdayLearning');
                     }}
                   />
                 }
@@ -1177,7 +1194,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                     checked={disableAutoplay}
                     onChange={(next) => {
                       setDisableAutoplay(next);
-                      setDirty(true);
+                      touch('disableAutoplay');
                     }}
                   />
                 }
@@ -1192,7 +1209,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                     checked={skipQuestionAudio}
                     onChange={(next) => {
                       setSkipQuestionAudio(next);
-                      setDirty(true);
+                      touch('skipQuestionWhenReplayingAnswer');
                     }}
                   />
                 }
@@ -1207,7 +1224,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                     checked={showTimer}
                     onChange={(next) => {
                       setShowTimer(next);
-                      setDirty(true);
+                      touch('showTimer');
                     }}
                   />
                 }
@@ -1222,7 +1239,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                     checked={stopTimerOnAnswer}
                     onChange={(next) => {
                       setStopTimerOnAnswer(next);
-                      setDirty(true);
+                      touch('stopTimerOnAnswer');
                     }}
                   />
                 }
@@ -1239,7 +1256,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                       aria-label="최대 기록 시간 줄이기"
                       onClick={() => {
                         setCapAnswerSecs((v) => Math.max(10, v - 10));
-                        setDirty(true);
+                        touch('capAnswerTimeToSecs');
                       }}
                       data-compact="true"
                     >
@@ -1258,7 +1275,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                         setCapAnswerSecs(
                           Number.isFinite(val) ? Math.max(10, Math.min(600, val)) : 60
                         );
-                        setDirty(true);
+                        touch('capAnswerTimeToSecs');
                       }}
                     />
                     <button
@@ -1267,7 +1284,7 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
                       aria-label="최대 기록 시간 늘리기"
                       onClick={() => {
                         setCapAnswerSecs((v) => Math.min(600, v + 10));
-                        setDirty(true);
+                        touch('capAnswerTimeToSecs');
                       }}
                       data-compact="true"
                     >
@@ -1297,6 +1314,38 @@ export const DeckOptionsView: React.FC<{ deckId: number }> = ({ deckId }) => {
           </>
         )}
       </main>
+
+      <SheetOrDialog
+        open={discardOpen}
+        onClose={() => setDiscardOpen(false)}
+        title="저장하지 않고 나가기"
+        footer={
+          <>
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-secondary"
+              onClick={() => setDiscardOpen(false)}
+            >
+              계속 편집
+            </button>
+            <button
+              type="button"
+              className="amgi-btn amgi-btn-danger"
+              onClick={() => {
+                setDiscardOpen(false);
+                setDirty(false);
+                goBack(`#/deck/${deckId}`, { force: true });
+              }}
+            >
+              버리고 나가기
+            </button>
+          </>
+        }
+      >
+        <p className="amgi-prose" style={{ margin: 0 }}>
+          저장하지 않은 학습 옵션 변경 사항을 버리고 나갈까요?
+        </p>
+      </SheetOrDialog>
     </div>
   );
 };

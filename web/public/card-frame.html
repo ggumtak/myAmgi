@@ -476,7 +476,8 @@
         function postToParent(payload) {
           try {
             if (window.parent && window.parent !== window) {
-              window.parent.postMessage(payload, '*');
+              // Parent and frame are served by the same local host.
+              window.parent.postMessage(payload, window.location.origin);
             }
           } catch (_) {
             // Ignore cross-origin postMessage errors
@@ -688,6 +689,71 @@
           true
         );
 
+        function isEditableTarget(el) {
+          if (!el || el.nodeType !== 1) return false;
+          var tag = el.tagName;
+          return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable === true;
+        }
+
+        // Forward reviewer shortcuts (Space, 1-4, Enter, Ctrl+Z, ...) to the app: once the
+        // card has been tapped, keyboard focus lives in this frame, not the top window.
+        var MODIFIER_KEYS = { Shift: 1, Control: 1, Alt: 1, Meta: 1, AltGraph: 1, CapsLock: 1 };
+        document.addEventListener(
+          'keydown',
+          function (event) {
+            if (event.defaultPrevented || event.isComposing) return;
+            var key = event.key;
+            if (!key || MODIFIER_KEYS[key]) return;
+            var target = event.target;
+            if (target && target.nodeType === 3) target = target.parentElement;
+            if (isEditableTarget(target)) return;
+            var activatesTarget =
+              (key === ' ' || key === 'Enter') &&
+              target &&
+              target.closest &&
+              target.closest('a[href], button, audio, video, [role="button"]');
+            if (activatesTarget) return;
+            if (key === ' ' || key === 'Enter') {
+              // Do not scroll the card; the app decides what Space/Enter do.
+              event.preventDefault();
+            }
+            postToParent({
+              type: 'key',
+              key: key,
+              code: event.code || '',
+              shift: !!event.shiftKey,
+              ctrl: !!event.ctrlKey,
+              meta: !!event.metaKey,
+              alt: !!event.altKey,
+            });
+          },
+          false
+        );
+
+        // Report focus of inputs inside the card (type-in-answer) so the Android shell lets
+        // volume / D-pad keys reach the input instead of answering the card.
+        var inputFocused = false;
+        function setInputFocused(next) {
+          if (next === inputFocused) return;
+          inputFocused = next;
+          postToParent({ type: 'inputFocus', focused: next });
+        }
+        document.addEventListener(
+          'focusin',
+          function (event) {
+            setInputFocused(isEditableTarget(event.target));
+          },
+          true
+        );
+        document.addEventListener(
+          'focusout',
+          function (event) {
+            // relatedTarget is the element receiving focus inside this document, if any.
+            setInputFocused(isEditableTarget(event.relatedTarget));
+          },
+          true
+        );
+
         // Drag-safe (< 18px) and selection-safe tap-to-flip
         var pointerStart = null;
 
@@ -773,6 +839,8 @@
         }
 
         function handleRender(msg) {
+          // The card DOM is about to be replaced; removed inputs do not reliably blur.
+          setInputFocused(false);
           state.side = msg.side === 'answer' ? 'answer' : 'question';
           if (typeof msg.bodyClass === 'string' && msg.bodyClass.trim()) {
             state.bodyClass = msg.bodyClass;
@@ -820,21 +888,13 @@
             postToParent({ type: 'rendered', side: state.side });
           };
 
+          // reviewer.js queues the update and its _updateQA starts by clearing onShownHook,
+          // so hooks pushed here would never run; runAfterUpdate's timers do the work.
           if (state.side === 'answer' && typeof window._showAnswer === 'function') {
-            if (Array.isArray(window.onShownHook)) {
-              window.onShownHook.push(triggerHanjaTap);
-              window.onShownHook.push(resetShortCardScroll);
-            }
             window._showAnswer(html, nextBodyClass);
-            if (Array.isArray(window.onShownHook)) {
-              window.onShownHook.push(resetShortCardScroll);
-            }
             setTimeout(resetShortCardScroll, 0);
             runAfterUpdate();
           } else if (typeof window._showQuestion === 'function') {
-            if (Array.isArray(window.onShownHook)) {
-              window.onShownHook.push(triggerHanjaTap);
-            }
             window._showQuestion(html, preloadAnswerHtml, nextBodyClass);
             runAfterUpdate();
           } else {
@@ -846,7 +906,10 @@
         }
 
         window.addEventListener('message', function (event) {
-          var msg = event && event.data;
+          // Only the app that embeds this frame may drive it.
+          if (!event || event.source !== window.parent) return;
+          if (event.origin !== window.location.origin) return;
+          var msg = event.data;
           if (!msg || typeof msg !== 'object') return;
 
           switch (msg.type) {

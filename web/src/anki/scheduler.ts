@@ -41,12 +41,22 @@ export async function describeNextStates(states: SchedulingStates): Promise<stri
   return res.vals ?? [];
 }
 
+/**
+ * Answers a card. The Rust backend stores `millisecondsTaken` in the revlog as given
+ * (Anki's clients cap it themselves), so pass the deck's "maximum answer seconds"
+ * (`DeckConfig.capAnswerTimeToSecs`) as `capSecs` to match Anki.
+ */
 export async function answerCard(
   cardId: number | Long,
   states: SchedulingStates,
   rating: Rating,
-  msTaken: number
+  msTaken: number,
+  capSecs?: number | null
 ): Promise<AnkiTypes.collection.OpChanges> {
+  let taken = Math.max(0, Math.round(Number.isFinite(msTaken) ? msTaken : 0));
+  if (typeof capSecs === 'number' && Number.isFinite(capSecs) && capSecs > 0) {
+    taken = Math.min(taken, Math.round(capSecs * 1000));
+  }
   let newState: AnkiTypes.scheduler.SchedulingState.$Properties | null | undefined;
   switch (rating) {
     case Rating.AGAIN:
@@ -72,7 +82,7 @@ export async function answerCard(
     newState,
     rating,
     answeredAtMillis: Date.now(),
-    millisecondsTaken: Math.max(100, Math.min(60_000, Math.round(msTaken))),
+    millisecondsTaken: taken,
   });
 }
 

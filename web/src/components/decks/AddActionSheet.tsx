@@ -12,6 +12,7 @@ import {
   Switch,
   useToast,
 } from '../../ui';
+import { ImportProgressSheet, importErrorMessage, useFileImport } from './ImportProgressSheet';
 import './decks.css';
 
 export interface AddActionSheetProps {
@@ -50,7 +51,7 @@ export const AddActionSheet: React.FC<AddActionSheetProps> = ({
   const [filteredOpen, setFilteredOpen] = useState(false);
   const [filteredName, setFilteredName] = useState('맞춤 학습 덱');
   const [filteredSearch, setFilteredSearch] = useState('is:due');
-  const [filteredLimit, setFilteredLimit] = useState(100);
+  const [filteredLimit, setFilteredLimit] = useState('100');
   const [filteredOrder, setFilteredOrder] = useState<number>(
     anki.FilteredSearchOrder.OLDEST_REVIEWED_FIRST
   );
@@ -58,7 +59,8 @@ export const AddActionSheet: React.FC<AddActionSheetProps> = ({
   const [creatingFiltered, setCreatingFiltered] = useState(false);
 
   // File import / colpkg confirmation state
-  const [uploading, setUploading] = useState(false);
+  const fileImport = useFileImport();
+  const uploading = fileImport.busy;
   const [colpkgConfirm, setColpkgConfirm] = useState<{
     path: string;
     name: string;
@@ -130,7 +132,7 @@ export const AddActionSheet: React.FC<AddActionSheetProps> = ({
       const firstTerm = defaults.config?.searchTerms?.[0];
       setFilteredName(defaults.name || '맞춤 학습 덱');
       setFilteredSearch(firstTerm?.search || 'is:due');
-      setFilteredLimit(firstTerm?.limit || 100);
+      setFilteredLimit(String(firstTerm?.limit || 100));
       setFilteredOrder(
         firstTerm?.order ?? anki.FilteredSearchOrder.OLDEST_REVIEWED_FIRST
       );
@@ -147,6 +149,11 @@ export const AddActionSheet: React.FC<AddActionSheetProps> = ({
       showToast('필터 덱 이름을 입력해 주세요.', 'error');
       return;
     }
+    const limit = Math.floor(Number(filteredLimit.trim()));
+    if (!filteredLimit.trim() || !Number.isFinite(limit) || limit < 1) {
+      showToast('최대 카드 수는 1 이상의 숫자로 입력해 주세요.', 'error');
+      return;
+    }
     setCreatingFiltered(true);
     try {
       const base = await anki.getOrCreateFilteredDeck(0);
@@ -160,7 +167,7 @@ export const AddActionSheet: React.FC<AddActionSheetProps> = ({
           searchTerms: [
             {
               search: filteredSearch.trim(),
-              limit: Math.max(1, filteredLimit),
+              limit: Math.min(9999, limit),
               order: filteredOrder,
             },
           ],
@@ -188,36 +195,15 @@ export const AddActionSheet: React.FC<AddActionSheetProps> = ({
     e.target.value = '';
     if (!file) return;
 
-    setUploading(true);
     try {
-      const uploaded = await host.uploadHostFile(file, file.name);
-      const result = await host.host.importFile({
-        path: uploaded.path,
-        name: file.name,
-      });
-
-      if (result.kind === 'colpkg' && result.needsConfirm) {
-        setColpkgConfirm({ path: result.path, name: file.name });
-        return;
-      }
-
-      if (result.route) {
-        navigate(`#${result.route}`);
-        return;
-      }
-
-      if (result.kind === 'apkg') {
-        navigate(`#/import-anki-package/${encodeURIComponent(result.path)}`);
-      } else if (result.kind === 'csv') {
-        navigate(`#/import-csv/${encodeURIComponent(result.path)}`);
+      const outcome = await fileImport.run(file);
+      if (outcome.kind === 'colpkgConfirm') {
+        setColpkgConfirm({ path: outcome.path, name: outcome.name });
+      } else if (outcome.kind === 'route') {
+        navigate(`#${outcome.route}`);
       }
     } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : '파일을 가져오지 못했습니다.',
-        'error'
-      );
-    } finally {
-      setUploading(false);
+      showToast(importErrorMessage(err), 'error');
     }
   };
 
@@ -427,7 +413,7 @@ export const AddActionSheet: React.FC<AddActionSheetProps> = ({
               max={9999}
               className="amgi-input tabular"
               value={filteredLimit}
-              onChange={(e) => setFilteredLimit(Number(e.target.value) || 100)}
+              onChange={(e) => setFilteredLimit(e.target.value)}
             />
           </div>
           <div className="amgi-field-group">
@@ -462,6 +448,8 @@ export const AddActionSheet: React.FC<AddActionSheetProps> = ({
           </div>
         </form>
       </SheetOrDialog>
+
+      <ImportProgressSheet state={fileImport.progress} />
 
       {/* .colpkg Replace Confirm Dialog */}
       <SheetOrDialog

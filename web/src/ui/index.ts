@@ -1,6 +1,11 @@
 export * from './Icons';
 export { Switch, type SwitchProps } from './Switch';
-export { SheetOrDialog, type SheetOrDialogProps } from './SheetOrDialog';
+export {
+  SheetOrDialog,
+  closeTopModal,
+  hasOpenModal,
+  type SheetOrDialogProps,
+} from './SheetOrDialog';
 export {
   ActionMenu,
   type ActionMenuItem,

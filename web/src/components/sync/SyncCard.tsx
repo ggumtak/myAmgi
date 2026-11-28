@@ -1,5 +1,5 @@
 import type React from 'react';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { host, HostApiError, type ProgressEvent, type SyncStatus } from '../../host';
 import {
@@ -208,6 +208,13 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
   } = useApp();
   const { showToast } = useToast();
 
+  // Unique per instance: SyncCard is mounted in Settings and in the sync sheet at once.
+  const idBase = useId();
+  const emailId = `${idBase}-email`;
+  const passwordId = `${idBase}-password`;
+  const autoSyncId = `${idBase}-auto`;
+  const mediaSyncId = `${idBase}-media`;
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
@@ -379,11 +386,11 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
 
         <form className="amgi-sync-form" onSubmit={handleLoginSubmit} noValidate>
           <div className="amgi-sync-field">
-            <label htmlFor="sync-email" className="amgi-sync-label">
+            <label htmlFor={emailId} className="amgi-sync-label">
               아이디 (이메일)
             </label>
             <input
-              id="sync-email"
+              id={emailId}
               type="email"
               className="amgi-input"
               placeholder="name@example.com"
@@ -402,12 +409,12 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
           </div>
 
           <div className="amgi-sync-field">
-            <label htmlFor="sync-password" className="amgi-sync-label">
+            <label htmlFor={passwordId} className="amgi-sync-label">
               비밀번호
             </label>
             <div className="amgi-sync-pw-wrap">
               <input
-                id="sync-password"
+                id={passwordId}
                 type={showPw ? 'text' : 'password'}
                 className="amgi-input"
                 placeholder="비밀번호 입력"
@@ -633,11 +640,11 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
       <div className="amgi-sync-rows">
         <SettingRow
           label="자동 동기화"
-          description="앱을 열거나 닫을 때 자동으로 맞춥니다"
-          htmlFor="pref-sync-auto"
+          description="앱을 열 때와 앱을 닫거나 다른 앱으로 전환할 때 자동으로 맞춥니다 (짧은 간격으로 반복되면 건너뜁니다)"
+          htmlFor={autoSyncId}
           control={
             <Switch
-              id="pref-sync-auto"
+              id={autoSyncId}
               checked={autoSync}
               onChange={(next) => void setPref('sync.auto', next)}
             />
@@ -646,10 +653,10 @@ export const SyncCard: React.FC<{ compact?: boolean; onSuccess?: () => void }> =
         <SettingRow
           label="사진·소리 함께 맞추기"
           description="카드 속 이미지와 음성을 백그라운드에서 함께 동기화합니다"
-          htmlFor="pref-sync-media"
+          htmlFor={mediaSyncId}
           control={
             <Switch
-              id="pref-sync-media"
+              id={mediaSyncId}
               checked={mediaSync}
               onChange={(next) => void setPref('sync.media', next)}
             />

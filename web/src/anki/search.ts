@@ -197,35 +197,6 @@ export async function removeNoteTags(
   );
 }
 
-/**
- * Replaces the tags on the given notes by reading their current tags,
- * removing existing ones that differ, and adding missing ones, or updating notes directly.
- */
-export async function setNoteTags(
-  noteIds: Array<number | Long>,
-  tags: string[]
-): Promise<AnkiTypes.collection.OpChanges> {
-  const uniqueTags = Array.from(
-    new Set(tags.map((t) => t.trim()).filter((t) => t.length > 0))
-  );
-  const notes = await Promise.all(
-    noteIds.map((nid) => rpc('getNote', anki.notes.NoteId, anki.notes.Note, { nid }))
-  );
-  const updated = notes.map((n) => ({
-    id: n.id,
-    guid: n.guid,
-    notetypeId: n.notetypeId,
-    mtimeSecs: n.mtimeSecs,
-    usn: n.usn,
-    fields: n.fields,
-    tags: uniqueTags,
-  }));
-  return rpc('updateNotes', anki.notes.UpdateNotesRequest, anki.collection.OpChanges, {
-    notes: updated,
-    skipUndoEntry: false,
-  });
-}
-
 export async function completeTag(
   input: string,
   matchLimit = 20
@@ -280,6 +251,46 @@ export async function getConfigString(
     { key }
   );
   return res.val ?? '';
+}
+
+/**
+ * Synchronous equivalent of `buildSearchString({deck})` / `buildSearchString({tag})` for one
+ * exact name: escapes the wildcards `*` `_` and `\` `"`, and quotes the whole term when it
+ * contains whitespace or parentheses (verified against the engine's own output).
+ */
+export function buildSearchTerm(kind: 'deck' | 'tag', name: string): string {
+  const escaped = name.replace(/[\\*_"]/g, (c) => `\\${c}`);
+  const term = `${kind}:${escaped}`;
+  // The engine quotes on spaces/parentheses but not on a tab.
+  return /[^\S\t]|[()]/.test(term) ? `"${term}"` : term;
+}
+
+const ID_SEARCH_CHUNK = 1000;
+
+async function searchByIdChunks(
+  ids: readonly number[],
+  prefix: 'cid' | 'nid',
+  run: (query: string) => Promise<number[]>
+): Promise<number[]> {
+  const out = new Set<number>();
+  for (let i = 0; i < ids.length; i += ID_SEARCH_CHUNK) {
+    const chunk = ids.slice(i, i + ID_SEARCH_CHUNK);
+    const res = await run(`${prefix}:${chunk.join(',')}`);
+    for (const id of res) out.add(id);
+  }
+  return Array.from(out);
+}
+
+/** Note ids of the given cards, resolved with `cid:` searches (one RPC per 1000 cards). */
+export async function noteIdsOfCards(cardIds: readonly number[]): Promise<number[]> {
+  if (cardIds.length === 0) return [];
+  return searchByIdChunks(cardIds, 'cid', (q) => searchNotes(q));
+}
+
+/** All card ids of the given notes, resolved with `nid:` searches (one RPC per 1000 notes). */
+export async function cardIdsOfNotes(noteIds: readonly number[]): Promise<number[]> {
+  if (noteIds.length === 0) return [];
+  return searchByIdChunks(noteIds, 'nid', (q) => searchCards(q));
 }
 
 export async function buildSearchString(node: SearchNode): Promise<string> {
